@@ -26,7 +26,7 @@ This uses no third-party library, React Native runtime, shader compiler plugin, 
 ## Cloud Mac plan
 
 1. Keep the complete source in a GitHub repository. The browser on iPad can upload/edit files and start the provided workflow.
-2. Use the included GitHub-hosted macOS job for Swift tests and simulator compilation. GitHub documents its [hosted runner execution model](https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners). Account minutes and runner availability depend on your account; this delivery does not provision or bill cloud work.
+2. Use the included GitHub-hosted macOS job for Swift tests and simulator compilation. GitHub documents its [hosted runner execution model](https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners). Runner usage and availability follow the repository owner's GitHub plan. See [verified build results](BUILD_STATUS.md) for the actual cloud test record.
 3. Inspect the `.xcresult` artifact and fix any compiler/runtime failures before treating the source as validated. The XcodeGen description is only used on that runner.
 4. Run the exact source in Swift Playground on your physical iPad and complete the checklist. Automated simulator tests cannot substitute for Pencil testing.
 5. When standalone distribution is needed, add an archive/export job using your signing certificate/provisioning profile and App Store Connect credentials stored as CI secrets. Change the prototype bundle ID to your registered ID, enable signing for that job, then distribute via TestFlight. The supplied workflow intentionally builds only the simulator and contains no distribution credentials.

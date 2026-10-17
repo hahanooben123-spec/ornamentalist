@@ -1,8 +1,10 @@
 # Ornamentalist — Phase 1
 
+[Dansk vejledning: Kom i gang på iPad](docs/KOM-I-GANG.md)
+
 A native iPad app playground in Swift and SwiftUI, with UIKit Pencil input and Metal drawing. No third-party runtime dependencies. Target: iPadOS 17 or later, with a Swift Playground installation that includes a compatible SDK.
 
-**Delivery status:** The hardened Phase 1 source is implemented. This Windows environment has neither Swift nor an Apple SDK. Local Swift grammar checks are separate from Apple compilation and device tests; see [validation](docs/VALIDATION.md) for the latest verified status. The prototype is **not acceptance-complete** until the Apple build checks and real-device checklist pass.
+**Delivery status:** The hardened Phase 1 native source has passed a cloud Apple build and automated tests; see [verified build results](docs/BUILD_STATUS.md). This Windows environment has neither Swift nor an Apple SDK. Local grammar checks are separate from Apple compilation. Physical iPad/Pencil acceptance remains pending.
 
 ## Start on your iPad
 
