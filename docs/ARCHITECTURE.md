@@ -1,6 +1,6 @@
 # Phase 1 architecture
 
-The document stores original samples in a fixed 2048 × 2048 coordinate system, with pressure, altitude, azimuth, timestamp, brush settings, and a frozen radial symmetry configuration per stroke. It stores no rendered bitmap and no navigation transform. Phase 2 can place these same strokes inside layers without replacing their geometry.
+The document stores confirmed, stabilized samples in a fixed 2048 × 2048 coordinate system, with pressure, altitude, azimuth, timestamp, brush settings, and frozen radial symmetry per stroke. It stores no rendered bitmap or navigation transform. Existing version 1 brush geometry is retained; version 2 adds pressure choice, stabilization, adaptive tips and storage revisions. Phase 2 can place these strokes inside layers.
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ flowchart LR
 
 ## Live drawing contract
 
-Only the Pencil touch is selected in default mode. Fingers route to navigation; navigation recognizers ignore Pencil and are disabled during an active Pencil stroke. Confirmed coalesced samples append to one source stroke. The midpoint quadratic builder adds stable triangle sections incrementally. Its last half-segment remains replaceable. Prediction geometry starts at that same seam and is discarded on the next event or at stroke completion.
+Only the Pencil touch is selected by default. Navigation recognizers ignore Pencil and pause during Pencil strokes. A testable StrokeSession deduplicates timestamps, stabilizes confirmed input with a time-based low-pass filter, reserves sample/geometry budgets and appends one source stroke. Prediction runs on a copy of filter state and cannot modify confirmed ink. The quadratic builder adds stable sections incrementally; only its last half-segment is replaceable. Finger gesture cancellation removes the tentative stroke and requests persistence of that cancellation.
 
 The CPU tessellates only one source stroke. GPU instancing applies up to 64 radial transforms while drawing. Stable live triangles are sealed into immutable GPU chunks. Only the bounded unsealed chunk and short prediction tail need new uploads each frame. Committed stroke buffers are cached by immutable stroke UUID. Undo removes their cache entries; redo reconstructs them from samples.
 
@@ -34,15 +34,17 @@ At completion, the confirmed tail is added to the cache and the source stroke is
 
 ## Storage contract
 
-The main actor owns document/UI/history state. It sends immutable snapshots with monotonically increasing session generations to a serial repository actor. The repository rejects an older generation after a newer one was saved. It validates before saving, preserves a previous valid primary, and atomically replaces the primary file. A recovery flag tells the UI when a backup was opened. A damaged drawing remains listed so other valid projects are still accessible.
+The main actor owns UI/history and an editing generation. Repository writes use a separate monotonically increasing sequence, persisted as storageRevision. The repository rejects stale writes. Atomic primary saves retain a previous valid backup. Atomic journal checkpoints include completed edits and confirmed points of an active stroke. Reopening chooses the highest valid primary/journal revision, then a backup. An old journal left behind by a crash cannot replace a newer primary. Corrupt projects stay visible without blocking others.
 
-Completed edits debounce for 0.5 seconds. Save errors remain visible. Closing awaits a save and stays in the editor on failure. Deactivation commits confirmed live ink and requests a save, but abrupt termination is not fully journaled. Undo/redo stacks are session state; source strokes persist.
+A 0.25-second maintenance timer enforces 0.5-second idle and two-second maximum dirty deadlines. During a stroke, a two-second rolling checkpoint includes confirmed input instead of saving a primary without the active stroke. Write duration and OS scheduling can extend these deadlines. Save failure is visible with five-second retries. Closing locks all edit methods and controls, waits for any current primary save, saves the exact edit generation, makes a thumbnail and closes only on success. Deactivation commits confirmed input and requests a save. Abrupt termination can still lose points after the last completed checkpoint. Undo/redo stacks are session-local.
+
+Gallery loads small metadata indexes when primary size/modification time still match, and uses full decode as fallback. Thumbnails are separate replaceable PNGs. Native project export uses versioned JSON; file import validates it and assigns a fresh project UUID to prevent overwrites.
 
 ## Renderer and export boundaries
 
 Document, symmetry, pressure mapping, history, and triangle generation depend on Foundation only. MetalKit and UIKit remain outside the model. Core Graphics replays the same tessellated geometry for PNG output in document coordinates, using one nonzero fill path per instance. Output excludes guides, predictions, viewport navigation, and interface chrome.
 
-The current renderer redraws all committed chunks for each requested frame and has no tile cache or global geometry budget. Reopening reconstructs cached meshes on the main thread. These are explicit Phase 1 tradeoffs. A later renderer can add tile/texture caching or replace tessellation without changing persisted samples. Device profiling must establish practical drawing limits before production use.
+The renderer redraws committed chunks for each requested frame and has no tile cache. It now enforces a two-million-source-vertex budget, reconstructs missing meshes off the main actor, and caches paper, translucent guides and symmetry coefficients. Guides are behind artwork. Immutable uploads avoid races with frames already on the GPU. Frame diagnostics expose median/p95 CPU submission, available GPU execution timings, deferred frames and source vertex-buffer bytes; they do not establish touch-to-photon latency or total RAM. Physical-device profiling remains necessary.
 
 ## Later phases
 

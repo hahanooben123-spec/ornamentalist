@@ -179,10 +179,10 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         // UIViewRepresentable may be updating; publish after that update finishes.
         Task { @MainActor [weak self] in self?.model.error = error.localizedDescription }
     }
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         // In optional finger mode, a second finger abandons the tentative finger stroke.
         if drawingTouch?.type == .direct {
-            session = nil; drawingTouch = nil; preview = []; renderer?.cancel(); model.setDrawing(false)
+            session = nil; drawingTouch = nil; preview = []; renderer?.cancel(); model.discardActiveCheckpoint()
         }
         return active == nil
     }

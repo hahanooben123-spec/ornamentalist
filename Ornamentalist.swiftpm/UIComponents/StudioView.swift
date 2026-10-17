@@ -122,6 +122,7 @@ struct StudioView: View {
                 .id(document.id)
                 .overlay {
                     if model.isPreparing { ProgressView("Preparing drawing…").padding().background(.regularMaterial).clipShape(RoundedRectangle(cornerRadius: 12)) }
+                    else if model.busy { ProgressView("Saving drawing…").padding().background(.regularMaterial).clipShape(RoundedRectangle(cornerRadius: 12)) }
                 }
                 .allowsHitTesting(!exporting && !model.busy && !model.isPreparing)
                 .ignoresSafeArea(edges: .bottom)
@@ -138,7 +139,7 @@ struct StudioView: View {
                 Button {
                     Task { await model.close() }
                 } label: { Label("Gallery", systemImage: "square.grid.2x2") }
-                .disabled(model.isDrawing || model.busy || exporting)
+                .disabled(model.isDrawing || !model.canEdit || exporting)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { model.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }

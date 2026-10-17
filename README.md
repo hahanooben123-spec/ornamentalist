@@ -16,6 +16,7 @@ A native iPad app playground in Swift and SwiftUI, with UIKit Pencil input and M
 8. Use **Save and export → Export PNG** and choose **Save to Files** in the iPad share sheet. Export is 2048 × 2048 pixels, with either white or transparent background; guides are excluded.
 9. Use **Save and export → Export editable project** to save an `.ornamentalist.json` backup in Files. In Gallery, tap **Import project** to reopen it as a new editable project. Imports never overwrite the original.
 10. Touch and hold a gallery project and choose **Rename**. Thumbnails are created when you return to Gallery. The **Fineliner** menu controls pressure sensitivity and stabilization; new drawings default to constant width with 25% stabilization. The symmetry preset menu provides quick counts alongside the Stepper.
+11. After a drawing test, open **Canvas → Performance report** to inspect and copy CPU submission/GPU timing samples and source-buffer memory. This does not measure Pencil-to-display latency or total app RAM.
 
 The UI follows the system light/dark appearance; the paper stays white. Apple Pencil draws by default. Optional **Canvas → Draw with finger** is for basic testing. Starting a two-finger gesture cancels an unfinished finger stroke. Finger mode is not the palm-rejection mode.
 

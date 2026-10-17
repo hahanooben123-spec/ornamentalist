@@ -1,6 +1,6 @@
 # Validation and acceptance
 
-Status at delivery: static source/package checks only. There is no Swift compiler, Apple SDK, iPad connection, or Mac runner attached to this Windows session. The included Swift tests and CI job have **not** been executed here. No screenshot, frame-rate measurement, or Pencil reliability result is claimed.
+Local checks: Swift grammar parsing, build YAML/source paths and byte-for-byte ZIP integrity. Swift/Apple compilation runs on [GitHub Actions](https://github.com/hahanooben123-spec/ornamentalist/actions/workflows/apple-validation.yml); see the run for the tested commit and pass/fail status. A syntax parse does not type-check Swift. No physical iPad/Pencil reliability or latency result is claimed.
 
 ## Included automated checks
 
@@ -14,8 +14,11 @@ Status at delivery: static source/package checks only. There is no Swift compile
 - Whole-stroke history, redo, branching, and preservation of earlier symmetry settings.
 - Codable round trips and rejection of malformed geometry/settings.
 - Repository save/reopen, stale-generation protection, backup recovery, and an unreadable project alongside a valid project.
+- Continuous-dotting autosave deadlines, fineliner width, adaptive tips and version 1 migration.
+- Input replay with duplicate timestamps, stabilization, temporary predictions and preflight geometry budgets.
+- Active-stroke journal recovery, primary/journal revision ordering and editable project round trips without overwrites.
 
-The XcodeGen app test target adds PNG decoding/pixel checks for output dimensions, expected radial copies, transparent/white corners, and Metal runtime pipeline creation. The Metal test does not verify visible output or latency and can skip when a simulator has no Metal device.
+The app tests inject a slow repository to reproduce close/Undo races, verify active-stroke checkpoints and read actual offscreen pixels from the same Metal pipeline as the canvas. An asymmetric stroke is checked through zoom, pan and rotation; predicted pixels must disappear on commit. PNG tests check asymmetric orientation, radial copies, dimensions and backgrounds. Metal tests can skip when a simulator has no Metal; skips are not GPU passes. Touch-event routing and palm rejection still require device tests.
 
 The cloud workflow uses the same app source as the iPad app playground. It does not validate the AppleProductTypes playground manifest itself; opening the supplied `.swiftpm` on iPad remains an explicit acceptance step.
 
@@ -41,6 +44,8 @@ Also test iPad multitasking/resize and portrait/landscape changes. A resize shou
 
 Run a 10-minute drawing session at eight copies and another at 64. Record visible input lag, allocation failures, memory behavior, edge clipping, exported appearance, and the longest usable stroke. Repeat undo/redo after reopening a dense drawing. There is no certified 120 Hz target in this delivery; `preferredFramesPerSecond` is a request, not a measured result.
 
-Exercise storage failure/recovery with a test app container on the cloud Mac or a development device. The repository tests corrupt a primary in temporary storage, but real application-container recovery still needs verification. Background saving is best effort: a process kill before the write completes can lose recent input. Phase 4 needs a journal, a global geometry budget, and large-document rendering work before claiming production crash recovery/performance.
+Exercise storage failure/recovery with a test app container or development device. Export an editable project to Files, import it twice and confirm the copies do not overwrite the source. Rename projects and inspect their thumbnails. Background saving and the rolling journal are best effort: a kill before a write completes can lose recent input. Test canceled finger strokes after a journal checkpoint; they must not return after a successful subsequent save. Large-document rendering still needs further work before production performance claims.
+
+Use **Canvas → Performance report** after drawing at eight and 64 copies, copy the report and record it beside the device/OS/Pencil details. Its last 240 CPU/GPU samples and buffer bytes are diagnostics, not a substitute for touch-to-screen latency measurement or memory profiling.
 
 Do not declare Phase 1 complete until all nine real-device criteria pass. Keep any Swift/Metal compiler diagnostics or device failures with their file/line and reproduction steps for the next fix.

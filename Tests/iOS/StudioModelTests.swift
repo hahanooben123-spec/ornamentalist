@@ -44,4 +44,21 @@ final class StudioModelTests: XCTestCase {
         XCTAssertEqual(recovered.strokes, [active])
         model.setDrawing(false)
     }
+    func testCanceledFingerCheckpointDoesNotReappearAfterSuccessfulSave() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder)
+        let model = StudioModel(repository: repository)
+        await model.create()
+        let id = try XCTUnwrap(model.document?.id)
+        let p = StrokeSample(point: Point(x: 15, y: 40), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        let tentative = InkStroke(samples: [p])
+        model.captureActiveStroke = { tentative }; model.setDrawing(true)
+        await model.checkpointActiveInk()
+        model.captureActiveStroke = { nil }
+        model.discardActiveCheckpoint()
+        _ = await model.saveNow()
+        let (reopened, _) = try await repository.open(id)
+        XCTAssertTrue(reopened.strokes.isEmpty)
+    }
 }

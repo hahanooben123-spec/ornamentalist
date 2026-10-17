@@ -111,6 +111,11 @@ final class StudioModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func setDrawing(_ value: Bool) { isDrawing = value }
+    func discardActiveCheckpoint() {
+        isDrawing = false
+        changed()
+        Task { await saveNow() }
+    }
     func setPreparing(_ value: Bool) { isPreparing = value }
     func append(_ stroke: InkStroke) {
         // Completion of confirmed input may occur during deactivation.
