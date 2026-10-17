@@ -124,9 +124,15 @@ final class ExportAndMetalTests: XCTestCase {
             var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
             d.symmetry = SymmetryConfiguration(repetitions: repetitions, center: Point(x: 64, y: 64))
             for i in 0..<48 {
-                let samples = (0..<12).map { j in
-                    StrokeSample(point: Point(x: 70 + Double(j), y: 32 + Double(i % 8) + sin(Double(j) * 0.2) * 8),
-                                 pressure: 1, altitude: 1, azimuth: 0, time: Double(j))
+                var samples: [StrokeSample] = []
+                for j in 0..<12 {
+                    let x = 70.0 + Double(j)
+                    let phase = Double(j) * 0.2
+                    let baseline = 32.0 + Double(i % 8)
+                    let y = baseline + sin(phase) * 8.0
+                    let point = Point(x: x, y: y)
+                    let sample = StrokeSample(point: point, pressure: 1, altitude: 1, azimuth: 0, time: Double(j))
+                    samples.append(sample)
                 }
                 d.strokes.append(InkStroke(brush: InkBrush(width: 2, stabilization: 0), symmetry: d.symmetry, samples: samples))
             }

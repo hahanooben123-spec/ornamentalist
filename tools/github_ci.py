@@ -58,7 +58,7 @@ def main():
         if args.run:
             jobs = json.loads(request(f'/actions/runs/{args.run}/jobs'))['jobs']
             print(json.dumps([{'name': j['name'], 'status': j['status'], 'conclusion': j['conclusion'],
-                               'steps': [{k: s.get(k) for k in ['name', 'status', 'conclusion']} for s in j['steps']]} for j in jobs], indent=2))
+                               'steps': [{k: s.get(k) for k in ['name', 'status', 'conclusion', 'started_at', 'completed_at']} for s in j['steps']]} for j in jobs], indent=2))
             return
         runs = json.loads(request('/actions/runs?per_page=5'))['workflow_runs']
         print(json.dumps([{key: run.get(key) for key in ['id', 'head_sha', 'status', 'conclusion', 'html_url', 'created_at']} for run in runs], indent=2))
