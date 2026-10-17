@@ -1,0 +1,165 @@
+import XCTest
+@testable import OrnamentalistCore
+
+final class CoreTests: XCTestCase {
+    private func sample(_ x: Double, _ y: Double, time: Double = 1) -> StrokeSample {
+        StrokeSample(point: Point(x: x, y: y), pressure: 0.6, altitude: 1, azimuth: 0, time: time)
+    }
+    func testEightWayRotationAroundNonOriginCenter() {
+        let s = SymmetryConfiguration(repetitions: 8, center: Point(x: 300, y: 600))
+        let original = Point(x: 345, y: 620)
+        XCTAssertEqual(s.matrices.count, 8)
+        for (index, m) in s.matrices.enumerated() {
+            let p = m.apply(original)
+            XCTAssertEqual((p-s.center).length, (original-s.center).length, accuracy: 1e-8)
+            XCTAssertEqual(m.apply(s.center).x, s.center.x, accuracy: 1e-8)
+            XCTAssertEqual(m.apply(s.center).y, s.center.y, accuracy: 1e-8)
+            if index == 4 {
+                XCTAssertEqual(p.x, 255, accuracy: 1e-8)
+                XCTAssertEqual(p.y, 580, accuracy: 1e-8)
+            }
+        }
+    }
+    func testNoSymmetryAndSixtyFourCopies() {
+        let p = Point(x: 700, y: 900)
+        XCTAssertEqual(SymmetryConfiguration(repetitions: 1).matrices[0].apply(p), p)
+        let matrices = SymmetryConfiguration(repetitions: 64).matrices
+        XCTAssertEqual(matrices.count, 64)
+        let positions = matrices.map { $0.apply(p) }
+        for i in 0..<64 {
+            for j in (i+1)..<64 { XCTAssertGreaterThan((positions[i]-positions[j]).length, 0.001) }
+        }
+    }
+    func testViewportRoundTripAndSymmetryAtEveryZoom() {
+        let canvas = Point(x: 2048, y: 2048), view = Point(x: 1194, y: 730)
+        let p = Point(x: 1700.123, y: 800.456)
+        for zoom in [0.25, 1, 4, 12] as [Double] {
+            let v = Viewport(zoom: zoom, rotation: 1.234, pan: Point(x: -207, y: 319))
+            let m = v.matrix(viewSize: view, canvasSize: canvas)
+            let recovered = m.inverse.apply(m.apply(p))
+            XCTAssertEqual(recovered.x, p.x, accuracy: 1e-8)
+            XCTAssertEqual(recovered.y, p.y, accuracy: 1e-8)
+            for symmetry in SymmetryConfiguration().matrices {
+                let expected = m.apply(symmetry.apply(p))
+                let actual = m.apply(symmetry.apply(recovered))
+                XCTAssertEqual(actual.x, expected.x, accuracy: 1e-7)
+                XCTAssertEqual(actual.y, expected.y, accuracy: 1e-7)
+            }
+        }
+    }
+    func testLiveMeshMatchesReopenedMesh() {
+        let samples = [sample(10, 10), sample(20, 40, time: 2), sample(70, 50, time: 3), sample(90, 0, time: 4)]
+        let stroke = InkStroke(samples: samples)
+        var live: [Point] = [], prefix: [StrokeSample] = []
+        for s in samples {
+            prefix.append(s)
+            live += StrokeGeometry.stableAddition(samples: prefix, brush: stroke.brush)
+        }
+        live += StrokeGeometry.tail(samples: prefix, brush: stroke.brush)
+        XCTAssertEqual(live, StrokeGeometry.mesh(stroke))
+        XCTAssertEqual(live.count % 3, 0)
+        XCTAssertTrue(live.allSatisfy(\.isFinite))
+        XCTAssertFalse(live.isEmpty)
+    }
+    func testSingleTapHasGeometryAndPressureChangesWidth() {
+        XCTAssertEqual(StrokeGeometry.mesh(InkStroke(samples: [sample(0, 0)])).count, InkBrush().diskSides * 3)
+        let brush = InkBrush(width: 10, pressureEnabled: true)
+        XCTAssertEqual(brush.radius(pressure: 0), 1, accuracy: 1e-9)
+        XCTAssertEqual(brush.radius(pressure: 1), 5, accuracy: 1e-9)
+        XCTAssertLessThan(brush.radius(pressure: 0.2), brush.radius(pressure: 0.8))
+    }
+    func testHistoryGroupsSymmetryAndInvalidatesRedoBranch() {
+        var document = DrawingDocument(), history = StrokeHistory()
+        let a = InkStroke(samples: [sample(1, 1)]), b = InkStroke(samples: [sample(2, 2)])
+        history.recordNewStroke(a, in: &document)
+        history.recordNewStroke(b, in: &document)
+        XCTAssertTrue(history.undo(in: &document))
+        XCTAssertEqual(document.strokes, [a])
+        XCTAssertTrue(history.redo(in: &document))
+        XCTAssertEqual(document.strokes, [a, b])
+        history.undo(in: &document)
+        document.symmetry.repetitions = 64
+        let c = InkStroke(symmetry: document.symmetry, samples: [sample(3, 3)])
+        history.recordNewStroke(c, in: &document)
+        XCTAssertFalse(history.redo(in: &document))
+        XCTAssertEqual(document.strokes[0].symmetry.repetitions, 8)
+        XCTAssertEqual(document.strokes[1].symmetry.repetitions, 64)
+    }
+    func testDocumentRoundTripAndValidation() throws {
+        var document = DrawingDocument()
+        document.strokes = [InkStroke(samples: [sample(15, 20)])]
+        try document.validate()
+        let decoded = try JSONDecoder().decode(DrawingDocument.self, from: JSONEncoder().encode(document))
+        XCTAssertEqual(document, decoded)
+        document.symmetry.repetitions = 65
+        XCTAssertThrowsError(try document.validate())
+        document.symmetry.repetitions = 8
+        document.strokes[0].samples[0].point.x = .nan
+        XCTAssertThrowsError(try document.validate())
+    }
+    func testContinuousDottingCannotPostponeSaveDeadline() {
+        var schedule = SaveSchedule()
+        for i in 0..<10 { schedule.edited(at: Double(i) * 0.2) }
+        XCTAssertFalse(schedule.isDue(at: 1.9))
+        XCTAssertTrue(schedule.isDue(at: 2.0))
+        schedule.saved()
+        XCTAssertFalse(schedule.isDue(at: 10))
+        schedule.edited(at: 11)
+        XCTAssertFalse(schedule.isDue(at: 11.4))
+        XCTAssertTrue(schedule.isDue(at: 11.5))
+    }
+    func testFinelinerConstantWidthAndAdaptiveRoundTips() {
+        let brush = InkBrush(width: 40)
+        XCTAssertEqual(brush.radius(pressure: 0), brush.radius(pressure: 1))
+        XCTAssertGreaterThan(brush.diskSides, 12)
+        let sagitta = 20 * (1 - cos(.pi / Double(brush.diskSides)))
+        XCTAssertLessThanOrEqual(sagitta, 0.031)
+    }
+    func testVersionOneDocumentsPreserveOriginalBrushGeometry() throws {
+        let original = DrawingDocument()
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        json["version"] = 1; json.removeValue(forKey: "storageRevision")
+        json["brush"] = ["width": 5]
+        let decoded = try JSONDecoder().decode(DrawingDocument.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.storageRevision, 0)
+        XCTAssertTrue(decoded.brush.pressureEnabled)
+        XCTAssertEqual(decoded.brush.stabilization, 0)
+        XCTAssertEqual(decoded.brush.diskSides, 12)
+    }
+    func testInputReplayRejectsDuplicateSamplesAndDoesNotPersistPredictions() throws {
+        var session = StrokeSession(brush: InkBrush(stabilization: 0), symmetry: SymmetryConfiguration(),
+                                    existingSamples: 0, existingVertices: 0)
+        let first = sample(20, 20, time: 1), second = sample(25, 35, time: 2)
+        XCTAssertFalse(try session.append(first).isEmpty)
+        XCTAssertTrue(try session.append(first).isEmpty)
+        _ = try session.append(second)
+        let confirmed = session.stroke
+        XCTAssertFalse(session.preview(predictions: [sample(100, 80, time: 3)]).isEmpty)
+        XCTAssertEqual(session.stroke, confirmed)
+        XCTAssertEqual(session.stroke.samples, [first, second])
+    }
+    func testStabilizerReducesJitterWithoutChangingTimestamps() throws {
+        var session = StrokeSession(brush: InkBrush(stabilization: 0.75), symmetry: SymmetryConfiguration(),
+                                    existingSamples: 0, existingVertices: 0)
+        for i in 0..<100 {
+            _ = try session.append(sample(Double(i), i % 2 == 0 ? 3 : -3, time: Double(i)/240))
+        }
+        let mean = session.stroke.samples.dropFirst(10).reduce(0) { $0 + abs($1.point.y) } / 90
+        XCTAssertLessThan(mean, 1)
+        XCTAssertEqual(session.stroke.samples.last?.time, 99.0/240)
+    }
+    func testInputBudgetStopsBeforeDocumentBecomesUnsaveable() throws {
+        var session = StrokeSession(brush: InkBrush(stabilization: 0), symmetry: SymmetryConfiguration(),
+                                    existingSamples: 0, existingVertices: DrawingLimits.vertexCount - 2000)
+        var stopped = false
+        for i in 0..<1000 {
+            do { _ = try session.append(sample(Double(i) * 3, Double(i % 2) * 4, time: Double(i))) }
+            catch DocumentError.memoryLimit { stopped = true; break }
+        }
+        XCTAssertTrue(stopped)
+        XCTAssertFalse(session.stroke.samples.isEmpty)
+        XCTAssertLessThanOrEqual(StrokeGeometry.estimatedVertexCount(session.stroke), 2000)
+        var d = DrawingDocument(); d.strokes = [session.stroke]
+        try d.validate()
+    }
+}

@@ -1,0 +1,50 @@
+name: Apple validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package iPad source
+        run: python3 tools/package_ipad.py
+      - name: Preserve iPad project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ornamentalist-iPad
+          path: dist/Ornamentalist-iPad.zip
+      - name: Test actual Swift geometry, history and persistence
+        run: swift test
+      - name: Generate cloud-only Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Select an available iPad simulator
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))['devices']
+          candidates = [d for runtime, group in devices.items() if 'iOS' in runtime for d in group if 'iPad' in d['name']]
+          if not candidates:
+              raise SystemExit('No iPad simulator is installed on this runner')
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write('IPAD_SIMULATOR=' + candidates[-1]['udid'] + '\n')
+          PY
+      - name: Build native app and run PNG and Metal tests
+        run: >-
+          xcodebuild test -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -derivedDataPath DerivedData -resultBundlePath AppleTests.xcresult
+          CODE_SIGNING_ALLOWED=NO
+      - name: Preserve Apple test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-test-results
+          path: AppleTests.xcresult
+          if-no-files-found: ignore
