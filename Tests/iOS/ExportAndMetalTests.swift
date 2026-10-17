@@ -107,7 +107,7 @@ final class ExportAndMetalTests: XCTestCase {
         XCTAssertEqual(d.strokes[0].samples.count, 2)
     }
     private func pixel(_ image: CGImage, x: Int, y: Int) throws -> [UInt8] {
-        let cropped = try XCTUnwrap(image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)))
+        let cropped = try XCTUnwrap(image.cropping(to: CGRect(x: CGFloat(x), y: CGFloat(y), width: 1, height: 1)))
         var bytes = [UInt8](repeating: 0, count: 4)
         try bytes.withUnsafeMutableBytes {
             let context = try XCTUnwrap(CGContext(data: $0.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
@@ -115,5 +115,33 @@ final class ExportAndMetalTests: XCTestCase {
             context.draw(cropped, in: CGRect(x: 0, y: 0, width: 1, height: 1))
         }
         return bytes
+    }
+    @MainActor
+    func testRendererTimingSampleAtEightAnd64Copies() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
+        var report: [String] = []
+        for repetitions in [8, 64] {
+            var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+            d.symmetry = SymmetryConfiguration(repetitions: repetitions, center: Point(x: 64, y: 64))
+            for i in 0..<48 {
+                let samples = (0..<12).map { j in
+                    StrokeSample(point: Point(x: 70 + Double(j), y: 32 + Double(i % 8) + sin(Double(j) * 0.2) * 8),
+                                 pressure: 1, altitude: 1, azimuth: 0, time: Double(j))
+                }
+                d.strokes.append(InkStroke(brush: InkBrush(width: 2, stabilization: 0), symmetry: d.symmetry, samples: samples))
+            }
+            let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+            try await renderer.synchronize(d.strokes)
+            let start = ProcessInfo.processInfo.systemUptime
+            for _ in 0..<3 {
+                _ = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+            }
+            let milliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1000 / 3
+            report.append("\(repetitions) copies · 48 source strokes · mean render+readback \(milliseconds) ms · \(renderer.allocatedVertexCount) source vertices")
+            XCTAssertLessThanOrEqual(renderer.allocatedVertexCount, DrawingLimits.vertexCount)
+        }
+        let attachment = XCTAttachment(string: report.joined(separator: "\n") + "\nSimulator timings include readback; they are not physical iPad latency or FPS.")
+        attachment.name = "8-and-64-copy-rendering-samples"; attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

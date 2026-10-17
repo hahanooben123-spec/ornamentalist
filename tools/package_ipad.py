@@ -46,7 +46,7 @@ def main():
     (output / "SHA256.txt").write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
     print(f"Verified ZIP byte-for-byte: {len(files)} files, {archive.stat().st_size:,} bytes.")
     print(f"Archive: {archive}")
-    print("Swift compilation, XCTest, Metal execution, and device acceptance remain unrun.")
+    print("Packaging does not compile Swift. See GitHub Actions for Apple test results; device acceptance is separate.")
 
 
 if __name__ == "__main__":
