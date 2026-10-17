@@ -15,6 +15,7 @@ struct StudioView: View {
     @State private var importing = false
     @State private var renameTarget: ProjectSummary?
     @State private var projectName = ""
+    @State private var performanceText: String?
     private let exportService = ExportService()
 
     var body: some View {
@@ -44,6 +45,10 @@ struct StudioView: View {
             case .failure(let error): model.error = error.localizedDescription
             }
         }
+        .alert("Drawing performance", isPresented: Binding(get: { performanceText != nil }, set: { if !$0 { performanceText = nil } })) {
+            Button("Copy report") { UIPasteboard.general.string = performanceText; performanceText = nil }
+            Button("OK", role: .cancel) { performanceText = nil }
+        } message: { Text(performanceText ?? "") }
         .alert("Name drawing", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Drawing name", text: $projectName)
             Button("Cancel", role: .cancel) { renameTarget = nil }
@@ -181,6 +186,7 @@ struct StudioView: View {
             Menu {
                 Toggle("Draw with finger", isOn: $model.fingerDrawing)
                 Button("Reset canvas view", systemImage: "arrow.counterclockwise") { model.resetViewToken = UUID() }
+                Button("Performance report", systemImage: "speedometer") { performanceText = model.rendererDiagnostics?() }
             } label: { Label("Canvas", systemImage: "hand.draw") }
         }
         .font(.subheadline)

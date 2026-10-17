@@ -25,6 +25,30 @@ final class MetalCanvasRenderer {
     private var matrixCache: [SymmetryConfiguration: [SIMD4<Float>]] = [:]
     private(set) var allocatedVertexCount = 0
     private var sealedVertexCount = 0
+    private var cpuFrameMilliseconds: [Double] = []
+    private var gpuFrameMilliseconds: [Double] = []
+    private var deferredFrames = 0
+
+    func performanceReport() -> String {
+        func timing(_ values: [Double]) -> String {
+            guard !values.isEmpty else { return "No samples yet" }
+            let sorted = values.sorted()
+            let median = sorted[sorted.count / 2]
+            let p95 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+            return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
+        }
+        let bytes = (allocatedVertexCount + sealedVertexCount + scratch.count) * MemoryLayout<SIMD2<Float>>.stride
+        return "CPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+    }
+    private func recordCPU(_ milliseconds: Double) {
+        cpuFrameMilliseconds.append(milliseconds)
+        if cpuFrameMilliseconds.count > 240 { cpuFrameMilliseconds.removeFirst() }
+    }
+    private func recordGPU(_ milliseconds: Double) {
+        guard milliseconds > 0 else { return }
+        gpuFrameMilliseconds.append(milliseconds)
+        if gpuFrameMilliseconds.count > 240 { gpuFrameMilliseconds.removeFirst() }
+    }
 
     init(view: MTKView) throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
@@ -133,8 +157,10 @@ final class MetalCanvasRenderer {
 
     func draw(view: MTKView, document: DrawingDocument, viewport: Viewport,
               active: InkStroke?, preview: [Point], guides: Bool) throws {
+        let started = ProcessInfo.processInfo.systemUptime
         // Never block the touch delivery thread when the GPU is behind.
         guard inFlight.wait(timeout: .now()) == .success else {
+            deferredFrames += 1
             view.setNeedsDisplay()
             return
         }
@@ -144,9 +170,16 @@ final class MetalCanvasRenderer {
             return
         }
         let gate = inFlight
-        command.addCompletedHandler { _ in gate.signal() }
+        command.addCompletedHandler { [weak self] command in
+            gate.signal()
+            let gpu = (command.gpuEndTime - command.gpuStartTime) * 1000
+            Task { @MainActor in self?.recordGPU(gpu) }
+        }
         // Even an allocation error closes the encoder and submits its resources.
-        defer { encoder.endEncoding(); command.present(drawable); command.commit() }
+        defer {
+            encoder.endEncoding(); command.present(drawable); command.commit()
+            recordCPU((ProcessInfo.processInfo.systemUptime - started) * 1000)
+        }
         try encodeScene(encoder: encoder, document: document, viewport: viewport,
                         viewSize: Point(x: Double(view.bounds.width), y: Double(view.bounds.height)),
                         active: active, preview: preview, guides: guides)

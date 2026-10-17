@@ -20,6 +20,7 @@ final class StudioModel: ObservableObject {
     private let exportService = ExportService()
     // Canvas exposes confirmed ink only; no predicted points enter a checkpoint.
     var captureActiveStroke: (() -> InkStroke?)?
+    var rendererDiagnostics: (() -> String)?
     private(set) var generation = 0
     private var writeSequence = 0
     private var schedule = SaveSchedule()
@@ -206,7 +207,7 @@ final class StudioModel: ObservableObject {
                 try await repository.storeThumbnail(thumbnail, id: d.id, generation: d.storageRevision)
             } catch { self.error = "Drawing saved, but its preview could not be generated: \(error.localizedDescription)" }
         }
-        document = nil; history = StrokeHistory(); captureActiveStroke = nil
+        document = nil; history = StrokeHistory(); captureActiveStroke = nil; rendererDiagnostics = nil
         await refresh()
     }
 }

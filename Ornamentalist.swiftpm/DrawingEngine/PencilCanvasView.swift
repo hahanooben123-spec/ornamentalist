@@ -38,6 +38,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             delegate = self
         } catch { report(error) }
         model.captureActiveStroke = { [weak self] in self?.session?.stroke }
+        model.rendererDiagnostics = { [weak self] in self?.renderer?.performanceReport() ?? "Renderer unavailable" }
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panCanvas(_:)))
         pan.minimumNumberOfTouches = 2; pan.maximumNumberOfTouches = 2
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinchCanvas(_:)))
