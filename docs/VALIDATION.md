@@ -2,7 +2,7 @@
 
 Local checks: Swift grammar parsing, build YAML/source paths and byte-for-byte ZIP integrity. Swift/Apple compilation runs on [GitHub Actions](https://github.com/hahanooben123-spec/ornamentalist/actions/workflows/apple-validation.yml); see the run for the tested commit and pass/fail status. A syntax parse does not type-check Swift. No physical iPad/Pencil reliability or latency result is claimed.
 
-Version 0.3.1 adds explicit source-list equality checks and actual SwiftPM target-source discovery. The latter replaces only the AppleProductTypes product with a standard executable product in a temporary copy, retains the exact app target declaration and checks all 21 paths, including DrawingLimits.swift. This does not reproduce iPad preview/cache integration.
+Version 0.3.1 adds explicit source-list equality checks and actual SwiftPM target-source discovery. The latter replaces only the AppleProductTypes product with a standard executable product in a temporary copy, retains the exact app target declaration and checks all app paths (23 in version 0.4.0), including DrawingLimits.swift. This does not reproduce iPad preview/cache integration.
 
 ## Included automated checks
 
@@ -33,6 +33,10 @@ The cloud workflow uses the same app source as the iPad app playground. It does 
 Version 0.3.0 adds native checks of live and committed mirrored Metal pixels, hidden-layer omission in transparent PNG, visibility invalidation and 64-sector/128-transform rendering. A model test freezes layer edits during a stroke and checks locked-layer input eligibility and deleted-ink restoration. The new UI flow toggles Mirror, creates/renames/hides/locks/reorders/deletes/undoes a layer, closes/reopens and verifies the layer selection and Mirror setting. See [the additional physical-iPad checklist](MIRROR-OG-LAG.md).
 
 Another model/view regression immediately undoes a stroke before asynchronous canvas preparation starts, synchronizes again and verifies that input is no longer blocked by a stale preparation flag.
+
+Version 0.4.0 adds eight portable tests covering all 14 preset geometries and settings, live/reopened parity with prediction isolation, event-rate-independent dot spacing, stable seeded scatter and density, legacy decoding, soft coverage, budget rejection before a large allocation, and brush/layer persistence through editable export. Native tests read actual Metal/PNG pixels for separate mirrored dots and gaps, live/committed/reopened equivalence, feathered alpha with cross-renderer tolerance, hidden-layer omission and smoke rendering every preset. A model test freezes brush changes during input and saves settings without changing old ink; a UI flow selects dot/shading families, adjusts opacity and checks selection after reopening. Results are recorded in BUILD_STATUS.md.
+
+Physical brush acceptance: tap and draw slow/fast curves with Dots/Fine dots, compare spacing at different speeds, overlap Soft shader/Airbrush passes, adjust stipple density, enable Mirror, switch/hide layers, Undo/Redo, reopen and export transparent PNG. Confirm that soft shading and dot patterns keep their appearance and that the panel scrolls with the close control available in portrait and multitasking. Dense mirrored shading still needs actual-device responsiveness/memory measurements.
 
 ## Real iPad checklist
 

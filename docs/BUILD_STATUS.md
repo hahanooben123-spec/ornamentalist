@@ -1,6 +1,14 @@
 # Verified build status — 18 October 2026
 
-## Current: 0.3.1 explicit playground target sources
+## Current: 0.4.0 brush library
+
+Fourteen procedural black brushes are implemented: fineliner, brush pen, round/flat marker, soft shader, airbrush, dots/fine dots, light/dense stipple, dot shader, graphite, charcoal and hatching. The native Brushes panel groups them by family and previews real strokes. Stamped styles support opacity/spacing, scattered styles add density, and every style supports size/pressure/stabilization. The original fineliner geometry is preserved. See [the Danish brush guide](PENSLER.md).
+
+App source is at `3cc046a3e2bed1fe425499f12186c26aa7a6f992`; `419a361597d8abbdde5d5fd30f62412c143bf2a6` only simplifies a native test expression. [Apple validation run 39112471824](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39112471824) has passed the portable Swift tests and real SwiftPM source discovery for all 23 app source files. **All 58 tests passed: 35 portable Swift, 17 native unit and 6 native UI tests**, with zero failures or test skips. No Swift source compiler warnings were reported; simulator/tool/metadata notices remain. Debug actor checks were enabled on the iPad Air 11-inch (M3), iOS 26.2 simulator with Xcode 26.6. Native screenshots of Ink, Dots and Shading panels were visually inspected from this run (local `dist/ui-preview/39112471824`). Dot gaps/mirror/live-reopened pixels, soft alpha/PNG parity and persisted brush selection all pass. Document format 4 persists brush parameters and migrates older ink; older app versions reject format 4. Physical iPad/Pencil acceptance is pending.
+
+The initial run compiled the app and passed 35 portable tests, but a nested collection expression in a new native pixel test exceeded the Swift type-checker time budget. It was replaced with a simple typed pixel loop; app source was unchanged by that test-only correction.
+
+## Previous: 0.3.1 explicit playground target sources
 
 The device reports `DrawingLimits.swift not in a target` while updating previews, with a File Provider URL. The file is present and was inside the recursively discovered app target in previous packaging. The screenshot does not establish why the installed Swift Playground loses its target association. Version 0.3.1 lists all 21 source paths explicitly in the app manifest and checks that this list exactly matches delivered files. A new cloud check uses actual SwiftPM target discovery with only the AppleProductTypes product replaced by a standard executable product; it preserves the app target path/source list. That check passed in [run 39111214239](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39111214239), including `Core/DrawingLimits.swift`. The same run passed all **45 tests** (27 portable Swift, 13 native unit and 5 native UI) at app-source commit `a744031c397aea7936297353de7708e18107493f`, with zero failures. No Swift source compiler warnings were reported; tool/metadata notices remain. The exact AppleProductTypes manifest and iPad provider/preview cache remain device-only acceptance steps.
 

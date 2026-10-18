@@ -59,6 +59,6 @@ Version 0.4.0 skriver `Ornamentalist 0.4.0: app entry reached` ved opstart. Dere
 2. I Filer: pak den nye pakke ud i en ny lokal mappe under **På min iPad**. Behold den tidligere projektkopi.
 3. Åbn hele den nye **Ornamentalist.swiftpm**. Vælg **App → OrnamentalistApp** i editoren, og tryk ▶.
 
-Version 0.4.0 har en eksplicit liste med alle 21 appfiler i buildmålet. Hvis fejlen fortsætter, er det stadig nødvendigt at undersøge den konkrete Swift Playground-/filudbydertilknytning. Sletning af appdata er ikke en del af dette forsøg.
+Version 0.4.0 har en eksplicit liste med alle 23 appfiler i buildmålet. Hvis fejlen fortsætter, er det stadig nødvendigt at undersøge den konkrete Swift Playground-/filudbydertilknytning. Sletning af appdata er ikke en del af dette forsøg.
 
 Viser en tidligere version fejlen **Ambiguous use of 'cos'** i `StudioPanels`, indeholder 0.2.2 en rettelse af taltyperne i symmetriens forhåndsvisning. Åbn den fulde, opdaterede `Ornamentalist.swiftpm` frem for diagnosepakken i `Diagnostics`. Du behøver ikke længere ændre startskærmen til `Text(...)` for denne fejl.

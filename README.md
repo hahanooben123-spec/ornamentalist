@@ -41,14 +41,14 @@ Version 0.3.0 adds **Mirror** under Symmetry and a **Layers** panel: up to 32 la
 | Area | Phase 1 implementation |
 | --- | --- |
 | Input | Pencil-only default; coalesced samples; replaceable predicted tail; normalized pressure; stored altitude and azimuth |
-| Ink | Black fineliner, constant or pressure-sensitive width, stabilization presets, adaptive round tips; old brush geometry preserved |
+| Brushes | 14 ink, soft shading, dots/stipple and texture presets; size, stamp opacity/spacing/density, pressure and stabilization; old ink preserved |
 | Symmetry | Identity/off and 2–64 radial rotations; copies instanced during drawing; settings frozen per stroke |
 | Navigation | Invertible document/view transform; two-finger pan, anchored pinch zoom, anchored rotation; reset |
 | History | Undo/redo of whole source strokes and their instances; new strokes invalidate the redo branch |
 | Storage | Versioned JSON, atomic saves, rolling active-stroke recovery journal, prior valid backup, gallery previews, renaming and metadata index |
 | Export | White/transparent PNG, editable project export/import via Files, native iPad share sheet |
 
-There are no unimplemented core toolbar actions. Eraser, movable center UI, brush library, precision shapes, image import, stencil mode, physical dimensions, SVG, PDF, and cloud sync remain later work. Altitude and azimuth are retained but do not change this brush. Undo history is session-local; saved stroke geometry remains editable after reopening. Version 1 projects retain their original pressure and tip geometry when decoded; version 2 stores brush geometry version and storage revisions explicitly.
+There are no unimplemented core toolbar actions. Eraser, movable center UI, imported/custom brushes, precision shapes, image import, stencil mode, physical dimensions, SVG, PDF, and cloud sync remain later work. Altitude and azimuth are retained but do not change this brush. Undo history is session-local; saved stroke geometry remains editable after reopening. Version 1 projects retain their original pressure and tip geometry when decoded; version 2 stores brush geometry version and storage revisions explicitly.
 
 ## Source layout
 
@@ -60,7 +60,7 @@ Ornamentalist.swiftpm/
   Core/DrawingLimits.swift             geometry budgets and save scheduling
   Core/SymmetryEngine/                  radial configuration and transforms
   Core/StrokeModel/                     samples, input/stabilizer session, validation, history
-  Core/BrushEngine/                     black pressure-sensitive brush
+  Core/BrushEngine/                     procedural presets and deterministic dab sampler
   Core/StrokeGeometry.swift             shared incremental tessellation
   DrawingEngine/PencilCanvasView.swift  touch input and navigation
   CanvasRenderer/                       runtime Metal pipeline and buffers
@@ -72,7 +72,7 @@ project.yml                            cloud-only XcodeGen project description
 .github/workflows/apple-validation.yml  macOS build and test workflow
 ```
 
-LayerManager implements adding, renaming, hiding, locking, reordering and deleting layers with Undo/Redo. Version 3 stores ordered, visible/locked layers and an active layer; source strokes retain their layer and radial/mirror configuration. Renderer buffers, live predictions, and navigation state are not serialized. See [architecture](docs/ARCHITECTURE.md), [repository evaluation](docs/RESEARCH.md), and [verification checklist](docs/VALIDATION.md).
+LayerManager implements adding, renaming, hiding, locking, reordering and deleting layers with Undo/Redo. Version 4 adds brush presets/opacity/spacing/density to the version 3 ordered, visible/locked layers and active layer; source strokes retain their layer and radial/mirror configuration. Renderer buffers, live predictions, and navigation state are not serialized. See [architecture](docs/ARCHITECTURE.md), [repository evaluation](docs/RESEARCH.md), and [verification checklist](docs/VALIDATION.md).
 
 ## Apple build verification without owning a Mac
 
