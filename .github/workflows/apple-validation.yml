@@ -41,6 +41,19 @@ jobs:
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
           -derivedDataPath DerivedData -resultBundlePath AppleTests.xcresult
           CODE_SIGNING_ALLOWED=NO
+      - name: Export native UI screenshots
+        if: always()
+        run: |
+          if [ -d AppleTests.xcresult ]; then
+            xcrun xcresulttool export attachments --path AppleTests.xcresult --output-path UISnapshots
+          fi
+      - name: Preserve native UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-ui-screenshots
+          path: UISnapshots
+          if-no-files-found: ignore
       - name: Preserve Apple test results
         if: always()
         uses: actions/upload-artifact@v4

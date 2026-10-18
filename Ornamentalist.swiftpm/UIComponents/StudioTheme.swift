@@ -1,0 +1,58 @@
+import SwiftUI
+
+enum StudioStyle {
+    static let copper = Color(red: 0.65, green: 0.36, blue: 0.23)
+    static let workspace = Color(red: 0.13, green: 0.14, blue: 0.16)
+    static let paper = Color(red: 0.97, green: 0.95, blue: 0.91)
+}
+
+/// A vector ornament, used as a brand mark rather than a drawing thumbnail.
+struct StudioOrnament: Shape {
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) * 0.44
+        var path = Path()
+        for petal in 0..<12 {
+            let angle = Double(petal) * .pi / 6
+            func point(_ r: Double, _ offset: Double) -> CGPoint {
+                CGPoint(x: center.x + cos(angle + offset) * r,
+                        y: center.y + sin(angle + offset) * r)
+            }
+            path.move(to: center)
+            path.addCurve(to: point(radius, 0),
+                          control1: point(radius * 0.55, -0.65),
+                          control2: point(radius * 0.9, -0.3))
+            path.addCurve(to: center,
+                          control1: point(radius * 0.9, 0.3),
+                          control2: point(radius * 0.55, 0.65))
+        }
+        path.addEllipse(in: CGRect(x: center.x - radius * 0.2, y: center.y - radius * 0.2,
+                                   width: radius * 0.4, height: radius * 0.4))
+        return path
+    }
+}
+
+struct StudioPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.65 : 1)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+struct StudioIcon: View {
+    let symbol: String
+    var body: some View {
+        Image(systemName: symbol).font(.system(size: 18, weight: .medium))
+            .frame(width: 44, height: 44).contentShape(Rectangle())
+    }
+}
+
+extension View {
+    func studioSurface() -> some View {
+        self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
+    }
+}

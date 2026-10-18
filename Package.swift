@@ -12,6 +12,6 @@ let package = Package(
                           "UIComponents", "DocumentStore/StudioModel.swift"],
                 sources: ["Core", "DocumentStore/DocumentRepository.swift"]),
         .testTarget(name: "OrnamentalistCoreTests", dependencies: ["OrnamentalistCore"], path: "Tests",
-                    exclude: ["iOS"])
+                    exclude: ["iOS", "UI"])
     ]
 )

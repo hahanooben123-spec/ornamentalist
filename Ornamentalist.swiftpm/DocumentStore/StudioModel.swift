@@ -71,10 +71,12 @@ final class StudioModel: ObservableObject {
         recoveryNotice = recovered
         saveStatus = recovered ? "Recovered confirmed ink" : "Saved on iPad"
     }
-    func create() async {
+    func create(title: String = "Untitled Drawing") async {
         guard document == nil, !busy else { return }
         busy = true; defer { busy = false }
-        let d = DrawingDocument()
+        var d = DrawingDocument()
+        let cleaned = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+        d.title = cleaned.isEmpty ? "Untitled Drawing" : cleaned
         writeSequence += 1
         do { try await repository.save(d, generation: writeSequence); adopt(d, recovered: false) }
         catch { self.error = error.localizedDescription }

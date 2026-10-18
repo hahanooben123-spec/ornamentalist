@@ -11,16 +11,16 @@ A native iPad app playground in Swift and SwiftUI, with UIKit Pencil input and M
 1. Put `dist/Ornamentalist-iPad.zip` in Files on your iPad, using iCloud Drive, OneDrive, USB file transfer, or another file service you already use.
 2. Tap the ZIP in Files to extract it. Inside, find **Ornamentalist.swiftpm**. Open/share that app playground with **Swift Playground** (formerly Swift Playgrounds). Open the `.swiftpm` document, not the repository's root `Package.swift`.
 3. Let the app playground load, then tap **Run App**. No Swift packages, permissions, terminal, CocoaPods, or custom shader build phase are required.
-4. Tap **New canvas**. Draw on the white paper with Apple Pencil. The default is eight radial copies.
+4. Tap **New drawing**, give it a name, then **Create drawing**. Draw on the white paper with Apple Pencil. The default is eight radial copies.
 5. Use the `−`/`+` Stepper to set 1–64 copies. One means symmetry off. Existing strokes keep their original symmetry.
 6. Use two fingers to pan, pinch to zoom, or rotate. Navigation pauses during a Pencil stroke so a palm cannot shift its coordinate frame. **Canvas → Reset canvas view** restores the fit.
 7. Use Undo/Redo for complete symmetric strokes. Use **Save and export → Save drawing** to save immediately. Completed edits autosave after 0.5 seconds idle or two seconds of continuous editing, checked by a 0.25-second timer. Confirmed points of an active stroke are checkpointed separately. **Gallery** locks editing and saves before closing; tap a project to reopen and keep drawing.
 8. Use **Save and export → Export PNG** and choose **Save to Files** in the iPad share sheet. Export is 2048 × 2048 pixels, with either white or transparent background; guides are excluded.
 9. Use **Save and export → Export editable project** to save an `.ornamentalist.json` backup in Files. In Gallery, tap **Import project** to reopen it as a new editable project. Imports never overwrite the original.
-10. Touch and hold a gallery project and choose **Rename**. Thumbnails are created when you return to Gallery. The **Fineliner** menu controls pressure sensitivity and stabilization; new drawings default to constant width with 25% stabilization. The symmetry preset menu provides quick counts alongside the Stepper.
+10. Use the ellipsis on a gallery card, or touch and hold its preview, to **Rename**. Search and sort your drawings above the cards. Thumbnails are created when you return to Gallery. The floating **Fineliner** panel controls width, pressure and stabilization; **Symmetry** provides presets and a precise 1–64 Stepper. Changes apply to the next stroke.
 11. After a drawing test, open **Canvas → Performance report** to inspect and copy CPU submission/GPU timing samples and source-buffer memory. This does not measure Pencil-to-display latency or total app RAM.
 
-The UI follows the system light/dark appearance; the paper stays white. Apple Pencil draws by default. Optional **Canvas → Draw with finger** is for basic testing. Starting a two-finger gesture cancels an unfinished finger stroke. Finger mode is not the palm-rejection mode.
+The warm paper gallery and floating studio controls follow system light/dark appearance; **Canvas → Studio appearance** can override it. The drawing paper stays white. The upper-right focus button hides the controls; its replacement restores them. Panels overlay the canvas without changing its coordinate frame. Apple Pencil draws by default. Optional **Canvas → Draw with finger** is for basic testing. Starting a two-finger gesture cancels an unfinished finger stroke. Finger mode is not the palm-rejection mode.
 
 ### If Swift Playground rejects the packaged manifest
 
@@ -28,7 +28,7 @@ App playground manifest handling can vary across installed versions. Update Swif
 
 1. Create a new **App** in Swift Playground, named Ornamentalist.
 2. Remove its generated `MyApp.swift` and `ContentView.swift` source files. There must be exactly one `@main` declaration.
-3. Use the sidebar **+ → Insert from** to add all **15 `.swift` source files** inside the supplied `Ornamentalist.swiftpm` folders, excluding `Package.swift`. You can also add empty Swift files and paste each file's complete contents. Folder layout is organizational; all files belong to the same app target.
+3. Use the sidebar **+ → Insert from** to add all **19 `.swift` source files** inside the supplied `Ornamentalist.swiftpm` folders, excluding `Package.swift`. You can also add empty Swift files and paste each file's complete contents. Folder layout is organizational; all files belong to the same app target.
 4. Keep the new app's automatically generated manifest. Use an iPadOS 17+ deployment target and Swift 5 language mode if those options are exposed. The supplied source uses Swift 5.9 syntax.
 5. Run App again. You do not need the repository's `Tests`, cloud workflow, or `project.yml` on iPad.
 

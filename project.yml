@@ -38,11 +38,22 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: studio.mandala.prototype.tests
+  OrnamentalistUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [Tests/UI]
+    dependencies:
+      - target: Ornamentalist
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: studio.mandala.prototype.uitests
 schemes:
   Ornamentalist:
     build:
       targets:
         Ornamentalist: all
         OrnamentalistTests: [test]
+        OrnamentalistUITests: [test]
     test:
-      targets: [OrnamentalistTests]
+      targets: [OrnamentalistTests, OrnamentalistUITests]
