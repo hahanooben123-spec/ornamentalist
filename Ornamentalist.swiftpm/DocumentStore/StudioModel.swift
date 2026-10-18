@@ -165,7 +165,9 @@ final class StudioModel: ObservableObject {
         do { guard try edit(&after) else { return } }
         catch { self.error = error.localizedDescription; return }
         history.recordLayerChange(from: before, to: after)
-        document = after; recountInk(); changed()
+        document = after
+        if before.strokes.count != after.strokes.count { recountInk() }
+        changed()
     }
     func addLayer() { editLayers { LayerManager.add(in: &$0) } }
     func renameLayer(_ id: UUID, name: String) { editLayers { LayerManager.rename(id, name: name, in: &$0) } }

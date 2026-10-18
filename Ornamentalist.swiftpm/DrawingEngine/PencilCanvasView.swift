@@ -107,7 +107,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         guard let document = model.document, bounds.width > 0, bounds.height > 0 else { return }
         do {
             try renderer?.draw(view: self, document: document, viewport: viewport,
-                               active: active, preview: preview, guides: model.guides)
+                               active: active, preview: preview, guides: model.guides, revision: model.generation)
         } catch { report(error) }
     }
     private var canvasMatrix: Matrix {

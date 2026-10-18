@@ -3,6 +3,24 @@ import MetalKit
 @testable import Ornamentalist
 
 final class RendererCacheTests: XCTestCase {
+    func testLayerPreviewCacheTracksContentRatherThanVisibilityOrOpacity() async throws {
+        var d = fixture(); let id = d.activeLayerID
+        let service = ExportService()
+        let first = try await service.layerThumbnail(d, id: id)
+        d.layers[1].isVisible = false; d.layers[1].opacity = 0.2
+        let hidden = try await service.layerThumbnail(d, id: id)
+        XCTAssertEqual(first, hidden)
+        let warmCount = await service.layerPreviewRenders
+        XCTAssertEqual(warmCount, 1)
+        let p = StrokeSample(point: Point(x: 64, y: 64), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        d.strokes.append(InkStroke(brush: InkBrush(width: 12), symmetry: d.symmetry,
+            samples: [p], layerID: id, color: InkColor(green: 1)))
+        let changed = try await service.layerThumbnail(d, id: id)
+        XCTAssertNotEqual(changed, first)
+        let changedCount = await service.layerPreviewRenders
+        XCTAssertEqual(changedCount, 2)
+    }
+
     private func fixture(copies: Int = 8) -> DrawingDocument {
         var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
         d.symmetry = SymmetryConfiguration(repetitions: copies, center: Point(x: 64, y: 64), mirror: true)

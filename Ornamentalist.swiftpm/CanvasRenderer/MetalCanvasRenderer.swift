@@ -71,10 +71,10 @@ final class MetalCanvasRenderer {
     private var guideKey: [Double] = []
     private var guideBuffers: [GPUChunk] = []
     private var matrixCache: [SymmetryConfiguration: MTLBuffer] = [:]
-    private var sceneStrokeIDs: [UUID] = []
-    private var sceneLayerIDs: [UUID] = []
-    private var sceneStrokes: [InkStroke] = []
     private var sceneLayerStrokes: [UUID: [InkStroke]] = [:]
+    private var scenePaintKeys: [UUID: LayerPaintKey] = [:]
+    private var sceneDocumentID: UUID?
+    private var sceneRevision: Int?
     private(set) var allocatedVertexCount = 0
     private var sealedVertexCount = 0
     private var cpuFrameMilliseconds: [Double] = []
@@ -246,8 +246,11 @@ final class MetalCanvasRenderer {
     func cancel() { begin() }
 
     func draw(view: MTKView, document: DrawingDocument, viewport: Viewport,
-              active: InkStroke?, preview: [BrushVertex], guides: Bool) throws {
+              active: InkStroke?, preview: [BrushVertex], guides: Bool, revision: Int) throws {
         let started = ProcessInfo.processInfo.systemUptime
+        if sceneDocumentID != document.id || sceneRevision != revision {
+            updateScene(document); sceneRevision = revision
+        }
         // Never block the touch delivery thread when the GPU is behind.
         guard inFlight.wait(timeout: .now()) == .success else {
             deferredFrames += 1
@@ -317,15 +320,6 @@ final class MetalCanvasRenderer {
             }
             try encode(guideBuffers, symmetry: identity, transform: transform, size: viewSize,
                        canvas: document.size, color: SIMD4(0.1, 0.5, 0.55, 0.22), encoder: encoder)
-        }
-        }
-        if layerOnly == nil {
-        let strokeIDs = document.strokes.map(\.id)
-        let layerIDs = document.layers.filter(\.isVisible).map(\.id)
-        if sceneStrokeIDs != strokeIDs || sceneLayerIDs != layerIDs {
-            sceneStrokeIDs = strokeIDs; sceneLayerIDs = layerIDs
-            sceneStrokes = document.visibleStrokes
-            sceneLayerStrokes = Dictionary(grouping: sceneStrokes, by: \.layerID)
         }
         }
         if backgroundOnly { return }
@@ -413,7 +407,16 @@ final class MetalCanvasRenderer {
     }
 
     private func paintKey(_ layer: DrawingLayer) -> LayerPaintKey {
-        LayerPaintKey(id: layer.id, raster: layer.raster?.id, strokes: (sceneLayerStrokes[layer.id] ?? []).map(\.id))
+        scenePaintKeys[layer.id] ?? LayerPaintKey(id: layer.id, raster: layer.raster?.id, strokes: [])
+    }
+
+    private func updateScene(_ document: DrawingDocument) {
+        sceneDocumentID = document.id
+        sceneLayerStrokes = Dictionary(grouping: document.strokes, by: \.layerID)
+        scenePaintKeys = Dictionary(uniqueKeysWithValues: document.layers.map { layer in
+            (layer.id, LayerPaintKey(id: layer.id, raster: layer.raster?.id,
+                                    strokes: (sceneLayerStrokes[layer.id] ?? []).map(\.id)))
+        })
     }
 
     private func renderStaticGroup(_ layers: [DrawingLayer], previous: [LayerCompositeKey]?,
@@ -618,6 +621,7 @@ final class MetalCanvasRenderer {
                          active: InkStroke? = nil, preview: [BrushVertex] = [], guides: Bool = false,
                          reference: Bool = false) async throws -> [UInt8] {
         guard width > 0, height > 0, width <= 2048, height <= 2048 else { throw DocumentError.invalidData }
+        updateScene(document); sceneRevision = nil
         let outputDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
                                       width: width, height: height, mipmapped: false)
         outputDescriptor.storageMode = .shared

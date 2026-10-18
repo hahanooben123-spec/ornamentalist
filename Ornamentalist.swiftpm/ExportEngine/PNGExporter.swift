@@ -134,6 +134,18 @@ enum PNGExporter {
 }
 
 actor ExportService {
+    private struct PreviewIdentity: Hashable {
+        let document: UUID
+        let layer: UUID
+    }
+    private struct Preview {
+        let raster: UUID?
+        let strokes: [UUID]
+        let png: Data
+    }
+    private var layerPreviews: [PreviewIdentity: Preview] = [:]
+    private var previewOrder: [PreviewIdentity] = []
+    private(set) var layerPreviewRenders = 0
     func sampledColor(_ document: DrawingDocument, point: Point) throws -> InkColor {
         try Task.checkCancellation()
         return try PNGExporter.sample(document: document, point: point)
@@ -141,9 +153,21 @@ actor ExportService {
     func layerThumbnail(_ document: DrawingDocument, id: UUID) throws -> Data {
         try Task.checkCancellation()
         guard var layer = document.layers.first(where: { $0.id == id }) else { throw DocumentError.invalidData }
+        let identity = PreviewIdentity(document: document.id, layer: id)
+        let strokes = document.strokes.filter { $0.layerID == id }
+        let ids = strokes.map(\.id)
+        if let preview = layerPreviews[identity], preview.raster == layer.raster?.id, preview.strokes == ids {
+            return preview.png
+        }
         layer.isVisible = true; layer.opacity = 1
-        var d = document; d.layers = [layer]; d.activeLayerID = id; d.strokes = d.strokes.filter { $0.layerID == id }
-        return try PNGExporter.data(document: d, transparent: true, maximumSide: 80)
+        var d = document; d.layers = [layer]; d.activeLayerID = id; d.strokes = strokes
+        let data = try PNGExporter.data(document: d, transparent: true, maximumSide: 80)
+        try Task.checkCancellation()
+        layerPreviewRenders += 1
+        previewOrder.removeAll { $0 == identity }; previewOrder.append(identity)
+        layerPreviews[identity] = Preview(raster: layer.raster?.id, strokes: ids, png: data)
+        while previewOrder.count > 32 { layerPreviews.removeValue(forKey: previewOrder.removeFirst()) }
+        return data
     }
     func mergedLayer(_ document: DrawingDocument, topID: UUID) throws -> LayerRaster {
         try Task.checkCancellation()
