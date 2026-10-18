@@ -1,6 +1,12 @@
 # Verified build status — 18 October 2026
 
-## Current: 0.6.0 editing tools and layer operations
+## Current: 0.7.0 rendering performance
+
+Bounded static-group and per-sample active-layer caches, reusable render targets, memoryless transient MSAA on Apple GPUs, incremental committed ink, revision-based scene preparation and cached layer thumbnails are implemented. Pencil completion reuses its incrementally accumulated conservative vertex budget. A visible version label is available in Canvas. Document format remains 6. See [performance behavior and device checks](HASTIGHED.md).
+
+Apple validation is in progress. Local syntax/source membership/ZIP checks pass; native pixel parity, cache reuse, incremental commits, undo/redo, navigation/layer invalidation, memory fallback, concurrent readbacks and comparative simulator timing tests are being run. No physical iPad speedup or latency measurement is claimed before device acceptance.
+
+## Previous: 0.6.0 editing tools and layer operations
 
 A layer-local hard/soft eraser, a visible-composite eyedropper, asynchronous transparent layer previews, exact pattern-preserving duplication and appearance-preserving raster Merge down are implemented. Eraser strokes retain symmetry and participate in Undo/Redo. Merging is one structural history action; after closing, the merged transparent PNG base remains editable by new ink/erasers while the original source strokes are no longer separate. Format 6 persists operations, clone seeds and bounded raster bases. See [the editing guide](REDIGERING-OG-LAG.md).
 

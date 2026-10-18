@@ -1,4 +1,4 @@
-# Drawing architecture — 0.6.0
+# Drawing architecture — 0.7.0
 
 The document stores confirmed, stabilized samples in a fixed 2048 × 2048 coordinate system, with pressure, altitude, azimuth, timestamp, brush settings, sRGB color, operation, layer membership and frozen radial/mirror symmetry per stroke. Merged layers can additionally store a bounded transparent PNG base; navigation transforms remain transient. Existing version 1 brush geometry is retained; version 2 adds pressure choice, stabilization, adaptive tips and storage revisions. Version 3 adds ordered layers and reflection, version 4 procedural brushes and version 5 sRGB colors and layer group opacity. Legacy drawings decode to one visible, unlocked layer with Mirror off.
 
@@ -50,7 +50,9 @@ Gallery loads small metadata indexes when primary size/modification time still m
 
 Document, symmetry, pressure mapping, history, and triangle generation depend on Foundation only. MetalKit and UIKit remain outside the model. Core Graphics replays the same tessellated geometry for PNG output in document coordinates, using one nonzero fill path per instance. Output excludes guides, predictions, viewport navigation, and interface chrome.
 
-The renderer redraws committed chunks for each requested frame and has no tile cache. It now enforces a two-million-source-vertex budget, reconstructs missing meshes off the main actor, and caches paper, translucent guides and symmetry coefficients. Guides are behind artwork. Immutable uploads avoid races with frames already on the GPU. Frame diagnostics expose median/p95 CPU submission, available GPU execution timings, deferred frames and source vertex-buffer bytes; they do not establish touch-to-photon latency or total RAM. Physical-device profiling remains necessary.
+The renderer caches static groups below/above the active layer and retains that layer's committed MSAA samples. Warm live frames restore those samples and encode only current/predicted ink. Append-only commits update the active cache incrementally; other content/view changes invalidate affected caches. Model revisions avoid per-frame scans of all committed strokes. Work targets use memoryless MSAA on Apple GPUs; MTKView has a single-sample drawable. Artwork retains up to four samples. Persistent viewport caches have a 160 MiB budget, excluding work targets/source geometry. Memory pressure/allocation failure uses the uncached layer path. See HASTIGHED.md for limits and device acceptance.
+
+The two-million-source-vertex budget, off-main missing-mesh reconstruction and paper/guide/symmetry caches remain. Immutable uploads avoid GPU races. Diagnostics include CPU/GPU timings, deferred frames, vertex/cache bytes, working texture allocations and cache replay/update counters; they do not establish Pencil-to-screen latency or total RAM.
 
 ## Later phases
 
@@ -68,7 +70,7 @@ Document format 4 persists preset, opacity, spacing and density in each brush. M
 
 InkColor stores validated sRGB components in Foundation and converts HSB/HEX without a UIKit/SwiftUI dependency. StrokeSession captures color separately from the brush preset; changing presets cannot reset the selected color. Missing fields decode as black/full layer opacity. Format 5 adds the selected color, up to twelve recent colors, per-stroke colors and per-layer opacity. Layer history snapshots coalesce an opacity gesture into one undo command; brush/color settings are outside these snapshots.
 
-Opaque layers retain the direct MSAA drawing path. If any visible layer has opacity strictly between zero and one, Metal first draws paper/guides into the drawable, then resolves each visible layer's MSAA ink into a transparent texture and composites that premultiplied result once using layer opacity. One layer target and one MSAA target are reused sequentially for all layers in a command buffer. A separate nonblocking one-frame gate limits concurrent grouped display work; opaque frames retain the existing three-frame submission gate. Temporary group targets scale with drawable pixel count/sample count rather than layer count and are additional to the source-vertex budget. This path needs actual-device profiling.
+Version 0.5 introduced isolated MSAA layers for group opacity; version 0.7 caches those results and static groups. Group opacity is still applied once. The original replay path remains available for reference tests and memory fallback. All display frames now use the nonblocking one-frame gate; work resources are reused between frames and are additional to source geometry/cache budgets.
 
 Live and predicted ink is inserted with its layer, before higher layers, in both paths. Hidden/zero-opacity layers are omitted. Core Graphics wraps each visible layer in a transparency group with group alpha, preserving overlap behavior in white/transparent PNG and thumbnails. Native brush swatches use the selected stroke color and the same Core Graphics painter.
 

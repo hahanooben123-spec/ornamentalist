@@ -54,7 +54,7 @@ Cloud-testene kontrollerer kode og grafik i simulatoren. Pencil-følelse, håndf
 
 Ændringer på Windows og GitHub opdaterer ikke automatisk det projekt, du allerede har åbent i Swift Playground. Hent pakken fra den nye buildkørsel, pak den ud i en ny mappe i Filer, og åbn den nye `Ornamentalist.swiftpm`. Behold den tidligere kopi, især hvis den indeholder tegninger. Åbn hele pakken frem for kun at udskifte `OrnamentalistApp.swift`.
 
-Version 0.6.0 skriver `Ornamentalist 0.6.0: app entry reached` ved opstart. Derefter følger markører for synligt studio og afsluttet galleriindlæsning, hvis konsollen er tilsluttet. En tom konsol beviser ikke, hvor nedbruddet sker. Se [gennemgangen af opstarten](CRASH-AUDIT.md).
+Version 0.7.0 kan ses nederst i **Canvas** og i Drawing performance-rapporten. Konsollen skriver `Ornamentalist 0.7.0: app entry reached` ved opstart. Derefter følger markører for synligt studio og afsluttet galleriindlæsning, hvis konsollen er tilsluttet. En tom konsol beviser ikke, hvor nedbruddet sker. Se [gennemgangen af opstarten](CRASH-AUDIT.md) og [hastighedsvejledningen](HASTIGHED.md).
 
 ### Hvis en fil vises som “not in a target”
 
@@ -62,7 +62,7 @@ Version 0.6.0 skriver `Ornamentalist 0.6.0: app entry reached` ved opstart. Dere
 2. I Filer: pak den nye pakke ud i en ny lokal mappe under **På min iPad**. Behold den tidligere projektkopi.
 3. Åbn hele den nye **Ornamentalist.swiftpm**. Vælg **App → OrnamentalistApp** i editoren, og tryk ▶.
 
-Version 0.6.0 har en eksplicit liste med alle 29 appfiler i buildmålet. Hvis fejlen fortsætter, er det stadig nødvendigt at undersøge den konkrete Swift Playground-/filudbydertilknytning. Sletning af appdata er ikke en del af dette forsøg.
+Version 0.7.0 har en eksplicit liste med alle 29 appfiler i buildmålet. Hvis fejlen fortsætter, er det stadig nødvendigt at undersøge den konkrete Swift Playground-/filudbydertilknytning. Sletning af appdata er ikke en del af dette forsøg.
 
 ### Hvis Package.swift viser dubletter eller manifestfejl
 

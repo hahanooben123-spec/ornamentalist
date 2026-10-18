@@ -151,9 +151,50 @@ final class RendererCacheTests: XCTestCase {
             }
             let a = cached.sorted()[cached.count / 2], b = reference.sorted()[reference.count / 2]
             report.append("\(copies) sectors + Mirror, 36 strokes, 512px: cached median \(a) ms; reference median \(b) ms; ratio \(b / max(0.001, a))x")
+            for operation in [StrokeOperation.ink, .erase] {
+                var brush = BrushPreset.softShader.makeBrush(); brush.width = 12
+                var session = StrokeSession(brush: brush, symmetry: d.symmetry, existingSamples: 0, existingVertices: 0,
+                    layerID: d.activeLayerID, operation: operation)
+                renderer.begin(); cached = []; reference = []
+                for frame in 0..<7 {
+                    let point = Point(x: 74 + Double(frame), y: 43 + Double(frame) * 0.3)
+                    try renderer.append(session.append(StrokeSample(point: point, pressure: 1, altitude: 1, azimuth: 0, time: Double(frame))))
+                    for original in [false, true] {
+                        let start = ProcessInfo.processInfo.systemUptime
+                        _ = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 512, height: 512,
+                            active: session.stroke, reference: original)
+                        let elapsed = (ProcessInfo.processInfo.systemUptime - start) * 1000
+                        if frame > 0 {
+                            if original { reference.append(elapsed) } else { cached.append(elapsed) }
+                        }
+                    }
+                }
+                let liveA = cached.sorted()[cached.count / 2], liveB = reference.sorted()[reference.count / 2]
+                report.append("\(copies) sectors + Mirror, live \(operation), 512px: cached median \(liveA) ms; reference median \(liveB) ms; ratio \(liveB / max(0.001, liveA))x")
+                renderer.cancel()
+            }
         }
         let attachment = XCTAttachment(string: report.joined(separator: "\n") + "\nSimulator measurements include GPU wait and pixel readback. Not physical iPad latency/FPS.")
         attachment.name = "cached-versus-reference-rendering"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    @MainActor
+    func testMultipleStaticLayersCompositeInOrderAroundTheActiveLayer() async throws {
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 8, center: Point(x: 64, y: 64), mirror: true)
+        for _ in 0..<6 { _ = LayerManager.add(in: &d) }
+        d.activeLayerID = d.layers[3].id
+        for i in d.layers.indices {
+            d.layers[i].opacity = 0.4
+            let point = Point(x: 65 + Double(i), y: 35 + Double(i))
+            let sample = StrokeSample(point: point, pressure: 1, altitude: 1, azimuth: 0, time: 1)
+            let color = InkColor(red: Double(i % 3) * 0.4, green: 0.3, blue: Double(i % 2) * 0.8)
+            d.strokes.append(InkStroke(brush: InkBrush(width: 18), symmetry: d.symmetry, samples: [sample], layerID: d.layers[i].id, color: color))
+        }
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero)); try await renderer.synchronize(d.strokes, layers: d.layers)
+        let cached = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        let reference = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, reference: true)
+        assertPixels(cached, reference)
     }
 
     @MainActor
