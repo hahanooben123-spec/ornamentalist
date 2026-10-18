@@ -94,11 +94,15 @@ struct StudioPanelView: View {
                             .background(document.symmetry.repetitions == count ? StudioStyle.copperFill : Color.secondary.opacity(0.08),
                                         in: RoundedRectangle(cornerRadius: 12))
                     }.accessibilityLabel("Symmetry \(count)").accessibilityIdentifier("symmetry-\(count)")
+                        .accessibilityAddTraits(document.symmetry.repetitions == count ? .isSelected : [])
                 }
             }
             Stepper(value: Binding(get: { document.symmetry.repetitions }, set: { model.setRepetitions($0) }), in: 1...64) {
                 Text("\(document.symmetry.repetitions) copies").monospacedDigit()
             }.font(.subheadline)
+                .accessibilityLabel("Radial copies")
+                .accessibilityValue("\(document.symmetry.repetitions)")
+                .accessibilityIdentifier("symmetryCopies")
             Toggle("Show guides", isOn: $model.guides).font(.subheadline)
             Text("Changes apply to your next stroke. Existing lines keep their symmetry.")
                 .font(.caption).foregroundStyle(.secondary)

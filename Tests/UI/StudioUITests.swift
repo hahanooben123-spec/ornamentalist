@@ -33,8 +33,10 @@ final class StudioUITests: XCTestCase {
         app.buttons["panel-Symmetry"].tap()
         XCTAssertTrue(app.buttons["symmetry-16"].waitForExistence(timeout: 5))
         app.buttons["symmetry-16"].tap()
-        XCTAssertTrue(app.staticTexts["16 copies"].exists)
         screenshot("03-Symmetry")
+        XCTAssertTrue(app.buttons["symmetry-16"].isSelected)
+        let copies = app.descendants(matching: .any)["symmetryCopies"].firstMatch
+        XCTAssertTrue((copies.value as? String)?.contains("16") == true)
         app.buttons["closePanel"].tap()
         app.buttons["undo"].tap()
         XCTAssertTrue(app.buttons["redo"].isEnabled)
