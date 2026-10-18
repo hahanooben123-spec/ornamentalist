@@ -37,12 +37,25 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a') as f:
               f.write('IPAD_SIMULATOR=' + candidates[-1]['udid'] + '\n')
           PY
-      - name: Build native app and run PNG and Metal tests
+      - name: Compile native app and test bundle
+        timeout-minutes: 5
         run: >-
-          xcodebuild test -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          xcodebuild build-for-testing -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -derivedDataPath DerivedData
+          -only-testing:OrnamentalistTests
+          CODE_SIGNING_ALLOWED=NO
+      - name: Run native PNG and Metal tests
+        timeout-minutes: 6
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
           -derivedDataPath DerivedData -resultBundlePath AppleTests.xcresult
           -only-testing:OrnamentalistTests
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES
+          -default-test-execution-time-allowance 45
+          -maximum-test-execution-time-allowance 90
           CODE_SIGNING_ALLOWED=NO
       - name: Export native UI screenshots
         if: always()
