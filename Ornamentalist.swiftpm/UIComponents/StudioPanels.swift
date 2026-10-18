@@ -1,4 +1,5 @@
 import SwiftUI
+import Darwin
 
 enum StudioPanel: String, Identifiable {
     case brush = "Fineliner", symmetry = "Symmetry", canvas = "Canvas"
@@ -154,9 +155,11 @@ private struct SymmetryPreview: Shape {
         var p = Path()
         let radius = min(rect.width, rect.height) / 2
         for index in 0..<count {
-            let angle = Double(index) * 2 * .pi / Double(count)
+            let angle: Double = Double(index) * 2 * Double.pi / Double(count)
+            let dx: CGFloat = CGFloat(Darwin.cos(angle)) * radius
+            let dy: CGFloat = CGFloat(Darwin.sin(angle)) * radius
             p.move(to: CGPoint(x: rect.midX, y: rect.midY))
-            p.addLine(to: CGPoint(x: rect.midX + cos(angle) * radius, y: rect.midY + sin(angle) * radius))
+            p.addLine(to: CGPoint(x: rect.midX + dx, y: rect.midY + dy))
         }
         return p
     }

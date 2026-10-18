@@ -279,7 +279,7 @@ final class MetalCanvasRenderer {
     private func encode(_ chunks: [GPUChunk], symmetry: SymmetryConfiguration, transform: Matrix,
                         size: Point, canvas: Point, color: SIMD4<Float>, encoder: MTLRenderCommandEncoder) throws {
         // Layout is four aligned float4s in both Swift and Metal (64 bytes).
-        var uniforms: [SIMD4<Float>] = [
+        let uniforms: [SIMD4<Float>] = [
             SIMD4(Float(transform.a), Float(transform.b), Float(transform.c), Float(transform.d)),
             SIMD4(Float(transform.tx), Float(transform.ty), Float(size.x), Float(size.y)),
             SIMD4(Float(canvas.x), Float(canvas.y), 0, 0), color

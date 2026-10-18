@@ -1,6 +1,10 @@
 # Verified build status — 18 October 2026
 
-## Current: 0.2.1 startup audit
+## Current: 0.2.2 device compiler compatibility
+
+The physical iPad has now exposed an explicit `Ambiguous use of 'cos'` build error in StudioPanels. Version 0.2.2 removes mixed Double/CGFloat overload inference in the symmetry preview and related ornament. It also changes the unmutated Metal uniforms array to a constant. Local Swift grammar and byte-for-byte package checks pass. Apple compilation/tests for this change are pending; the 32-test result below belongs to 0.2.1. Running the corrected full package in the user's installed Swift Playground remains necessary.
+
+## Previous: 0.2.1 startup audit
 
 [Apple validation run 39105575507](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39105575507) passed at app-source commit `0c775afbf15b192eab876d31d1c6cb7ca4889f4e`: **32 tests passed**, comprising 19 portable Swift tests, 9 native unit tests and 4 UI tests. No test was skipped. Messages saying an attachment export was skipped refer to tests without screenshots, not skipped tests.
 

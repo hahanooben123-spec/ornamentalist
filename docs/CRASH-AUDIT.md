@@ -1,5 +1,15 @@
 # iPad startup audit — 18 October 2026
 
+## Confirmed device compiler error: 0.2.2 correction
+
+The latest device screenshot exposes a red **“Ambiguous use of 'cos'” in StudioPanels**. This is a confirmed build blocker; the accompanying yellow `uniforms` message is only an unmutated-variable warning. A generic “Crashed / Build failed” screen did not previously reveal this compiler diagnostic.
+
+`SymmetryPreview.path` combined a `Double` angle with a `CGFloat` radius in one expression. Version 0.2.2 explicitly calls `Darwin.cos`/`Darwin.sin` with a `Double`, converts their results to `CGFloat`, and then performs only `CGFloat` coordinate arithmetic. The related ornament in `StudioTheme` uses the same explicit boundary. The unmutated Metal uniform array is now a `let` constant. These changes preserve the mathematical values while removing overload ambiguity for the device compiler.
+
+The full app package is the next device test; the separate minimal diagnostic is no longer the first troubleshooting step. The screenshot establishes the build failure's reported cause, but does not prove there are no subsequent device errors. See BUILD_STATUS.md for validation of the corrected source.
+
+## Earlier investigation
+
 The physical iPad reports “Crashed” with an empty console. No crash report or device/OS details are available. **The cause is not established.** A passing Xcode simulator run cannot establish Swift Playground compatibility on this device.
 
 Subsequent device evidence: Swift Playground shows “Build failed”; replacing the main window with a plain `Text` still fails, but a newly created Apple-standard App project runs successfully. Replacing the window does not remove the other source files from compilation. The next isolation step is the separate one-source [diagnostic package](STARTTEST.md), which has not yet been run on the device.

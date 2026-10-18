@@ -1,4 +1,5 @@
 import SwiftUI
+import Darwin
 
 enum StudioStyle {
     static let copperFill = Color(red: 0.65, green: 0.36, blue: 0.23)
@@ -18,10 +19,11 @@ struct StudioOrnament: Shape {
         let radius = min(rect.width, rect.height) * 0.44
         var path = Path()
         for petal in 0..<12 {
-            let angle = Double(petal) * .pi / 6
-            func point(_ r: Double, _ offset: Double) -> CGPoint {
-                CGPoint(x: center.x + cos(angle + offset) * r,
-                        y: center.y + sin(angle + offset) * r)
+            let angle: Double = Double(petal) * Double.pi / 6
+            func point(_ r: CGFloat, _ offset: Double) -> CGPoint {
+                let theta: Double = angle + offset
+                return CGPoint(x: center.x + CGFloat(Darwin.cos(theta)) * r,
+                               y: center.y + CGFloat(Darwin.sin(theta)) * r)
             }
             path.move(to: center)
             path.addCurve(to: point(radius, 0),
