@@ -2,6 +2,21 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class EditingToolsTests: XCTestCase {
+    func testIncrementalStrokeBudgetMatchesFullReplayForEveryBrush() throws {
+        for preset in BrushPreset.allCases {
+            var brush = preset.makeBrush(); brush.width = 10; brush.pressureEnabled = true
+            var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0,
+                                        existingVertices: 0, operation: .erase)
+            XCTAssertEqual(session.estimatedVertexCount, 0)
+            for i in 0..<40 {
+                let point = Point(x: 30 + Double(i) * 0.8, y: 35 + sin(Double(i) * 0.2) * 4)
+                _ = try session.append(StrokeSample(point: point, pressure: 0.2 + Double(i % 8) * 0.1,
+                                                    altitude: 1, azimuth: 0, time: Double(i)))
+                XCTAssertEqual(session.estimatedVertexCount, StrokeGeometry.estimatedVertexCount(session.stroke), preset.name)
+            }
+        }
+    }
+
     private func ink(layer: UUID = DrawingLayer.legacyID) -> InkStroke {
         InkStroke(brush: BrushPreset.dotShader.makeBrush(), samples: [StrokeSample(point: Point(x: 40, y: 50), pressure: 1,
                                                                                   altitude: 1, azimuth: 0, time: 1)], layerID: layer)

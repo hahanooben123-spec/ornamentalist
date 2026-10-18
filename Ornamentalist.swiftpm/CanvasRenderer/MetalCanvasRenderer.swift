@@ -365,11 +365,12 @@ final class MetalCanvasRenderer {
                    canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
     }
 
-    private func texture(width: Int, height: Int, samples: Int = 1) throws -> MTLTexture {
+    private func texture(width: Int, height: Int, samples: Int = 1, transient: Bool = false) throws -> MTLTexture {
         let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
                             width: width, height: height, mipmapped: false)
         if samples > 1 { info.textureType = .type2DMultisample; info.sampleCount = samples }
-        info.storageMode = .private; info.usage = [.renderTarget, .shaderRead]
+        info.storageMode = transient && device.supportsFamily(.apple1) ? .memoryless : .private
+        info.usage = transient ? [.renderTarget] : [.renderTarget, .shaderRead]
         guard let result = device.makeTexture(descriptor: info) else { throw DocumentError.memoryLimit }
         workingTextureAllocations += 1
         return result
@@ -377,9 +378,12 @@ final class MetalCanvasRenderer {
 
     private func ensureWorkTargets(width: Int, height: Int) throws {
         if workTexture?.width == width && workTexture?.height == height { return }
+        // Release the old viewport before allocating its replacement. Submitted
+        // command buffers retain resources still needed by the GPU.
+        clearLayerCaches(); workTexture = nil; workMultisample = nil
         let resolved = try texture(width: width, height: height)
         let multisample: MTLTexture?
-        if sampleCount > 1 { multisample = try texture(width: width, height: height, samples: sampleCount) }
+        if sampleCount > 1 { multisample = try texture(width: width, height: height, samples: sampleCount, transient: true) }
         else { multisample = nil }
         workTexture = resolved; workMultisample = multisample
     }
@@ -537,6 +541,7 @@ final class MetalCanvasRenderer {
                              viewSize: viewSize, active: active, preview: preview, guides: guides)
             return
         }
+        do {
         let lower = try renderStaticGroup(Array(below), previous: lowerKey, target: lowerTexture,
             command: command, document: document, viewport: viewport, viewSize: viewSize)
         lowerTexture = lower.0; lowerKey = lower.1
@@ -554,6 +559,13 @@ final class MetalCanvasRenderer {
             try composite(image, opacity: selected.opacity, output: output, command: command)
         } else { activeTexture = nil; activeKey = nil }
         if let upperTexture { try composite(upperTexture, opacity: 1, output: output, command: command) }
+        } catch DocumentError.memoryLimit {
+            clearLayerCaches(); cacheBudget = 0
+            try encodeGroups(command: command, output: output, document: document, viewport: viewport,
+                             viewSize: viewSize, active: active, preview: preview, guides: guides)
+        } catch {
+            clearLayerCaches(); throw error
+        }
     }
 
     private func clearLayerCaches() {

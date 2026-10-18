@@ -128,12 +128,13 @@ final class StudioModel: ObservableObject {
         Task { await saveNow() }
     }
     func setPreparing(_ value: Bool) { isPreparing = value }
-    func append(_ stroke: InkStroke) {
+    func append(_ stroke: InkStroke, estimatedVertices: Int? = nil) {
         // Completion of confirmed input may occur during deactivation.
         guard !busy, var d = document,
               d.layers.contains(where: { $0.id == stroke.layerID && $0.isVisible && !$0.isLocked }) else { return }
         history.recordNewStroke(stroke, in: &d); document = d; changed()
-        usedSamples += stroke.samples.count; usedVertices += StrokeGeometry.estimatedVertexCount(stroke)
+        usedSamples += stroke.samples.count
+        usedVertices += estimatedVertices ?? StrokeGeometry.estimatedVertexCount(stroke)
     }
     func undo() {
         finishLayerOpacityEdit()

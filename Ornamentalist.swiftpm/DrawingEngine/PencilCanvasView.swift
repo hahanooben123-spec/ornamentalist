@@ -182,14 +182,15 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         }
     }
     private func finishStroke(rebuild: Bool = false) {
-        guard let stroke = session?.stroke else { return }
+        guard let completed = session else { return }
+        let stroke = completed.stroke
         session = nil; drawingTouch = nil; preview = []
         if rebuild { renderer?.cancel() }
         else {
             do { try renderer?.commit(stroke) } catch { renderer?.cancel(); report(error) }
         }
         model.setDrawing(false)
-        if !stroke.samples.isEmpty { model.append(stroke) }
+        if !stroke.samples.isEmpty { model.append(stroke, estimatedVertices: completed.estimatedVertexCount) }
         navigationGestures.forEach { $0.isEnabled = true }
         setNeedsDisplay()
     }

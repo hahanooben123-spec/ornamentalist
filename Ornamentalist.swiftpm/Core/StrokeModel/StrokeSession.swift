@@ -10,6 +10,14 @@ struct StrokeSession {
     private let remainingSamples: Int
     private let remainingVertices: Int
 
+    /// Same conservative price as a full replay, accumulated while ingesting
+    /// confirmed input so lifting Pencil does not rescan the complete stroke.
+    var estimatedVertexCount: Int {
+        guard !stroke.samples.isEmpty else { return 0 }
+        if stroke.brush.usesStamps { return stableVertices }
+        return stableVertices + (stroke.samples.count > 1 ? 6 + stroke.brush.diskSides * 3 : 0)
+    }
+
     init(brush: InkBrush, symmetry: SymmetryConfiguration, existingSamples: Int, existingVertices: Int,
          layerID: UUID = DrawingLayer.legacyID, color: InkColor = .black, operation: StrokeOperation = .ink) {
         stroke = InkStroke(brush: brush, symmetry: symmetry, layerID: layerID, color: color, operation: operation)

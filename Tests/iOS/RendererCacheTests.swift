@@ -155,4 +155,18 @@ final class RendererCacheTests: XCTestCase {
         let attachment = XCTAttachment(string: report.joined(separator: "\n") + "\nSimulator measurements include GPU wait and pixel readback. Not physical iPad latency/FPS.")
         attachment.name = "cached-versus-reference-rendering"; attachment.lifetime = .keepAlways; add(attachment)
     }
+
+    @MainActor
+    func testConcurrentReadbacksKeepTheirOwnViewportAndPredictionState() async throws {
+        let d = fixture()
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(d.strokes, layers: d.layers)
+        var moved = Viewport(); moved.zoom = 1.6; moved.rotation = -0.2
+        async let first = renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        async let second = renderer.renderOffscreen(document: d, viewport: moved, width: 256, height: 256)
+        let images = try await (first, second)
+        let referenceA = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, reference: true)
+        let referenceB = try await renderer.renderOffscreen(document: d, viewport: moved, width: 256, height: 256, reference: true)
+        assertPixels(images.0, referenceA); assertPixels(images.1, referenceB)
+    }
 }
