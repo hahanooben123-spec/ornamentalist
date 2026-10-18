@@ -10,8 +10,8 @@ let package = Package(
             name: "Ornamentalist",
             targets: ["Ornamentalist"],
             bundleIdentifier: "studio.mandala.prototype",
-            displayVersion: "0.8.5",
-            bundleVersion: "16",
+            displayVersion: "0.8.6",
+            bundleVersion: "17",
             appIcon: .placeholder(icon: .pencil),
             accentColor: .presetColor(.teal),
             supportedDeviceFamilies: [.pad],
@@ -52,7 +52,8 @@ let package = Package(
                 "UIComponents/StudioShowcase.swift",
                 "UIComponents/StudioTheme.swift",
                 "UIComponents/StudioView.swift"
-            ]
+            ],
+            resources: [.process("Resources")]
         )
     ]
 )

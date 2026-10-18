@@ -42,7 +42,8 @@ def main():
     output = ROOT / "dist"
     output.mkdir(exist_ok=True)
     archive = output / "Ornamentalist-iPad.zip"
-    files = sorted(APP.rglob("*.swift")) + [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md")) + sorted((ROOT / "ThirdParty").glob("*-LICENSE.txt"))
+    resources = sorted(p for p in (APP / "Resources").rglob("*") if p.is_file())
+    files = sorted(APP.rglob("*.swift")) + resources + [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md")) + sorted((ROOT / "ThirdParty").glob("*-LICENSE.txt"))
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for p in files:
             info = zipfile.ZipInfo(p.relative_to(ROOT).as_posix(), date_time=(2026, 10, 17, 0, 0, 0))

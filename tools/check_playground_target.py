@@ -28,6 +28,11 @@ def main():
             target = root / source.relative_to(APP)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(source.read_bytes())
+        for resource in (APP / "Resources").rglob("*"):
+            if resource.is_file():
+                target = root / resource.relative_to(APP)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(resource.read_bytes())
         (root / "Package.swift").write_text(manifest, encoding="utf-8")
         result = subprocess.run(["swift", "package", "--package-path", str(root), "describe", "--type", "json"],
                                 check=True, capture_output=True, text=True)

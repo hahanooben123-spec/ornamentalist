@@ -56,6 +56,25 @@ struct StudioIcon: View {
     }
 }
 
+@MainActor
+struct StudioBrandLogo: View {
+    private static let image: UIImage? = {
+        #if SWIFT_PACKAGE
+        let bundle = Bundle.module
+        #else
+        let bundle = Bundle.main
+        #endif
+        guard let url = bundle.url(forResource: "Ornamentalist-logo", withExtension: "jpg") else { return nil }
+        return UIImage(contentsOfFile: url.path)
+    }()
+    var body: some View {
+        Group {
+            if let image = Self.image { Image(uiImage: image).resizable().scaledToFit() }
+            else { Text("Ornamentalist").font(.title2) }
+        }.accessibilityLabel("Ornamentalist logo")
+    }
+}
+
 // Draw the layers glyph directly; it must not disappear when a system-symbol
 // variant is unavailable in the installed iPad editor/runtime.
 struct StudioLayersIcon: View {

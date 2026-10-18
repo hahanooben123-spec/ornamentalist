@@ -9,7 +9,7 @@ let package = Package(
     targets: [
         .target(name: "OrnamentalistCore", path: "Ornamentalist.swiftpm",
                 exclude: ["Package.swift", "App", "CanvasRenderer", "DrawingEngine", "ExportEngine",
-                          "UIComponents", "DocumentStore/StudioModel.swift"],
+                          "UIComponents", "Resources", "DocumentStore/StudioModel.swift"],
                 sources: ["Core", "DocumentStore/DocumentRepository.swift"]),
         .testTarget(name: "OrnamentalistCoreTests", dependencies: ["OrnamentalistCore"], path: "Tests",
                     exclude: ["iOS", "UI"])

@@ -53,7 +53,7 @@ struct StudioGallery: View {
     private func header(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 30) {
             HStack(alignment: .center, spacing: 12) {
-                StudioOrnament().stroke(StudioStyle.copper, lineWidth: 1).frame(width: 44, height: 44)
+                StudioBrandLogo().frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 12))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Ornamentalist").font(.system(size: compact ? 28 : 34, weight: .regular, design: .serif))
@@ -176,9 +176,8 @@ struct StudioGallery: View {
 
     private var emptyStudio: some View {
         VStack(spacing: 24) {
-            StudioOrnament().stroke(StudioStyle.copper.opacity(0.7), lineWidth: 1)
-                .frame(width: 230, height: 230).padding(24)
-                .background(.background.opacity(0.55), in: Circle()).accessibilityHidden(true)
+            StudioBrandLogo().frame(width: 250, height: 250)
+                .clipShape(RoundedRectangle(cornerRadius: 22)).accessibilityHidden(true)
             VStack(spacing: 10) {
                 Text("It starts with a single line.").font(.system(.title2, design: .serif))
                 Text("Let symmetry take it from there.\nA quiet canvas, your Pencil, and room to explore.")
