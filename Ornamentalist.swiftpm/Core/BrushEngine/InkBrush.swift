@@ -8,6 +8,7 @@ struct InkBrush: Codable, Equatable, Sendable {
     var geometryVersion = 2
     var preset = BrushPreset.fineliner
     var opacity = 1.0
+    var normalizedOpacity = false
     var spacing = 0.2
     var density = 0.5
     var adaptiveStabilization = false
@@ -23,12 +24,18 @@ struct InkBrush: Codable, Equatable, Sendable {
         (0...2).contains(taperStart) && (0...2).contains(taperEnd) && (0...1).contains(tiltShading) &&
         width.isFinite && (0.5...160).contains(width) && stabilization.isFinite &&
         (0...1).contains(stabilization) && (1...2).contains(geometryVersion) &&
-        opacity.isFinite && (0.01...1).contains(opacity) &&
+        opacity.isFinite && (0...1).contains(opacity) &&
         spacing.isFinite && (0.06...4).contains(spacing) && density.isFinite && (0.05...1).contains(density)
     }
     func radius(pressure: Double) -> Double {
         guard pressureEnabled else { return width * 0.5 }
         return width * (minimumSize + (1 - minimumSize) * pow(max(0, min(1, pressure)), pressureCurve)) * 0.5
+    }
+    /// Soft dabs overlap several times per brush diameter. Normalize their
+    /// accumulation so small opacity changes do not immediately saturate a pass.
+    var dabOpacity: Double {
+        guard normalizedOpacity, usesStamps, preset.softness > 0, opacity > 0, opacity < 1 else { return opacity }
+        return 1 - pow(1 - opacity, min(1, spacing / 0.7))
     }
     var diskSides: Int {
         guard geometryVersion >= 2 else { return 12 }
@@ -48,6 +55,7 @@ extension InkBrush {
         geometryVersion = try c.decodeIfPresent(Int.self, forKey: .geometryVersion) ?? 1
         preset = try c.decodeIfPresent(BrushPreset.self, forKey: .preset) ?? .fineliner
         opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
+        normalizedOpacity = try c.decodeIfPresent(Bool.self, forKey: .normalizedOpacity) ?? false
         spacing = try c.decodeIfPresent(Double.self, forKey: .spacing) ?? 0.2
         density = try c.decodeIfPresent(Double.self, forKey: .density) ?? 0.5
         adaptiveStabilization = try c.decodeIfPresent(Bool.self, forKey: .adaptiveStabilization) ?? false
@@ -128,6 +136,7 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         b.adaptiveStabilization = true
         if self == .brushPen { b.minimumSize = 0.03; b.taperStart = 0.6; b.taperEnd = 0.8 }
         if b.usesStamps { b.tiltShading = 0.7 }
+        if softness > 0 { b.normalizedOpacity = true }
         return b
     }
 }

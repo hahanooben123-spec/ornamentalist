@@ -56,6 +56,7 @@ final class StudioModel: ObservableObject {
     // UIKit owns the transient cursor; hover never publishes a model revision.
     var brushPreviewRequested: ((Bool) -> Void)?
     private var brushSettings: [BrushPreset: InkBrush] = [:]
+    private var eraserSettings: [BrushPreset: InkBrush] = [:]
     private var preferredBrushPreset = BrushPreset.fineliner
     private let preferences: UserDefaults?
     private(set) var generation = 0
@@ -100,10 +101,28 @@ final class StudioModel: ObservableObject {
             preferredBrushPreset = preset
         }
         if let data = preferences?.data(forKey: "eraserSettings"),
-           let brush = try? JSONDecoder().decode(InkBrush.self, from: data), brush.isValid,
-           brush.preset == .fineliner || brush.preset == .softShader {
+           let brush = try? JSONDecoder().decode(InkBrush.self, from: data), brush.isValid {
             eraserBrush = brush
         }
+        if let data = preferences?.data(forKey: "eraserBrushSettings"),
+           let settings = try? JSONDecoder().decode([String: InkBrush].self, from: data) {
+            for (key, brush) in settings where brush.isValid {
+                if let preset = BrushPreset(rawValue: key), preset == brush.preset { eraserSettings[preset] = brush }
+            }
+        }
+        eraserSettings[eraserBrush.preset] = eraserBrush
+        if preferences?.bool(forKey: "softOpacityNormalizedV1") != true {
+            for (preset, stored) in brushSettings where preset.softness > 0 {
+                var brush = stored; brush.normalizedOpacity = true; brushSettings[preset] = brush
+            }
+            let settings = Dictionary(uniqueKeysWithValues: brushSettings.map { ($0.key.rawValue, $0.value) })
+            if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "brushSettings") }
+            preferences?.set(true, forKey: "softOpacityNormalizedV1")
+        }
+        for (preset, stored) in eraserSettings where preset.softness > 0 {
+            var brush = stored; brush.normalizedOpacity = true; eraserSettings[preset] = brush
+        }
+        if eraserBrush.preset.softness > 0 { eraserBrush.normalizedOpacity = true }
     }
 
     func startMaintenance() {
@@ -143,6 +162,7 @@ final class StudioModel: ObservableObject {
         if let remembered = brushSettings[d.brush.preset] { adopted.brush = remembered }
         else {
             if adopted.brush.usesStamps, adopted.brush.tiltShading == 0 { adopted.brush.tiltShading = 0.7 }
+            if adopted.brush.preset.softness > 0 { adopted.brush.normalizedOpacity = true }
             rememberBrush(adopted.brush)
         }
         document = adopted; history = StrokeHistory()
@@ -289,7 +309,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 11
+            after.layers[index].raster = raster; after.version = 12
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -337,7 +357,7 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.layers[index].raster?.placement = p; after.version = 11
+            after.layers[index].raster?.placement = p; after.version = 12
             do {
                 try after.validate()
                 if before.layers != after.layers {
@@ -364,17 +384,33 @@ final class StudioModel: ObservableObject {
     func setInputOpacity(_ value: Double) {
         guard canEdit, !isDrawing, value.isFinite else { return }
         if tool == .eraser {
-            eraserBrush.opacity = max(0.01, min(1, value)); rememberEraser()
+            eraserBrush.opacity = max(0, min(1, value)); rememberEraser()
         }
         else { setOpacity(value) }
     }
     func setSoftEraser(_ soft: Bool) {
         guard canEdit, !isDrawing else { return }
         let previous = eraserBrush
-        eraserBrush = soft ? BrushPreset.softShader.makeBrush() : InkBrush(width: previous.width, stabilization: 0.15)
+        eraserSettings[previous.preset] = previous
+        let preset: BrushPreset = soft ? .softShader : .fineliner
+        eraserBrush = eraserSettings[preset] ?? (soft ? preset.makeBrush() : InkBrush(width: previous.width, stabilization: 0.15))
         eraserBrush.width = previous.width; eraserBrush.opacity = previous.opacity
         eraserBrush.pressureEnabled = previous.pressureEnabled; eraserBrush.stabilization = previous.stabilization
+        eraserBrush.stabilizationEnabled = previous.stabilizationEnabled
         rememberEraser()
+    }
+    func setEraserBrush(_ preset: BrushPreset) {
+        guard canEdit, !isDrawing, document != nil else { return }
+        eraserSettings[eraserBrush.preset] = eraserBrush
+        eraserBrush = eraserSettings[preset] ?? preset.makeBrush()
+        tool = .eraser; rememberEraser()
+    }
+    private func editInputBrush(_ edit: (inout InkBrush) -> Void) {
+        guard canEdit, !isDrawing, document != nil else { return }
+        var brush = inputBrush; edit(&brush)
+        guard brush.isValid else { return }
+        if tool == .eraser { eraserBrush = brush; rememberEraser() }
+        else { document?.brush = brush; changed() }
     }
     func pickColor(at point: Point) async {
         guard canEdit, !isDrawing, let snapshot = document, point.isFinite,
@@ -432,41 +468,41 @@ final class StudioModel: ObservableObject {
     }
     func setOpacity(_ value: Double) {
         guard canEdit, !isDrawing, value.isFinite, document != nil else { return }
-        document?.brush.opacity = max(0.01, min(1, value)); changed()
+        document?.brush.opacity = max(0, min(1, value)); changed()
     }
     func setSpacing(_ value: Double) {
-        guard canEdit, !isDrawing, value.isFinite else { return }
-        document?.brush.spacing = max(0.06, min(4, value)); changed()
+        guard value.isFinite else { return }
+        editInputBrush { $0.spacing = max(0.06, min(4, value)) }
     }
     func setDensity(_ value: Double) {
-        guard canEdit, !isDrawing, value.isFinite else { return }
-        document?.brush.density = max(0.05, min(1, value)); changed()
+        guard value.isFinite else { return }
+        editInputBrush { $0.density = max(0.05, min(1, value)) }
     }
     func setPressure(_ enabled: Bool) {
-        guard canEdit, !isDrawing else { return }
-        document?.brush.pressureEnabled = enabled; changed()
+        editInputBrush { $0.pressureEnabled = enabled }
     }
     func setStabilization(_ amount: Double) {
-        guard canEdit, !isDrawing, amount.isFinite else { return }
-        document?.brush.stabilization = max(0, min(1, amount)); changed()
+        guard amount.isFinite else { return }
+        editInputBrush { $0.stabilization = max(0, min(1, amount)) }
     }
     func setStabilizationEnabled(_ enabled: Bool) {
-        guard canEdit, !isDrawing else { return }
-        document?.brush.stabilizationEnabled = enabled; changed()
+        editInputBrush { $0.stabilizationEnabled = enabled }
     }
     func setPenResponse(adaptive: Bool? = nil, curve: Double? = nil, minimum: Double? = nil,
                         start: Double? = nil, end: Double? = nil, tilt: Double? = nil) {
-        guard canEdit, !isDrawing, var brush = document?.brush else { return }
+        guard canEdit, !isDrawing, document != nil else { return }
+        var brush = inputBrush
         if let adaptive { brush.adaptiveStabilization = adaptive }
         if let curve, curve.isFinite { brush.pressureCurve = max(0.2, min(3, curve)) }
         if let minimum, minimum.isFinite { brush.minimumSize = max(0, min(1, minimum)) }
         if let start, start.isFinite { brush.taperStart = max(0, min(2, start)) }
         if let end, end.isFinite { brush.taperEnd = max(0, min(2, end)) }
         if let tilt, tilt.isFinite { brush.tiltShading = max(0, min(1, tilt)) }
-        document?.brush = brush; changed()
+        if tool == .eraser { eraserBrush = brush; rememberEraser() }
+        else { document?.brush = brush; changed() }
     }
     private func changed() {
-        document?.version = 11; document?.modified = Date()
+        document?.version = 12; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"
@@ -479,7 +515,10 @@ final class StudioModel: ObservableObject {
         if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "brushSettings") }
     }
     private func rememberEraser() {
+        eraserSettings[eraserBrush.preset] = eraserBrush
         if let data = try? JSONEncoder().encode(eraserBrush) { preferences?.set(data, forKey: "eraserSettings") }
+        let settings = Dictionary(uniqueKeysWithValues: eraserSettings.map { ($0.key.rawValue, $0.value) })
+        if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "eraserBrushSettings") }
     }
     @discardableResult
     func saveNow() async -> Bool {

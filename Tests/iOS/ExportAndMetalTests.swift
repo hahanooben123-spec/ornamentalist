@@ -5,6 +5,32 @@ import UIKit
 
 final class ExportAndMetalTests: XCTestCase {
     @MainActor
+    func testSoftOpacityHasGradualToneInMetalAndPNG() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
+        for preset in [BrushPreset.softShader, .airbrush] {
+            let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+            var previousTone = -1
+            for opacity in [0.0, 0.05, 0.1, 0.2, 0.4] {
+                var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+                document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+                var brush = preset.makeBrush(); brush.width = 40; brush.opacity = opacity; brush.tiltShading = 0
+                let samples = [20.0, 100].enumerated().map { i, x in
+                    StrokeSample(point: Point(x: x, y: 64), pressure: 1, altitude: .pi / 2, azimuth: 0, time: Double(i))
+                }
+                document.strokes = [InkStroke(brush: brush, symmetry: document.symmetry, samples: samples)]
+                try await renderer.synchronize(document.strokes)
+                let pixels = try await renderer.renderOffscreen(document: document, viewport: Viewport(), width: 256, height: 256)
+                let image = try XCTUnwrap(UIImage(data: PNGExporter.data(document: document, transparent: false))?.cgImage)
+                let png = try pixel(image, x: 64, y: 64)
+                let tone = 255 - Int(png[0])
+                XCTAssertGreaterThan(tone, previousTone); previousTone = tone
+                XCTAssertEqual(Double(pixels[(128 * 256 + 128) * 4 + 2]), Double(png[0]), accuracy: 6)
+                if opacity == 0 { XCTAssertEqual(tone, 0) }
+                if opacity == 0.1 { XCTAssertLessThan(tone, 50) }
+            }
+        }
+    }
+    @MainActor
     func testColoredLayersApplyGroupOpacityOnceWithLiveInkAndVisibility() async throws {
         guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
         var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
@@ -57,7 +83,8 @@ final class ExportAndMetalTests: XCTestCase {
             var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
             d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
             let p = StrokeSample(point: Point(x: 64, y: 64), pressure: 1, altitude: 1, azimuth: 0, time: 1)
-            let ink = InkStroke(brush: preset.makeBrush(), symmetry: d.symmetry, samples: [p], color: InkColor(red: 0.9, green: 0.3, blue: 0.1))
+            var brush = preset.makeBrush(); brush.opacity = 0.4
+            let ink = InkStroke(brush: brush, symmetry: d.symmetry, samples: [p], color: InkColor(red: 0.9, green: 0.3, blue: 0.1))
             d.strokes = [ink]; try await renderer.synchronize(d.strokes)
             let pixels = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 128, height: 128)
             var chosen = 0, lowest: UInt8 = 255

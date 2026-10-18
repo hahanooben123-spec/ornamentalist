@@ -90,7 +90,7 @@ enum PNGExporter {
             let locations: [CGFloat] = (0...32).map { CGFloat($0) / 32 }
             let colors = locations.map { radius in
                 UIColor(red: ink.red, green: ink.green, blue: ink.blue,
-                        alpha: stroke.brush.opacity * BrushGeometry.coverage(radius: Double(radius), softness: 1)).cgColor
+                        alpha: stroke.brush.dabOpacity * BrushGeometry.coverage(radius: Double(radius), softness: 1)).cgColor
             }
             let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations)
             let dabs = BrushGeometry.dabs(stroke)

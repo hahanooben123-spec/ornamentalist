@@ -203,7 +203,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             return
         }
         guard active == nil, !pendingPreparation, let document = model.document, model.canDraw, renderer != nil,
-              document.strokes.count < 20_000 else { return }
+              document.strokes.count < 20_000, model.inputBrush.opacity > 0 else { return }
         let selected = touches.first(where: { $0.type == .pencil }) ??
             (model.fingerDrawing ? touches.first(where: { $0.type == .direct }) : nil)
         guard let touch = selected else { return }

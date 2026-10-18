@@ -2,6 +2,28 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class BrushTests: XCTestCase {
+    func testSoftOpacityBuildsGraduallyAndLegacyDabsKeepTheirOpacity() throws {
+        for preset in [BrushPreset.softShader, .airbrush] {
+            var brush = preset.makeBrush(), last = -1.0
+            for i in 0...100 {
+                brush.opacity = Double(i) / 100
+                XCTAssertTrue(brush.isValid)
+                XCTAssertGreaterThanOrEqual(brush.dabOpacity, last)
+                // A representative overlap count should follow the control
+                // instead of becoming opaque after only a few percent.
+                let combined = 1 - pow(1 - brush.dabOpacity, 0.7 / brush.spacing)
+                XCTAssertEqual(combined, brush.opacity, accuracy: 1e-8)
+                last = brush.dabOpacity
+            }
+            brush.opacity = 0.1
+            var legacy = brush; legacy.normalizedOpacity = false
+            XCTAssertLessThan(brush.dabOpacity, legacy.dabOpacity)
+            let decoded = try JSONDecoder().decode(InkBrush.self, from: JSONEncoder().encode(brush))
+            XCTAssertEqual(decoded.dabOpacity, brush.dabOpacity)
+            let old = Data(#"{"width":80,"preset":"softShader","opacity":0.1}"#.utf8)
+            XCTAssertEqual(try JSONDecoder().decode(InkBrush.self, from: old).dabOpacity, 0.1)
+        }
+    }
     func testStabilizationOffIsExactAndFullStrengthVisiblyReducesHandWobble() throws {
         for frequency in [60, 120, 240] {
             for adaptive in [false, true] {
@@ -96,7 +118,7 @@ final class BrushTests: XCTestCase {
         XCTAssertLessThan(mean, 0.8)
         // High stabilization now deliberately trades some following delay for
         // visible smoothing of ordinary hand wobble, rather than cancelling it.
-        XCTAssertLessThan(239 - session.stroke.samples.last!.point.x, 10)
+        XCTAssertLessThan(239 - session.stroke.samples.last!.point.x, 17)
     }
     func testAdaptiveStabilizationIsConsistentAtDifferentZooms() throws {
         var brush = InkBrush(); brush.adaptiveStabilization = true; brush.stabilization = 0.6
@@ -278,7 +300,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 11); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 12); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }

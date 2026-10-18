@@ -69,7 +69,7 @@ final class ColorAndOpacityTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 11); XCTAssertEqual(imported.color, d.color)
+        XCTAssertEqual(imported.version, 12); XCTAssertEqual(imported.color, d.color)
         XCTAssertEqual(imported.recentColors, d.recentColors); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(imported.strokes, d.strokes)
     }

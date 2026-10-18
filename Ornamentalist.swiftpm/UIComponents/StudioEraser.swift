@@ -8,20 +8,15 @@ struct StudioEraserView: View {
             Label("Eraser", systemImage: "eraser").font(.headline)
             Text("Removes ink from the selected layer. Lower layers show through. Mirror follows your symmetry settings.")
                 .font(.caption).foregroundStyle(.secondary)
-            Picker("Eraser edge", selection: Binding(get: { model.eraserBrush.usesStamps }, set: { model.setSoftEraser($0) })) {
-                Text("Hard").tag(false); Text("Soft").tag(true)
-            }.pickerStyle(.segmented).accessibilityIdentifier("eraserEdge")
             HStack {
-                Text("Size"); Spacer()
-                Text("\(Int(model.eraserBrush.width)) px").monospacedDigit().foregroundStyle(.secondary)
-            }.font(.subheadline)
-            Slider(value: Binding(get: { model.eraserBrush.width }, set: { model.setEraserWidth($0) }), in: 0.5...160,
-                   onEditingChanged: { model.brushPreviewRequested?($0) })
-                .accessibilityLabel("Eraser size")
-            Text("Hard has a crisp edge. Opacity controls removal strength; Soft builds removal with overlapping passes. Adjust both from the left rail. Each eraser stroke can be undone.")
-                .font(.caption).foregroundStyle(.secondary)
+                Button("Hard") { model.setSoftEraser(false) }.accessibilityIdentifier("hardEraser")
+                Button("Soft") { model.setSoftEraser(true) }.accessibilityIdentifier("softEraser")
+            }.buttonStyle(.bordered)
             Button("Return to brush", systemImage: "pencil.tip") { model.selectTool(.brush) }
                 .frame(minHeight: 44).accessibilityIdentifier("returnToBrush")
+            Text("Choose any brush shape or texture below. Eraser settings are remembered separately from drawing brushes.")
+                .font(.caption).foregroundStyle(.secondary)
+            StudioBrushesView(model: model, brush: model.eraserBrush)
         }
         .onDisappear { model.brushPreviewRequested?(false) }
     }

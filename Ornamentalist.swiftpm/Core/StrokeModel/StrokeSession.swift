@@ -59,7 +59,7 @@ struct StrokeSession {
         }
         // A quadratic strength scale makes high settings meaningfully stronger
         // for ordinary hand wobble (a few Hz), not only sample-to-sample noise.
-        let duration = 0.012 + stroke.brush.stabilization * stroke.brush.stabilization * 0.12
+        let duration = 0.012 + stroke.brush.stabilization * stroke.brush.stabilization * 0.22
         let alpha = 1 - exp(-dt * response / duration)
         var result = sample
         // Partial delay compensation preserves deliberate arcs while retaining

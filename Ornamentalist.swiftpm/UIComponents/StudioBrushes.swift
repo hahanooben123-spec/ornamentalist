@@ -20,7 +20,9 @@ struct StudioBrushesView: View {
             }.pickerStyle(.segmented).accessibilityIdentifier("brushFamily")
             VStack(spacing: 8) {
                 ForEach(BrushPreset.allCases.filter { $0.family == family }) { preset in
-                    Button { model.setBrush(preset) } label: {
+                    Button {
+                        if model.tool == .eraser { model.setEraserBrush(preset) } else { model.setBrush(preset) }
+                    } label: {
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(preset.name).font(.subheadline.weight(.medium))
@@ -41,13 +43,13 @@ struct StudioBrushesView: View {
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 valueLabel("Size", value: "\(brush.width.formatted(.number.precision(.fractionLength(1)))) px")
-                Slider(value: Binding(get: { brush.width }, set: { model.setWidth($0) }), in: 0.5...160,
+                Slider(value: Binding(get: { brush.width }, set: { model.setInputWidth($0) }), in: 0.5...160,
                        onEditingChanged: { model.brushPreviewRequested?($0) })
                     .accessibilityLabel("Line width")
                 HStack(spacing: 8) {
                     ForEach([2.0, 5, 20, 80], id: \.self) { width in
                         Button {
-                            model.setWidth(width)
+                            model.setInputWidth(width)
                             model.brushPreviewRequested?(true)
                             model.brushPreviewRequested?(false)
                         } label: {
@@ -59,8 +61,8 @@ struct StudioBrushesView: View {
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
-                    valueLabel("Opacity", value: "\(Int((brush.opacity * 100).rounded()))%")
-                    Slider(value: Binding(get: { brush.opacity }, set: { model.setOpacity($0) }), in: 0.01...1)
+                    valueLabel("Opacity", value: "\((brush.opacity * 100).formatted(.number.precision(.fractionLength(1))))%")
+                    Slider(value: Binding(get: { sqrt(brush.opacity) }, set: { model.setInputOpacity($0 * $0) }), in: 0...1, step: 0.001)
                         .accessibilityLabel("Brush opacity")
             }
             if brush.usesStamps {
@@ -206,10 +208,10 @@ struct StudioBrushRail: View {
                 }.frame(width: 44, height: sliderHeight)
             Divider().padding(.vertical, 4)
             Text("Opacity").font(.caption2)
-            Text("\(Int((brush.opacity * 100).rounded()))%")
+            Text("\((brush.opacity * 100).formatted(.number.precision(.fractionLength(1))))%")
                 .font(.caption.monospacedDigit()).accessibilityIdentifier("railOpacityValue")
-            VerticalBrushSlider(value: Binding(get: { (brush.opacity - 0.01) / 0.99 },
-                set: { model.setInputOpacity(0.01 + $0 * 0.99) }), label: "Quick brush opacity", identifier: "railOpacity") { _ in }
+            VerticalBrushSlider(value: Binding(get: { sqrt(brush.opacity) },
+                set: { model.setInputOpacity($0 * $0) }), label: "Quick brush opacity", identifier: "railOpacity") { _ in }
                 .frame(width: 44, height: sliderHeight)
         }
         .padding(.horizontal, 8).padding(.vertical, 14).frame(width: 68)

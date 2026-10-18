@@ -5,6 +5,33 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testEveryEraserBrushRemembersSeparateSettingsAndDoesNotChangeDrawingBrush() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "Ornamentalist-eraser-brushes-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder), preferences: preferences)
+        await model.create(); model.setBrush(.brushPen); model.setWidth(23)
+        let drawingBrush = try XCTUnwrap(model.document?.brush)
+        let generation = model.generation
+        var expected: [BrushPreset: InkBrush] = [:]
+        for (index, preset) in BrushPreset.allCases.enumerated() {
+            model.setEraserBrush(preset); model.setInputWidth(17 + Double(index))
+            model.setInputOpacity(0.003 + Double(index) * 0.01)
+            model.setStabilization(0.8); model.setSpacing(0.3); model.setDensity(0.7)
+            model.setPressure(true); model.setPenResponse(curve: 1.2, tilt: 0.6)
+            expected[preset] = model.eraserBrush
+        }
+        XCTAssertEqual(model.document?.brush, drawingBrush); XCTAssertEqual(model.generation, generation)
+        let restarted = StudioModel(repository: DocumentRepository(directory: folder), preferences: preferences)
+        await restarted.create()
+        XCTAssertEqual(restarted.eraserBrush.preset, .hatching)
+        for preset in BrushPreset.allCases {
+            restarted.setEraserBrush(preset)
+            XCTAssertEqual(restarted.eraserBrush, expected[preset], preset.name)
+        }
+        XCTAssertEqual(restarted.document?.brush, drawingBrush)
+    }
     func testTiltDefaultsMigrateOnceAndLaterOffChoiceSurvivesRestart() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "Ornamentalist-tilt-default-\(UUID())"
