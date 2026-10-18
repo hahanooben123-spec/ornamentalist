@@ -9,7 +9,7 @@ import tree_sitter_swift
 import yaml
 
 parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_swift.language()))
-files = sorted((ROOT / 'Ornamentalist.swiftpm').rglob('*.swift')) + sorted((ROOT / 'Tests').rglob('*.swift')) + [ROOT / 'Package.swift']
+files = sorted((ROOT / 'Ornamentalist.swiftpm').rglob('*.swift')) + sorted((ROOT / 'Diagnostics').rglob('*.swift')) + sorted((ROOT / 'Tests').rglob('*.swift')) + [ROOT / 'Package.swift']
 errors = []
 for path in files:
     source = path.read_bytes()

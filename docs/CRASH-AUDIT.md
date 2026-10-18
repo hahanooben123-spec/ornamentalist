@@ -2,6 +2,8 @@
 
 The physical iPad reports “Crashed” with an empty console. No crash report or device/OS details are available. **The cause is not established.** A passing Xcode simulator run cannot establish Swift Playground compatibility on this device.
 
+Subsequent device evidence: Swift Playground shows “Build failed”; replacing the main window with a plain `Text` still fails, but a newly created Apple-standard App project runs successfully. Replacing the window does not remove the other source files from compilation. The next isolation step is the separate one-source [diagnostic package](STARTTEST.md), which has not yet been run on the device.
+
 ## Review and changes in 0.2.1
 
 - Reviewed all 19 app Swift files, the AppleProductTypes manifest and delivery script. There is one app entry point; the manifest requires iPadOS 17 and Swift tools 5.9. The initial screen is the gallery. Metal is created only after a drawing is opened/created, so a crash before the gallery appears does not implicate Metal initialization.
