@@ -47,6 +47,7 @@ final class StudioModel: ObservableObject {
     // UIKit owns the transient cursor; hover never publishes a model revision.
     var brushPreviewRequested: ((Bool) -> Void)?
     private var brushSettings: [BrushPreset: InkBrush] = [:]
+    private var preferredBrushPreset = BrushPreset.fineliner
     private let preferences: UserDefaults?
     private(set) var generation = 0
     private var writeSequence = 0
@@ -73,6 +74,14 @@ final class StudioModel: ObservableObject {
             for (key, brush) in settings where brush.isValid {
                 if let preset = BrushPreset(rawValue: key), preset == brush.preset { brushSettings[preset] = brush }
             }
+        }
+        if let raw = preferences?.string(forKey: "activeBrushPreset"), let preset = BrushPreset(rawValue: raw) {
+            preferredBrushPreset = preset
+        }
+        if let data = preferences?.data(forKey: "eraserSettings"),
+           let brush = try? JSONDecoder().decode(InkBrush.self, from: data), brush.isValid,
+           brush.preset == .fineliner || brush.preset == .softShader {
+            eraserBrush = brush
         }
     }
 
@@ -106,8 +115,14 @@ final class StudioModel: ObservableObject {
         thumbnailTask?.cancel(); thumbnailTask = nil; thumbnailRequest = UUID()
         opacityEditBefore = nil
         tool = .brush
-        document = d; history = StrokeHistory()
-        brushSettings[d.brush.preset] = d.brush
+        var adopted = d
+        // Project settings must not overwrite newer personal brush preferences.
+        // Stored strokes retain their own brushes and are never rewritten.
+        if let remembered = brushSettings[d.brush.preset] { adopted.brush = remembered }
+        else { rememberBrush(d.brush) }
+        document = adopted; history = StrokeHistory()
+        preferredBrushPreset = adopted.brush.preset
+        preferences?.set(preferredBrushPreset.rawValue, forKey: "activeBrushPreset")
         writeSequence = max(writeSequence, d.storageRevision)
         generation += 1; nextSaveAttempt = 0; reportedSaveFailure = false
         schedule.saved(); lastCheckpointSampleCount = -1
@@ -121,7 +136,7 @@ final class StudioModel: ObservableObject {
         guard document == nil, !busy else { return }
         busy = true; defer { busy = false }
         var d = DrawingDocument()
-        d.brush = brushSettings[.fineliner] ?? InkBrush()
+        d.brush = brushSettings[preferredBrushPreset] ?? preferredBrushPreset.makeBrush()
         let cleaned = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
         d.title = cleaned.isEmpty ? "Untitled Drawing" : cleaned
         writeSequence += 1
@@ -245,6 +260,7 @@ final class StudioModel: ObservableObject {
     func setEraserWidth(_ width: Double) {
         guard canEdit, !isDrawing, width.isFinite else { return }
         eraserBrush.width = max(0.5, min(160, width))
+        rememberEraser()
     }
     var inputBrush: InkBrush { tool == .eraser ? eraserBrush : document?.brush ?? InkBrush() }
     func setInputWidth(_ width: Double) {
@@ -252,14 +268,18 @@ final class StudioModel: ObservableObject {
     }
     func setInputOpacity(_ value: Double) {
         guard canEdit, !isDrawing, value.isFinite else { return }
-        if tool == .eraser { eraserBrush.opacity = max(0.01, min(1, value)) }
+        if tool == .eraser {
+            eraserBrush.opacity = max(0.01, min(1, value)); rememberEraser()
+        }
         else { setOpacity(value) }
     }
     func setSoftEraser(_ soft: Bool) {
         guard canEdit, !isDrawing else { return }
-        let width = eraserBrush.width
-        eraserBrush = soft ? BrushPreset.softShader.makeBrush() : InkBrush(width: width, stabilization: 0.15)
-        eraserBrush.width = width
+        let previous = eraserBrush
+        eraserBrush = soft ? BrushPreset.softShader.makeBrush() : InkBrush(width: previous.width, stabilization: 0.15)
+        eraserBrush.width = previous.width; eraserBrush.opacity = previous.opacity
+        eraserBrush.pressureEnabled = previous.pressureEnabled; eraserBrush.stabilization = previous.stabilization
+        rememberEraser()
     }
     func pickColor(at point: Point) async {
         guard canEdit, !isDrawing, let snapshot = document, point.isFinite,
@@ -311,6 +331,8 @@ final class StudioModel: ObservableObject {
         guard canEdit, !isDrawing, document != nil else { return }
         if let current = document?.brush { brushSettings[current.preset] = current }
         document?.brush = brushSettings[preset] ?? preset.makeBrush(); changed()
+        preferredBrushPreset = preset
+        preferences?.set(preset.rawValue, forKey: "activeBrushPreset")
         tool = .brush
     }
     func setOpacity(_ value: Double) {
@@ -335,14 +357,19 @@ final class StudioModel: ObservableObject {
     }
     private func changed() {
         document?.version = 7; document?.modified = Date()
-        if let brush = document?.brush, brushSettings[brush.preset] != brush {
-            brushSettings[brush.preset] = brush
-            let settings = Dictionary(uniqueKeysWithValues: brushSettings.map { ($0.key.rawValue, $0.value) })
-            if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "brushSettings") }
-        }
+        if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)
+    }
+    private func rememberBrush(_ brush: InkBrush) {
+        guard brushSettings[brush.preset] != brush else { return }
+        brushSettings[brush.preset] = brush
+        let settings = Dictionary(uniqueKeysWithValues: brushSettings.map { ($0.key.rawValue, $0.value) })
+        if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "brushSettings") }
+    }
+    private func rememberEraser() {
+        if let data = try? JSONEncoder().encode(eraserBrush) { preferences?.set(data, forKey: "eraserSettings") }
     }
     @discardableResult
     func saveNow() async -> Bool {

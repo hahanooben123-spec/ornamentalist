@@ -56,6 +56,21 @@ struct StudioIcon: View {
     }
 }
 
+// Draw the layers glyph directly; it must not disappear when a system-symbol
+// variant is unavailable in the installed iPad editor/runtime.
+struct StudioLayersIcon: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 2).stroke(lineWidth: 1.8)
+                .frame(width: 18, height: 18).offset(x: -3, y: 3)
+            RoundedRectangle(cornerRadius: 2).fill(.background)
+                .frame(width: 18, height: 18).offset(x: 3, y: -3)
+            RoundedRectangle(cornerRadius: 2).stroke(lineWidth: 1.8)
+                .frame(width: 18, height: 18).offset(x: 3, y: -3)
+        }.frame(width: 44, height: 44).contentShape(Rectangle())
+    }
+}
+
 extension View {
     func studioSurface() -> some View {
         self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))

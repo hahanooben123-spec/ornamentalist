@@ -10,7 +10,7 @@ struct StudioLayersView: View {
     @State private var layerName = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             if let document = model.document {
                 let grouped = Dictionary(grouping: document.strokes, by: \.layerID)
                 HStack {
@@ -23,7 +23,7 @@ struct StudioLayersView: View {
                         .accessibilityIdentifier("addLayer")
                 }
                 if let layer = document.activeLayer {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
                         HStack {
                             Text("Layer opacity"); Spacer()
                             Text("\(Int((layer.opacity * 100).rounded()))%").monospacedDigit()
@@ -33,14 +33,11 @@ struct StudioLayersView: View {
                                in: 0...1, step: 0.01, onEditingChanged: { editing in
                             if editing { model.beginLayerOpacityEdit() } else { model.finishLayerOpacityEdit() }
                         }).accessibilityLabel("Layer opacity").accessibilityIdentifier("layerOpacity")
-                        Text(layer.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }.padding(14).background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
+                    }.padding(8).background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
                 }
                 ForEach(Array(document.layers.reversed())) { layer in
                     row(layer, in: document, strokes: grouped[layer.id] ?? [])
                 }
-                Text("Tap a layer to adjust its opacity. The eye switches it on or off. Top layers sit above the ones below. Hidden or locked layers cannot be drawn on.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .onDisappear { model.finishLayerOpacityEdit() }
@@ -64,14 +61,11 @@ struct StudioLayersView: View {
     private func row(_ layer: DrawingLayer, in document: DrawingDocument, strokes: [InkStroke]) -> some View {
         HStack(spacing: 2) {
             Button { model.selectLayer(layer.id) } label: {
-                HStack(spacing: 9) {
-                    Image(systemName: layer.id == document.activeLayerID ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(layer.id == document.activeLayerID ? StudioStyle.copper : .secondary)
-                        .font(.caption)
+                HStack(spacing: 6) {
                     LayerPreview(model: model, document: document, layer: layer, strokeIDs: strokes.map(\.id))
                     VStack(alignment: .leading, spacing: 3) {
                         Text(layer.name).font(.subheadline.weight(.medium)).lineLimit(1)
-                        Text("\(layer.isVisible ? "\(Int((layer.opacity * 100).rounded()))%" : "Hidden") · \(strokes.count) strokes")
+                        Text(layer.isVisible ? "\(Int((layer.opacity * 100).rounded()))%" : "Hidden")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
@@ -109,7 +103,7 @@ struct StudioLayersView: View {
             } label: { StudioIcon(symbol: "ellipsis") }
                 .accessibilityLabel("Options for \(layer.name)").accessibilityIdentifier("layer-options-\(layer.name)")
         }
-        .padding(.leading, 10).padding(.vertical, 4)
+        .padding(.leading, 6).padding(.vertical, 2)
         .background(layer.id == document.activeLayerID ? StudioStyle.copper.opacity(0.12) : Color.secondary.opacity(0.05),
                     in: RoundedRectangle(cornerRadius: 14))
     }

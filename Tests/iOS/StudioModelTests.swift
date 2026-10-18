@@ -5,6 +5,56 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testAllBrushPreferencesAndEraserSurviveRestartWithoutManualSave() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "Ornamentalist-all-brushes-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder), preferences: preferences)
+        await model.create()
+        var expected: [BrushPreset: InkBrush] = [:]
+        for (index, preset) in BrushPreset.allCases.enumerated() {
+            model.setBrush(preset); model.setWidth(20 + Double(index))
+            model.setOpacity(0.4); model.setSpacing(0.35); model.setDensity(0.7)
+            model.setPressure(true); model.setStabilization(0.55)
+            expected[preset] = try XCTUnwrap(model.document?.brush)
+        }
+        model.selectTool(.eraser); model.setSoftEraser(true)
+        model.setInputWidth(77); model.setInputOpacity(0.42)
+        let eraser = model.eraserBrush
+        let restarted = StudioModel(repository: DocumentRepository(directory: folder), preferences: preferences)
+        await restarted.create()
+        XCTAssertEqual(restarted.document?.brush.preset, BrushPreset.allCases.last)
+        for preset in BrushPreset.allCases {
+            restarted.setBrush(preset)
+            XCTAssertEqual(restarted.document?.brush, expected[preset], preset.name)
+        }
+        restarted.selectTool(.eraser)
+        XCTAssertEqual(restarted.inputBrush, eraser)
+        restarted.setSoftEraser(false)
+        XCTAssertEqual(restarted.eraserBrush.opacity, eraser.opacity)
+    }
+
+    func testOpeningOldProjectPreservesPersonalSettingsAndExistingInk() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "Ornamentalist-old-project-brush-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder)
+        var drawing = DrawingDocument()
+        let point = StrokeSample(point: Point(x: 30, y: 40), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        drawing.strokes = [InkStroke(samples: [point])]
+        try await repository.save(drawing, generation: 1)
+        let model = StudioModel(repository: repository, preferences: preferences)
+        await model.open(drawing.id)
+        model.setWidth(42); model.setOpacity(0.35)
+        let restarted = StudioModel(repository: repository, preferences: preferences)
+        await restarted.open(drawing.id)
+        XCTAssertEqual(restarted.document?.brush.width, 42)
+        XCTAssertEqual(restarted.document?.brush.opacity, 0.35)
+        XCTAssertEqual(restarted.document?.strokes, drawing.strokes)
+    }
+
     func testGalleryRepairsMissingPreviewsAndUpdatesClosedDrawing() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

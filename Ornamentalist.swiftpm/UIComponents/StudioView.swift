@@ -50,10 +50,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.8.4: studio visible; loading gallery")
+            print("Ornamentalist 0.8.5: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.8.4: gallery loading finished")
+            print("Ornamentalist 0.8.5: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -174,12 +174,14 @@ struct StudioView: View {
                             }.padding(.horizontal, 14).padding(.top, 4)
                             ScrollView {
                                 StudioLayersView(model: model, onMerge: { layersVisible = false })
-                                    .padding(12)
+                                    .padding(8)
                             }
                         }
-                        .frame(width: min(360, geometry.size.width * 0.46))
-                        .frame(maxHeight: .infinity)
+                        .frame(width: min(300, geometry.size.width * 0.36),
+                               height: min(190 + CGFloat(model.document?.layers.count ?? 1) * 60,
+                                           max(200, geometry.size.height - 96)))
                         .studioSurface()
+                        .frame(maxHeight: .infinity, alignment: .top)
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("layersSidebar")
                         .disabled(controlsDisabled)
@@ -281,7 +283,10 @@ struct StudioView: View {
                 panel = panel == item ? nil : item
             }
         } label: {
-            StudioIcon(symbol: symbol)
+            Group {
+                if item == .layers { StudioLayersIcon() }
+                else { StudioIcon(symbol: symbol) }
+            }
             .background((panel == item || item == .layers && layersVisible && panel == nil) ? StudioStyle.copper.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 15))
             .contentShape(Rectangle())
         }
