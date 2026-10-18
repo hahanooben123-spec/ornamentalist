@@ -12,7 +12,7 @@ let package = Package(
             bundleIdentifier: "studio.mandala.prototype",
             displayVersion: "0.10.2",
             bundleVersion: "32",
-            appIcon: .placeholder(icon: .pencil),
+            appIcon: .asset("AppIcon"),
             accentColor: .presetColor(.teal),
             supportedDeviceFamilies: [.pad],
             supportedInterfaceOrientations: [.portrait, .portraitUpsideDown(.when(deviceFamilies: [.pad])), .landscapeLeft, .landscapeRight]
