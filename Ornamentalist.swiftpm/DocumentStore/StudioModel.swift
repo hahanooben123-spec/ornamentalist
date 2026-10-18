@@ -18,6 +18,8 @@ final class StudioModel: ObservableObject {
     @Published var guides = true
     @Published var fingerDrawing = false
     @Published var resetViewToken = UUID()
+    @Published private(set) var tool = StudioTool.brush
+    @Published private(set) var eraserBrush = InkBrush(width: 32, stabilization: 0.15)
     var canEdit: Bool { !busy && !isPreparing }
     let repository: DocumentRepository
     private let exportService = ExportService()
@@ -67,6 +69,7 @@ final class StudioModel: ObservableObject {
     }
     private func adopt(_ d: DrawingDocument, recovered: Bool) {
         opacityEditBefore = nil
+        tool = .brush
         document = d; history = StrokeHistory()
         writeSequence = max(writeSequence, d.storageRevision)
         generation += 1; nextSaveAttempt = 0; reportedSaveFailure = false
@@ -155,11 +158,12 @@ final class StudioModel: ObservableObject {
         guard canEdit, !isDrawing, document?.layers.contains(where: { $0.id == id }) == true else { return }
         document?.activeLayerID = id; changed()
     }
-    private func editLayers(_ edit: (inout DrawingDocument) -> Bool) {
+    private func editLayers(_ edit: (inout DrawingDocument) throws -> Bool) {
         finishLayerOpacityEdit()
         guard canEdit, !isDrawing, let before = document else { return }
         var after = before
-        guard edit(&after) else { return }
+        do { guard try edit(&after) else { return } }
+        catch { self.error = error.localizedDescription; return }
         history.recordLayerChange(from: before, to: after)
         document = after; recountInk(); changed()
     }
@@ -169,6 +173,45 @@ final class StudioModel: ObservableObject {
     func toggleLayerLock(_ id: UUID) { editLayers { LayerManager.toggleLock(id, in: &$0) } }
     func moveLayer(_ id: UUID, up: Bool) { editLayers { LayerManager.move(id, up: up, in: &$0) } }
     func deleteLayer(_ id: UUID) { editLayers { LayerManager.delete(id, in: &$0) } }
+    func duplicateLayer(_ id: UUID) { editLayers { try LayerManager.duplicate(id, in: &$0) } }
+    func mergeLayerDown(_ id: UUID) async {
+        finishLayerOpacityEdit()
+        guard canEdit, !isDrawing, let before = document, LayerManager.canMergeDown(id, in: before) else { return }
+        busy = true; defer { busy = false }
+        do {
+            let raster = try await exportService.mergedLayer(before, topID: id)
+            var after = before
+            guard try LayerManager.mergeDown(id, raster: raster, in: &after) else { return }
+            history.recordLayerChange(from: before, to: after)
+            document = after; recountInk(); changed()
+        } catch { self.error = error.localizedDescription }
+    }
+    func layerThumbnail(_ snapshot: DrawingDocument, id: UUID) async throws -> Data {
+        try await exportService.layerThumbnail(snapshot, id: id)
+    }
+    func selectTool(_ tool: StudioTool) {
+        guard canEdit, !isDrawing, document != nil else { return }
+        self.tool = tool
+    }
+    func setEraserWidth(_ width: Double) {
+        guard canEdit, !isDrawing, width.isFinite else { return }
+        eraserBrush.width = max(0.5, min(160, width))
+    }
+    func setSoftEraser(_ soft: Bool) {
+        guard canEdit, !isDrawing else { return }
+        let width = eraserBrush.width
+        eraserBrush = soft ? BrushPreset.softShader.makeBrush() : InkBrush(width: width, stabilization: 0.15)
+        eraserBrush.width = width
+    }
+    func pickColor(at point: Point) async {
+        guard canEdit, !isDrawing, let snapshot = document, point.isFinite,
+              (0..<snapshot.size.x).contains(point.x), (0..<snapshot.size.y).contains(point.y) else { return }
+        busy = true
+        do {
+            let color = try await exportService.sampledColor(snapshot, point: point)
+            busy = false; setColor(color); tool = .brush
+        } catch { busy = false; self.error = error.localizedDescription }
+    }
     func beginLayerOpacityEdit() {
         guard canEdit, !isDrawing, opacityEditBefore == nil else { return }
         opacityEditBefore = document
@@ -209,6 +252,7 @@ final class StudioModel: ObservableObject {
     func setBrush(_ preset: BrushPreset) {
         guard canEdit, !isDrawing, document != nil else { return }
         document?.brush = preset.makeBrush(); changed()
+        tool = .brush
     }
     func setOpacity(_ value: Double) {
         guard canEdit, !isDrawing, value.isFinite, document?.brush.usesStamps == true else { return }
@@ -231,7 +275,7 @@ final class StudioModel: ObservableObject {
         document?.brush.stabilization = max(0, min(0.85, amount)); changed()
     }
     private func changed() {
-        document?.version = 5; document?.modified = Date()
+        document?.version = 6; document?.modified = Date()
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)

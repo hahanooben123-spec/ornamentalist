@@ -105,7 +105,7 @@ struct BrushStampState: Sendable {
 
 enum BrushGeometry {
     static func dabs(_ stroke: InkStroke) -> [BrushDab] {
-        var state = BrushStampState(id: stroke.id)
+        var state = BrushStampState(id: stroke.seedID)
         return stroke.samples.flatMap { state.advance($0, brush: stroke.brush) }
     }
     static func mesh(_ stroke: InkStroke) -> [BrushVertex] {
@@ -113,7 +113,7 @@ enum BrushGeometry {
         return StrokeGeometry.mesh(stroke).map { BrushVertex($0) }
     }
     static func estimatedVertexCount(_ stroke: InkStroke) -> Int {
-        var state = BrushStampState(id: stroke.id), count = 0
+        var state = BrushStampState(id: stroke.seedID), count = 0
         for sample in stroke.samples {
             count += state.stampCount(to: sample, brush: stroke.brush) * BrushStampState.dabsPerStamp(stroke.brush) * 6
             if count > DrawingLimits.strokeVertices { return count }

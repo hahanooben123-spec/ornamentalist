@@ -40,6 +40,40 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(app.buttons["drawing-Untitled Drawing"].firstMatch.waitForExistence(timeout: 15))
     }
 
+    func testEraserEyedropperDuplicateAndMergeFlow() {
+        XCTAssertTrue(app.buttons["drawing-Solstice"].waitForExistence(timeout: 30))
+        app.buttons["drawing-Solstice"].tap()
+        XCTAssertTrue(app.buttons["tool-eraser"].waitForExistence(timeout: 15))
+        app.buttons["tool-eraser"].tap(); XCTAssertTrue(app.buttons["tool-eraser"].isSelected)
+        app.buttons["panel-Brushes"].tap()
+        XCTAssertTrue(app.sliders["Eraser size"].waitForExistence(timeout: 5))
+        app.segmentedControls["eraserEdge"].buttons["Soft"].tap()
+        screenshot("17-Eraser-settings")
+        app.buttons["returnToBrush"].tap(); app.buttons["closePanel"].tap()
+        app.buttons["tool-eyedropper"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["eyedropperHint"].firstMatch.waitForExistence(timeout: 5))
+        let canvas = app.descendants(matching: .any)["drawingCanvas"].firstMatch
+        XCTAssertTrue(canvas.exists)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let unselected = NSPredicate(format: "selected == false")
+        expectation(for: unselected, evaluatedWith: app.buttons["tool-eyedropper"])
+        waitForExpectations(timeout: 15)
+        app.buttons["panel-Layers"].tap()
+        app.buttons["layer-options-Layer 1"].tap(); app.buttons["Duplicate layer"].tap()
+        XCTAssertTrue(app.buttons["select-layer-Layer 1 copy"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["select-layer-Layer 1 copy"].isSelected)
+        screenshot("18-Layer-thumbnails-duplicate")
+        app.buttons["layer-options-Layer 1 copy"].tap(); app.buttons["Merge down"].tap()
+        let removed = NSPredicate(format: "exists == false")
+        expectation(for: removed, evaluatedWith: app.buttons["select-layer-Layer 1 copy"])
+        waitForExpectations(timeout: 20)
+        XCTAssertTrue(app.buttons["select-layer-Layer 1"].exists)
+        screenshot("19-Merged-layer")
+        app.buttons["closePanel"].tap(); app.buttons["undo"].tap()
+        app.buttons["panel-Layers"].tap()
+        XCTAssertTrue(app.buttons["select-layer-Layer 1 copy"].waitForExistence(timeout: 10))
+    }
+
     func testColorPickerLayerVisibilityAndOpacityPersist() {
         app.buttons["newDrawing"].firstMatch.tap()
         XCTAssertTrue(app.buttons["createDrawing"].waitForExistence(timeout: 5))

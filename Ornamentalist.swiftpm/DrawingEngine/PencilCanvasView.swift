@@ -20,6 +20,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private var preparationID = UUID()
     private var pendingPreparation = false
     private var synchronizedIDs: [UUID] = []
+    private var synchronizedRasters: [UUID] = []
     private var drawingTouch: UITouch?
     private var preview: [BrushVertex] = []
     private var navigationGestures: [UIGestureRecognizer] = []
@@ -32,6 +33,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         NotificationCenter.default.addObserver(self, selector: #selector(suspendDrawing),
                                                name: UIApplication.willResignActiveNotification, object: nil)
         accessibilityLabel = "Ornamentalist drawing canvas"
+        accessibilityIdentifier = "drawingCanvas"
+        isAccessibilityElement = true
         accessibilityHint = "Draw with Apple Pencil. Use two fingers to pan, pinch to zoom, or rotate."
         do {
             renderer = try MetalCanvasRenderer(view: self)
@@ -59,13 +62,14 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         }
         guard let document = model.document, let renderer else { return }
         let ids = document.strokes.map(\.id)
-        if ids != synchronizedIDs {
-            synchronizedIDs = ids
+        let rasters = document.layers.compactMap { $0.raster?.id }
+        if ids != synchronizedIDs || rasters != synchronizedRasters {
+            synchronizedIDs = ids; synchronizedRasters = rasters
             preparation?.cancel()
             preparationID = UUID()
             let request = preparationID
-            renderer.prune(document.strokes)
-            if !renderer.hasBuffers(for: document.strokes) {
+            renderer.prune(document.strokes, layers: document.layers)
+            if !renderer.hasBuffers(for: document.strokes, layers: document.layers) {
                 pendingPreparation = true
                 preparation = Task { [weak self] in
                     guard let self, self.preparationID == request, !Task.isCancelled else { return }
@@ -75,7 +79,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
                             self.pendingPreparation = false; self.model.setPreparing(false); self.setNeedsDisplay()
                         }
                     }
-                    do { try await renderer.synchronize(document.strokes) }
+                    do { try await renderer.synchronize(document.strokes, layers: document.layers) }
                     catch is CancellationError { }
                     catch { self.report(error) }
                 }
@@ -120,6 +124,12 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
                             time: touch.timestamp)
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if model.tool == .eyedropper, model.canEdit, active == nil,
+           let touch = touches.first(where: { $0.type == .pencil }) ?? touches.first(where: { $0.type == .direct }) {
+            let picked = point(touch)
+            Task { await model.pickColor(at: picked) }
+            return
+        }
         guard active == nil, !pendingPreparation, let document = model.document, model.canDraw, renderer != nil,
               document.strokes.count < 20_000 else { return }
         let selected = touches.first(where: { $0.type == .pencil }) ??
@@ -134,9 +144,9 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             report(DocumentError.memoryLimit); return
         }
         drawingTouch = touch
-        session = StrokeSession(brush: document.brush, symmetry: document.symmetry,
+        session = StrokeSession(brush: model.tool == .eraser ? model.eraserBrush : document.brush, symmetry: document.symmetry,
                                 existingSamples: model.usedSamples, existingVertices: model.usedVertices,
-                                layerID: document.activeLayerID, color: document.color)
+                                layerID: document.activeLayerID, color: document.color, operation: model.tool == .eraser ? .erase : .ink)
         renderer?.begin(); model.setDrawing(true)
         // Navigation is frozen for the duration of a Pencil stroke: palms cannot move the canvas.
         if touch.type == .pencil { navigationGestures.forEach { $0.isEnabled = false } }

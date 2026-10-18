@@ -12,6 +12,9 @@ final class MetalCanvasRenderer {
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private let pipeline: MTLRenderPipelineState
+    private let erasePipeline: MTLRenderPipelineState
+    private let rasterPipeline: MTLRenderPipelineState
+    private var rasterTextures: [UUID: MTLTexture] = [:]
     private let singlePipeline: MTLRenderPipelineState
     private let compositePipeline: MTLRenderPipelineState
     private let groupInFlight = DispatchSemaphore(value: 1)
@@ -81,6 +84,15 @@ final class MetalCanvasRenderer {
         attachment.sourceAlphaBlendFactor = .one
         attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
         pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        attachment.sourceRGBBlendFactor = .zero
+        attachment.sourceAlphaBlendFactor = .zero
+        erasePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.fragmentFunction = library.makeFunction(name: "rasterFragment")
+        attachment.sourceRGBBlendFactor = .one
+        attachment.sourceAlphaBlendFactor = .one
+        rasterPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.fragmentFunction = library.makeFunction(name: "inkFragment")
+        attachment.sourceRGBBlendFactor = .sourceAlpha
         descriptor.rasterSampleCount = 1
         singlePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.vertexFunction = library.makeFunction(name: "compositeVertex")
@@ -111,13 +123,17 @@ final class MetalCanvasRenderer {
         }
         return result
     }
-    func hasBuffers(for strokes: [InkStroke]) -> Bool { strokes.allSatisfy { cache[$0.id] != nil } }
-    func prune(_ strokes: [InkStroke]) {
+    func hasBuffers(for strokes: [InkStroke], layers: [DrawingLayer] = []) -> Bool {
+        strokes.allSatisfy { cache[$0.id] != nil } && layers.compactMap(\.raster).allSatisfy { rasterTextures[$0.id] != nil }
+    }
+    func prune(_ strokes: [InkStroke], layers: [DrawingLayer] = []) {
+        let rasters = Set(layers.compactMap { $0.raster?.id })
+        rasterTextures = rasterTextures.filter { rasters.contains($0.key) }
         let ids = Set(strokes.map(\.id))
         cache = cache.filter { ids.contains($0.key) }
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
     }
-    func synchronize(_ strokes: [InkStroke]) async throws {
+    func synchronize(_ strokes: [InkStroke], layers: [DrawingLayer] = []) async throws {
         let missing = strokes.filter { cache[$0.id] == nil }
         let prepared = try await Task.detached(priority: .userInitiated) {
             var total = 0
@@ -141,7 +157,12 @@ final class MetalCanvasRenderer {
         guard incoming + kept <= DrawingLimits.vertexCount else { throw DocumentError.memoryLimit }
         var uploaded: [UUID: [GPUChunk]] = [:]
         for (id, points) in prepared { uploaded[id] = try chunks(points) }
-        prune(strokes)
+        let loader = MTKTextureLoader(device: device)
+        for raster in layers.compactMap(\.raster) where rasterTextures[raster.id] == nil {
+            let image = try PNGExporter.rasterImage(raster)
+            rasterTextures[raster.id] = try loader.newTexture(cgImage: image, options: [.SRGB: false, .origin: MTKTextureLoader.Origin.topLeft.rawValue, .generateMipmaps: false])
+        }
+        prune(strokes, layers: layers)
         for (id, buffers) in uploaded { cache[id] = buffers }
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
     }
@@ -183,7 +204,7 @@ final class MetalCanvasRenderer {
             inFlight.signal()
             return
         }
-        let grouped = requiresGroups(document)
+        let grouped = requiresGroups(document, active: active)
         if grouped && groupInFlight.wait(timeout: .now()) != .success {
             inFlight.signal(); deferredFrames += 1; view.setNeedsDisplay(); return
         }
@@ -223,8 +244,11 @@ final class MetalCanvasRenderer {
         if layerOnly == nil {
         if paperSize != document.size || paper.isEmpty {
             paperSize = document.size
-            paper = try chunks([.zero, Point(x: document.size.x, y: 0), document.size,
-                                .zero, document.size, Point(x: 0, y: document.size.y)].map { BrushVertex($0) })
+            let a = BrushVertex(.zero, local: .zero)
+            let b = BrushVertex(Point(x: document.size.x, y: 0), local: Point(x: 1, y: 0))
+            let c = BrushVertex(document.size, local: Point(x: 1, y: 1))
+            let d = BrushVertex(Point(x: 0, y: document.size.y), local: Point(x: 0, y: 1))
+            paper = try chunks([a, b, c, a, c, d])
         }
         try encode(paper, symmetry: identity, transform: transform, size: viewSize,
                    canvas: document.size, color: SIMD4(1, 1, 1, 1), encoder: encoder)
@@ -250,7 +274,7 @@ final class MetalCanvasRenderer {
                        canvas: document.size, color: SIMD4(0.1, 0.5, 0.55, 0.22), encoder: encoder)
         }
         }
-        if backgroundOnly { return }
+        if layerOnly == nil {
         let strokeIDs = document.strokes.map(\.id)
         let layerIDs = document.layers.filter(\.isVisible).map(\.id)
         if sceneStrokeIDs != strokeIDs || sceneLayerIDs != layerIDs {
@@ -258,12 +282,23 @@ final class MetalCanvasRenderer {
             sceneStrokes = document.visibleStrokes
             sceneLayerStrokes = Dictionary(grouping: sceneStrokes, by: \.layerID)
         }
+        }
+        if backgroundOnly { return }
         for layer in document.layers where layer.isVisible && layer.opacity > 0 && (layerOnly == nil || layerOnly == layer.id) {
+            if let raster = layer.raster {
+                guard let texture = rasterTextures[raster.id] else { throw DocumentError.graphics }
+                encoder.setRenderPipelineState(rasterPipeline)
+                encoder.setFragmentTexture(texture, index: 0)
+                try encode(paper, symmetry: identity, transform: transform, size: viewSize, canvas: document.size,
+                           color: SIMD4(1, 1, 1, 1), encoder: encoder)
+            }
             for stroke in sceneLayerStrokes[layer.id] ?? [] {
+                encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
                 try encode(cache[stroke.id] ?? [], symmetry: stroke.symmetry, transform: transform,
                            size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
             }
             if let active, active.layerID == layer.id {
+                encoder.setRenderPipelineState(active.operation == .erase ? erasePipeline : pipeline)
                 var live = sealed
                 if !scratch.isEmpty { live.append(try chunk(scratch)) }
                 live += try chunks(preview)
@@ -276,7 +311,8 @@ final class MetalCanvasRenderer {
     private func inkColor(_ stroke: InkStroke) -> SIMD4<Float> {
         SIMD4(Float(stroke.color.red), Float(stroke.color.green), Float(stroke.color.blue), Float(stroke.brush.opacity))
     }
-    private func requiresGroups(_ document: DrawingDocument) -> Bool {
+    private func requiresGroups(_ document: DrawingDocument, active: InkStroke? = nil) -> Bool {
+        active?.operation == .erase || document.strokes.contains { $0.operation == .erase } ||
         document.layers.contains { $0.isVisible && $0.opacity > 0 && $0.opacity < 1 }
     }
 
@@ -350,7 +386,7 @@ final class MetalCanvasRenderer {
         let color = pass.colorAttachments[0]!
         color.clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
         color.loadAction = .clear
-        if sampleCount > 1 && !requiresGroups(document) {
+        if sampleCount > 1 && !requiresGroups(document, active: active) {
             let msaa = MTLTextureDescriptor()
             msaa.textureType = .type2DMultisample; msaa.pixelFormat = .bgra8Unorm
             msaa.width = width; msaa.height = height; msaa.sampleCount = sampleCount
@@ -358,7 +394,7 @@ final class MetalCanvasRenderer {
             guard let texture = device.makeTexture(descriptor: msaa) else { throw DocumentError.graphics }
             color.texture = texture; color.resolveTexture = output; color.storeAction = .multisampleResolve
         } else { color.texture = output; color.storeAction = .store }
-        if requiresGroups(document) {
+        if requiresGroups(document, active: active) {
             try encodeGroups(command: command, output: output, document: document, viewport: viewport,
                              viewSize: Point(x: Double(width), y: Double(height)), active: active, preview: preview, guides: guides)
         } else {
@@ -433,6 +469,11 @@ final class MetalCanvasRenderer {
         out.canvas = p; out.limit = u.canvas.xy; out.color = u.color;
         out.local = vertices[v].zw; out.stamp = u.canvas.zw;
         return out;
+    }
+    fragment float4 rasterFragment(Output in [[stage_in]], texture2d<float> image [[texture(0)]]) {
+        if (any(in.canvas < float2(0)) || any(in.canvas > in.limit)) discard_fragment();
+        constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
+        return image.sample(s, in.local);
     }
     struct CompositeOutput { float4 position [[position]]; float2 uv; };
     vertex CompositeOutput compositeVertex(uint v [[vertex_id]]) {

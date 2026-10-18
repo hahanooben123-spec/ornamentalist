@@ -14,6 +14,9 @@ struct StrokeSample: Codable, Equatable, Sendable {
     }
 }
 
+enum StrokeOperation: String, Codable, Sendable { case ink, erase }
+enum StudioTool: String, Sendable { case brush, eraser, eyedropper }
+
 struct InkStroke: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var brush = InkBrush()
@@ -21,6 +24,9 @@ struct InkStroke: Codable, Identifiable, Equatable, Sendable {
     var samples: [StrokeSample] = []
     var layerID = DrawingLayer.legacyID
     var color = InkColor.black
+    var operation = StrokeOperation.ink
+    var geometrySeed: UUID?
+    var seedID: UUID { geometrySeed ?? id }
 }
 
 extension InkStroke {
@@ -32,11 +38,13 @@ extension InkStroke {
         samples = try c.decode([StrokeSample].self, forKey: .samples)
         layerID = try c.decodeIfPresent(UUID.self, forKey: .layerID) ?? DrawingLayer.legacyID
         color = try c.decodeIfPresent(InkColor.self, forKey: .color) ?? .black
+        operation = try c.decodeIfPresent(StrokeOperation.self, forKey: .operation) ?? .ink
+        geometrySeed = try c.decodeIfPresent(UUID.self, forKey: .geometrySeed)
     }
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 5
+    var version = 6
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -58,7 +66,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard (1...5).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...6).contains(version) else { throw DocumentError.unsupportedVersion }
         let layerIDs = Set(layers.map(\.id))
         guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
               layerIDs.contains(activeLayerID), layers.allSatisfy({
@@ -67,6 +75,14 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
               }) else { throw DocumentError.invalidData }
         guard size.isFinite, size.x >= 64, size.y >= 64, size.x <= 8192, size.y <= 8192,
               title.count <= 200, strokes.count <= 20_000 else { throw DocumentError.invalidData }
+        var rasters: [UUID: LayerRaster] = [:], rasterPixels = 0, rasterBytes = 0
+        for raster in layers.compactMap(\.raster) {
+            try raster.validate(canvas: size)
+            if let existing = rasters[raster.id], existing != raster { throw DocumentError.invalidData }
+            rasters[raster.id] = raster
+            rasterPixels += raster.width * raster.height; rasterBytes += raster.png.count
+            guard rasterPixels <= LayerRaster.documentPixels, rasterBytes <= LayerRaster.documentBytes else { throw DocumentError.memoryLimit }
+        }
         func validSymmetry(_ s: SymmetryConfiguration) -> Bool {
             (1...64).contains(s.repetitions) && s.center.isFinite &&
                 (0...size.x).contains(s.center.x) && (0...size.y).contains(s.center.y)
@@ -133,9 +149,10 @@ extension DrawingDocument {
 }
 
 enum DocumentError: LocalizedError {
-    case unsupportedVersion, invalidData, oversized, noMetal, graphics, memoryLimit
+    case unsupportedVersion, invalidData, oversized, noMetal, graphics, memoryLimit, mergeSize
     var errorDescription: String? {
         switch self {
+        case .mergeSize: return "Merging currently supports canvases up to 2048 × 2048 pixels with whole-pixel dimensions."
         case .unsupportedVersion: return "This drawing uses a document version this app cannot open."
         case .invalidData: return "The drawing contains invalid or unsupported data."
         case .oversized: return "This prototype supports drawing files up to 64 MB."

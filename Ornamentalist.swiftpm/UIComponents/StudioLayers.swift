@@ -64,6 +64,8 @@ struct StudioLayersView: View {
                 HStack(spacing: 9) {
                     Image(systemName: layer.id == document.activeLayerID ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(layer.id == document.activeLayerID ? StudioStyle.copper : .secondary)
+                        .font(.caption)
+                    LayerPreview(model: model, document: document, layer: layer)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(layer.name).font(.subheadline.weight(.medium)).lineLimit(1)
                         Text("\(layer.isVisible ? "\(Int((layer.opacity * 100).rounded()))%" : "Hidden") · \(document.strokes.filter { $0.layerID == layer.id }.count) strokes")
@@ -86,6 +88,11 @@ struct StudioLayersView: View {
                 .accessibilityValue(layer.isLocked ? "Locked" : "Unlocked")
                 .accessibilityIdentifier("lock-\(layer.name)")
             Menu {
+                Button("Duplicate layer", systemImage: "square.on.square") { model.duplicateLayer(layer.id) }
+                    .disabled(document.layers.count >= LayerManager.maximumLayers)
+                Button("Merge down", systemImage: "arrow.down.square") { Task { await model.mergeLayerDown(layer.id) } }
+                    .disabled(!LayerManager.canMergeDown(layer.id, in: document))
+                Divider()
                 Button("Rename", systemImage: "pencil") { layerName = layer.name; renaming = layer }
                 Button("Move up", systemImage: "arrow.up") { model.moveLayer(layer.id, up: true) }
                     .disabled(document.layers.last?.id == layer.id)

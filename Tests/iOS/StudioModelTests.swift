@@ -3,6 +3,35 @@ import XCTest
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testDuplicateMergeUndoAndEyedropperTools() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder)
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        let p = StrokeSample(point: Point(x: 30, y: 25), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        d.strokes = [InkStroke(brush: InkBrush(width: 20), symmetry: d.symmetry, samples: [p], color: InkColor(green: 1))]
+        try await repository.save(d, generation: 1)
+        let model = StudioModel(repository: repository); await model.open(d.id)
+        model.selectTool(.eraser); model.setEraserWidth(45); model.setSoftEraser(true)
+        XCTAssertEqual(model.eraserBrush.width, 45); XCTAssertTrue(model.eraserBrush.usesStamps)
+        model.setDrawing(true); model.selectTool(.eyedropper); model.duplicateLayer(d.activeLayerID)
+        XCTAssertEqual(model.tool, .eraser); XCTAssertEqual(model.document?.layers.count, 1)
+        model.setDrawing(false); model.duplicateLayer(d.activeLayerID)
+        let copyID = try XCTUnwrap(model.document?.activeLayerID)
+        XCTAssertEqual(model.document?.layers.count, 2)
+        await model.mergeLayerDown(copyID)
+        XCTAssertEqual(model.document?.layers.count, 1); XCTAssertNotNil(model.document?.layers[0].raster)
+        XCTAssertEqual(model.usedSamples, 0)
+        model.undo(); XCTAssertEqual(model.document?.layers.count, 2); XCTAssertEqual(model.usedSamples, 2)
+        model.redo(); XCTAssertEqual(model.document?.layers.count, 1)
+        model.selectTool(.eyedropper); await model.pickColor(at: p.point)
+        XCTAssertEqual(model.document?.color.hex, "#00FF00"); XCTAssertEqual(model.tool, .brush)
+        let saved = await model.saveNow(); XCTAssertTrue(saved)
+        let (opened, _) = try await repository.open(d.id)
+        XCTAssertNotNil(opened.layers[0].raster)
+    }
+
     func testLayerOpacityDragIsOneUndoAndColorChangesRespectActiveStroke() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

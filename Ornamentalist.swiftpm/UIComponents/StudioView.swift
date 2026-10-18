@@ -49,10 +49,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.5.0: studio visible; loading gallery")
+            print("Ornamentalist 0.6.0: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.5.0: gallery loading finished")
+            print("Ornamentalist 0.6.0: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -138,7 +138,11 @@ struct StudioView: View {
                 }
             }
             .overlay {
-                if !document.canDrawOnActiveLayer {
+                if model.tool == .eyedropper {
+                    Label("Tap artwork to pick a color", systemImage: "eyedropper")
+                        .font(.subheadline).padding(16).studioSurface().allowsHitTesting(false)
+                        .accessibilityIdentifier("eyedropperHint")
+                } else if !document.canDrawOnActiveLayer {
                     Label(document.activeLayer?.isVisible == false ? "Layer hidden · Choose a visible layer" : "Layer locked · Unlock in Layers",
                           systemImage: document.activeLayer?.isVisible == false ? "eye.slash" : "lock")
                         .font(.subheadline).padding(16).studioSurface().allowsHitTesting(false)
@@ -155,7 +159,7 @@ struct StudioView: View {
     }
 
     private func editorHeader(_ document: DrawingDocument) -> some View {
-        HStack(spacing: horizontalSizeClass == .compact ? 4 : 12) {
+        HStack(spacing: horizontalSizeClass == .compact ? 0 : 12) {
             Button {
                 panel = nil; Task { await model.close() }
             } label: { StudioIcon(symbol: "square.grid.2x2") }
@@ -177,6 +181,17 @@ struct StudioView: View {
                     .disabled(!model.canRedo || controlsDisabled)
                     .accessibilityLabel("Redo").accessibilityIdentifier("redo")
             }
+            if horizontalSizeClass == .compact {
+                Menu {
+                    Button("Brush", systemImage: "pencil.tip") { model.selectTool(.brush) }
+                    Button("Eraser", systemImage: "eraser") { model.selectTool(.eraser) }
+                    Button("Eyedropper", systemImage: "eyedropper") { model.selectTool(.eyedropper) }
+                } label: { StudioIcon(symbol: model.tool == .brush ? "pencil.tip" : model.tool == .eraser ? "eraser" : "eyedropper") }
+                    .disabled(controlsDisabled).accessibilityLabel("Drawing tools")
+            } else {
+                toolButton(.eraser, symbol: "eraser", label: "Eraser")
+                toolButton(.eyedropper, symbol: "eyedropper", label: "Eyedropper")
+            }
             Button { panel = panel == .colors ? nil : .colors } label: {
                 Circle().fill(document.color.swiftUIColor)
                     .overlay(Circle().stroke(.secondary.opacity(0.4), lineWidth: 1))
@@ -197,13 +212,24 @@ struct StudioView: View {
             Button { panel = nil; zen = true } label: { StudioIcon(symbol: "arrow.up.left.and.arrow.down.right") }
                 .disabled(controlsDisabled).accessibilityLabel("Hide studio controls").accessibilityIdentifier("enterZen")
         }
-        .padding(.horizontal, 10).padding(.vertical, 8).studioSurface()
+        .padding(.horizontal, horizontalSizeClass == .compact ? 6 : 10).padding(.vertical, 8).studioSurface()
         .frame(maxWidth: 900)
+    }
+
+    private func toolButton(_ tool: StudioTool, symbol: String, label: String) -> some View {
+        Button {
+            panel = nil; model.selectTool(model.tool == tool ? .brush : tool)
+        } label: {
+            StudioIcon(symbol: symbol)
+                .background(model.tool == tool ? StudioStyle.copper.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 12))
+        }.disabled(controlsDisabled).accessibilityLabel(label).accessibilityIdentifier("tool-\(tool.rawValue)")
+            .accessibilityAddTraits(model.tool == tool ? .isSelected : [])
     }
 
     private func dock(_ document: DrawingDocument) -> some View {
         HStack(spacing: 4) {
-            dockButton(.brush, symbol: "pencil.tip", detail: document.brush.preset.name)
+            dockButton(.brush, symbol: model.tool == .eraser ? "eraser" : "pencil.tip",
+                       detail: model.tool == .eraser ? "Eraser · \(Int(model.eraserBrush.width)) px" : document.brush.preset.name)
             Divider().frame(height: 28).padding(.horizontal, 4)
             dockButton(.symmetry, symbol: "circle.hexagongrid", detail: document.symmetry.mirror ? "×\(document.symmetry.instanceCount) · Mirror" : document.symmetry.repetitions == 1 ? "Off" : "×\(document.symmetry.repetitions)")
             Divider().frame(height: 28).padding(.horizontal, 4)

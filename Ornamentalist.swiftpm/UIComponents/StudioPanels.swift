@@ -26,7 +26,9 @@ struct StudioPanelView: View {
                 if let document = model.document {
                     VStack(alignment: .leading, spacing: 24) {
                         switch panel {
-                        case .brush: StudioBrushesView(model: model, brush: document.brush)
+                        case .brush:
+                            if model.tool == .eraser { StudioEraserView(model: model) }
+                            else { StudioBrushesView(model: model, brush: document.brush) }
                         case .symmetry: symmetry(document)
                         case .canvas: canvas
                         case .layers: StudioLayersView(model: model)
