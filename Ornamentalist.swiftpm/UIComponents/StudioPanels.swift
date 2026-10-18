@@ -2,7 +2,7 @@ import SwiftUI
 import Darwin
 
 enum StudioPanel: String, Identifiable {
-    case brush = "Fineliner", symmetry = "Symmetry", layers = "Layers", canvas = "Canvas"
+    case brush = "Brushes", symmetry = "Symmetry", layers = "Layers", canvas = "Canvas"
     var id: String { rawValue }
 }
 
@@ -26,7 +26,7 @@ struct StudioPanelView: View {
                 if let document = model.document {
                     VStack(alignment: .leading, spacing: 24) {
                         switch panel {
-                        case .brush: brush(document)
+                        case .brush: StudioBrushesView(model: model, brush: document.brush)
                         case .symmetry: symmetry(document)
                         case .canvas: canvas
                         case .layers: StudioLayersView(model: model)
@@ -35,51 +35,9 @@ struct StudioPanelView: View {
                 }
             }
         }
-        .frame(idealWidth: 360, idealHeight: panel == .symmetry ? 560 : panel == .layers ? 520 : panel == .canvas ? 460 : 440)
+        .frame(idealWidth: 360, idealHeight: panel == .symmetry ? 560 : panel == .layers ? 520 : panel == .canvas ? 460 : 620)
         .presentationCompactAdaptation(.popover)
         .disabled(model.isDrawing || !model.canEdit)
-    }
-
-    private func brush(_ document: DrawingDocument) -> some View {
-        VStack(alignment: .leading, spacing: 24) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14).fill(Color.white)
-                BrushPreview().stroke(.black, style: StrokeStyle(lineWidth: min(18, document.brush.width), lineCap: .round))
-                    .padding(.horizontal, 24).padding(.vertical, 20)
-            }.frame(height: 68).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Line width")
-                    Spacer()
-                    Text("\(document.brush.width.formatted(.number.precision(.fractionLength(1)))) px")
-                        .monospacedDigit().foregroundStyle(.secondary)
-                }.font(.subheadline)
-                Slider(value: Binding(get: { document.brush.width }, set: { model.setWidth($0) }), in: 0.5...40)
-                    .accessibilityLabel("Line width")
-                HStack(spacing: 8) {
-                    ForEach([2.0, 5, 10, 20], id: \.self) { width in
-                        Button { model.setWidth(width) } label: {
-                            Text("\(Int(width))").font(.subheadline.monospacedDigit())
-                                .frame(maxWidth: .infinity).frame(height: 44)
-                                .background(document.brush.width == width ? StudioStyle.copper.opacity(0.16) : Color.secondary.opacity(0.08),
-                                            in: RoundedRectangle(cornerRadius: 12))
-                        }.accessibilityLabel("Line width \(Int(width)) pixels")
-                    }
-                }
-            }
-            Toggle("Pressure sensitivity", isOn: Binding(get: { document.brush.pressureEnabled }, set: { model.setPressure($0) }))
-                .font(.subheadline)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Steady line")
-                    Spacer()
-                    Text("\(Int(document.brush.stabilization * 100))%").monospacedDigit().foregroundStyle(.secondary)
-                }.font(.subheadline)
-                Slider(value: Binding(get: { document.brush.stabilization }, set: { model.setStabilization($0) }), in: 0...0.85)
-                    .accessibilityLabel("Line stabilization")
-                Text("Smooths small movements as you draw.").font(.caption).foregroundStyle(.secondary)
-            }
-        }
     }
 
     private func symmetry(_ document: DrawingDocument) -> some View {
@@ -142,17 +100,6 @@ struct StudioPanelView: View {
             Button("Drawing performance", systemImage: "speedometer", action: diagnostics)
                 .font(.subheadline).frame(minHeight: 44)
         }
-    }
-}
-
-private struct BrushPreview: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: rect.minX, y: rect.midY))
-        p.addCurve(to: CGPoint(x: rect.maxX, y: rect.midY),
-                   control1: CGPoint(x: rect.width * 0.35, y: rect.minY - 18),
-                   control2: CGPoint(x: rect.width * 0.65, y: rect.maxY + 18))
-        return p
     }
 }
 

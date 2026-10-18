@@ -21,7 +21,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private var pendingPreparation = false
     private var synchronizedIDs: [UUID] = []
     private var drawingTouch: UITouch?
-    private var preview: [Point] = []
+    private var preview: [BrushVertex] = []
     private var navigationGestures: [UIGestureRecognizer] = []
 
     init(model: StudioModel) {

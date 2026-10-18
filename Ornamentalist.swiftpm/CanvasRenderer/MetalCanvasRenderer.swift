@@ -14,7 +14,7 @@ final class MetalCanvasRenderer {
     private let pipeline: MTLRenderPipelineState
     private var cache: [UUID: [GPUChunk]] = [:]
     private var sealed: [GPUChunk] = []
-    private var scratch: [SIMD2<Float>] = []
+    private var scratch: [SIMD4<Float>] = []
     private let chunkSize = 8190 // Multiple of three.
     private let inFlight = DispatchSemaphore(value: 3)
     private let sampleCount: Int
@@ -40,7 +40,7 @@ final class MetalCanvasRenderer {
             let p95 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
-        let bytes = (allocatedVertexCount + sealedVertexCount + scratch.count) * MemoryLayout<SIMD2<Float>>.stride
+        let bytes = (allocatedVertexCount + sealedVertexCount + scratch.count) * MemoryLayout<SIMD4<Float>>.stride
         return "CPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
@@ -84,7 +84,7 @@ final class MetalCanvasRenderer {
         view.isOpaque = true
     }
 
-    private func chunk(_ points: [SIMD2<Float>]) throws -> GPUChunk {
+    private func chunk(_ points: [SIMD4<Float>]) throws -> GPUChunk {
         guard !points.isEmpty else { throw DocumentError.graphics }
         let buffer = points.withUnsafeBytes { bytes in
             device.makeBuffer(bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared)
@@ -92,11 +92,11 @@ final class MetalCanvasRenderer {
         guard let buffer else { throw DocumentError.memoryLimit }
         return GPUChunk(buffer: buffer, count: points.count)
     }
-    private func chunks(_ points: [Point]) throws -> [GPUChunk] {
+    private func chunks(_ points: [BrushVertex]) throws -> [GPUChunk] {
         var result: [GPUChunk] = []
         for start in stride(from: 0, to: points.count, by: chunkSize) {
             result.append(try chunk(points[start..<min(points.count, start+chunkSize)].map {
-                SIMD2(Float($0.x), Float($0.y))
+                SIMD4(Float($0.point.x), Float($0.point.y), Float($0.local.x), Float($0.local.y))
             }))
         }
         return result
@@ -115,12 +115,12 @@ final class MetalCanvasRenderer {
                 total += StrokeGeometry.estimatedVertexCount(stroke)
                 guard total <= DrawingLimits.vertexCount else { throw DocumentError.memoryLimit }
             }
-            return try missing.map { stroke -> (UUID, [Point]) in
+            return try missing.map { stroke -> (UUID, [BrushVertex]) in
                 try Task.checkCancellation()
                 guard StrokeGeometry.estimatedVertexCount(stroke) <= DrawingLimits.strokeVertices else {
                     throw DocumentError.memoryLimit
                 }
-                return (stroke.id, StrokeGeometry.mesh(stroke))
+                return (stroke.id, BrushGeometry.mesh(stroke))
             }
         }.value
         try Task.checkCancellation()
@@ -136,12 +136,12 @@ final class MetalCanvasRenderer {
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
     }
     func begin() { sealed.removeAll(); sealedVertexCount = 0; scratch.removeAll(keepingCapacity: true) }
-    func append(_ points: [Point]) throws {
+    func append(_ points: [BrushVertex]) throws {
         guard allocatedVertexCount + sealedVertexCount + scratch.count + points.count <= DrawingLimits.vertexCount else {
             throw DocumentError.memoryLimit
         }
         for p in points {
-            scratch.append(SIMD2(Float(p.x), Float(p.y)))
+            scratch.append(SIMD4(Float(p.point.x), Float(p.point.y), Float(p.local.x), Float(p.local.y)))
             if scratch.count == chunkSize {
                 sealed.append(try chunk(scratch))
                 sealedVertexCount += scratch.count
@@ -149,8 +149,9 @@ final class MetalCanvasRenderer {
             }
         }
     }
+    func append(_ points: [Point]) throws { try append(points.map { BrushVertex($0) }) }
     func commit(_ stroke: InkStroke) throws {
-        try append(StrokeGeometry.tail(samples: stroke.samples, brush: stroke.brush))
+        try append(BrushGeometry.tail(stroke))
         if !scratch.isEmpty { sealed.append(try chunk(scratch)) }
         cache[stroke.id] = sealed
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
@@ -159,7 +160,7 @@ final class MetalCanvasRenderer {
     func cancel() { begin() }
 
     func draw(view: MTKView, document: DrawingDocument, viewport: Viewport,
-              active: InkStroke?, preview: [Point], guides: Bool) throws {
+              active: InkStroke?, preview: [BrushVertex], guides: Bool) throws {
         let started = ProcessInfo.processInfo.systemUptime
         // Never block the touch delivery thread when the GPU is behind.
         guard inFlight.wait(timeout: .now()) == .success else {
@@ -190,14 +191,14 @@ final class MetalCanvasRenderer {
     }
 
     private func encodeScene(encoder: MTLRenderCommandEncoder, document: DrawingDocument, viewport: Viewport,
-                             viewSize: Point, active: InkStroke?, preview: [Point], guides: Bool) throws {
+                             viewSize: Point, active: InkStroke?, preview: [BrushVertex], guides: Bool) throws {
         encoder.setRenderPipelineState(pipeline)
         let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
         let identity = SymmetryConfiguration(repetitions: 1, center: .zero)
         if paperSize != document.size || paper.isEmpty {
             paperSize = document.size
             paper = try chunks([.zero, Point(x: document.size.x, y: 0), document.size,
-                                .zero, document.size, Point(x: 0, y: document.size.y)])
+                                .zero, document.size, Point(x: 0, y: document.size.y)].map { BrushVertex($0) })
         }
         try encode(paper, symmetry: identity, transform: transform, size: viewSize,
                    canvas: document.size, color: SIMD4(1, 1, 1, 1), encoder: encoder)
@@ -217,7 +218,7 @@ final class MetalCanvasRenderer {
                     var b = a; b.point = center + Matrix.rotation(angle).apply(Point(x: radius, y: 0))
                     mesh += StrokeGeometry.segment(a, b, brush: brush)
                 }
-                guideBuffers = try chunks(mesh); guideKey = key
+                guideBuffers = try chunks(mesh.map { BrushVertex($0) }); guideKey = key
             }
             try encode(guideBuffers, symmetry: identity, transform: transform, size: viewSize,
                        canvas: document.size, color: SIMD4(0.1, 0.5, 0.55, 0.22), encoder: encoder)
@@ -230,21 +231,21 @@ final class MetalCanvasRenderer {
         }
         for stroke in sceneStrokes {
             try encode(cache[stroke.id] ?? [], symmetry: stroke.symmetry, transform: transform,
-                       size: viewSize, canvas: document.size, color: SIMD4(0, 0, 0, 1), encoder: encoder)
+                       size: viewSize, canvas: document.size, color: SIMD4(0, 0, 0, Float(stroke.brush.opacity)), brush: stroke.brush, encoder: encoder)
         }
         if let active {
             var live = sealed
             if !scratch.isEmpty { live.append(try chunk(scratch)) }
             live += try chunks(preview)
             try encode(live, symmetry: active.symmetry, transform: transform, size: viewSize,
-                       canvas: document.size, color: SIMD4(0, 0, 0, 1), encoder: encoder)
+                       canvas: document.size, color: SIMD4(0, 0, 0, Float(active.brush.opacity)), brush: active.brush, encoder: encoder)
         }
     }
 
     /// Test/readback path uses the SAME pipeline, geometry, clipping and transforms
     /// as the visible canvas. BGRA rows are returned in top-left screen order.
     func renderOffscreen(document: DrawingDocument, viewport: Viewport, width: Int, height: Int,
-                         active: InkStroke? = nil, preview: [Point] = [], guides: Bool = false) async throws -> [UInt8] {
+                         active: InkStroke? = nil, preview: [BrushVertex] = [], guides: Bool = false) async throws -> [UInt8] {
         guard width > 0, height > 0, width <= 2048, height <= 2048 else { throw DocumentError.invalidData }
         let outputDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
                                       width: width, height: height, mipmapped: false)
@@ -287,12 +288,12 @@ final class MetalCanvasRenderer {
     }
 
     private func encode(_ chunks: [GPUChunk], symmetry: SymmetryConfiguration, transform: Matrix,
-                        size: Point, canvas: Point, color: SIMD4<Float>, encoder: MTLRenderCommandEncoder) throws {
+                        size: Point, canvas: Point, color: SIMD4<Float>, brush: InkBrush = InkBrush(), encoder: MTLRenderCommandEncoder) throws {
         // Layout is four aligned float4s in both Swift and Metal (64 bytes).
         let uniforms: [SIMD4<Float>] = [
             SIMD4(Float(transform.a), Float(transform.b), Float(transform.c), Float(transform.d)),
             SIMD4(Float(transform.tx), Float(transform.ty), Float(size.x), Float(size.y)),
-            SIMD4(Float(canvas.x), Float(canvas.y), 0, 0), color
+            SIMD4(Float(canvas.x), Float(canvas.y), Float(brush.preset.softness), brush.usesStamps ? 1 : 0), color
         ]
         if matrixCache[symmetry] == nil {
             let values: [SIMD4<Float>] = symmetry.matrices.flatMap { m in
@@ -320,23 +321,30 @@ final class MetalCanvasRenderer {
     #include <metal_stdlib>
     using namespace metal;
     struct Uniforms { float4 matrix; float4 offsetSize; float4 canvas; float4 color; };
-    struct Output { float4 position [[position]]; float2 canvas; float2 limit; float4 color; };
+    struct Output { float4 position [[position]]; float2 canvas; float2 limit; float4 color; float2 local; float2 stamp; };
     vertex Output inkVertex(uint v [[vertex_id]], uint instance [[instance_id]],
-                           const device float2 *vertices [[buffer(0)]],
+                           const device float4 *vertices [[buffer(0)]],
                            constant Uniforms &u [[buffer(1)]], constant float4 *symmetry [[buffer(2)]]) {
         float4 m = symmetry[instance * 2];
-        float2 p = vertices[v];
+        float2 p = vertices[v].xy;
         p = float2(m.x*p.x + m.z*p.y, m.y*p.x + m.w*p.y) + symmetry[instance*2+1].xy;
         float4 t = u.matrix;
         float2 screen = float2(t.x*p.x + t.z*p.y, t.y*p.x + t.w*p.y) + u.offsetSize.xy;
         Output out;
         out.position = float4(screen.x/u.offsetSize.z*2-1, 1-screen.y/u.offsetSize.w*2, 0, 1);
         out.canvas = p; out.limit = u.canvas.xy; out.color = u.color;
+        out.local = vertices[v].zw; out.stamp = u.canvas.zw;
         return out;
     }
     fragment float4 inkFragment(Output in [[stage_in]]) {
         if (any(in.canvas < float2(0)) || any(in.canvas > in.limit)) discard_fragment();
-        return in.color;
+        float4 color = in.color;
+        if (in.stamp.y > 0.5) {
+            float radius = length(in.local);
+            if (radius > 1) discard_fragment();
+            if (in.stamp.x > 0) color.a *= 1 - smoothstep(0.0, 1.0, radius);
+        }
+        return color;
     }
     """
 }

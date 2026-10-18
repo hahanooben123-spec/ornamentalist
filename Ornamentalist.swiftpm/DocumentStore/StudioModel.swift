@@ -169,7 +169,23 @@ final class StudioModel: ObservableObject {
     }
     func setWidth(_ width: Double) {
         guard canEdit, !isDrawing, width.isFinite else { return }
-        document?.brush.width = max(0.5, min(40, width)); changed()
+        document?.brush.width = max(0.5, min(160, width)); changed()
+    }
+    func setBrush(_ preset: BrushPreset) {
+        guard canEdit, !isDrawing, document != nil else { return }
+        document?.brush = preset.makeBrush(); changed()
+    }
+    func setOpacity(_ value: Double) {
+        guard canEdit, !isDrawing, value.isFinite else { return }
+        document?.brush.opacity = max(0.01, min(1, value)); changed()
+    }
+    func setSpacing(_ value: Double) {
+        guard canEdit, !isDrawing, value.isFinite else { return }
+        document?.brush.spacing = max(0.06, min(4, value)); changed()
+    }
+    func setDensity(_ value: Double) {
+        guard canEdit, !isDrawing, value.isFinite else { return }
+        document?.brush.density = max(0.05, min(1, value)); changed()
     }
     func setPressure(_ enabled: Bool) {
         guard canEdit, !isDrawing else { return }
@@ -180,7 +196,7 @@ final class StudioModel: ObservableObject {
         document?.brush.stabilization = max(0, min(0.85, amount)); changed()
     }
     private func changed() {
-        document?.version = 3; document?.modified = Date()
+        document?.version = 4; document?.modified = Date()
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)

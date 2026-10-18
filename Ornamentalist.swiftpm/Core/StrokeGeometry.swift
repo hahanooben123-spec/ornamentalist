@@ -73,6 +73,7 @@ enum StrokeGeometry {
         return subdivisions(start, previous, .midpoint(previous, last), brush: brush) * (6 + disk)
     }
     static func estimatedVertexCount(_ stroke: InkStroke) -> Int {
+        if stroke.brush.usesStamps { return BrushGeometry.estimatedVertexCount(stroke) }
         guard !stroke.samples.isEmpty else { return 0 }
         let disk = stroke.brush.diskSides * 3
         var count = disk

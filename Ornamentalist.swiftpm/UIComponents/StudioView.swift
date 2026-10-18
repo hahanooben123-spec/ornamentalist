@@ -49,10 +49,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.3.1: studio visible; loading gallery")
+            print("Ornamentalist 0.4.0: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.3.1: gallery loading finished")
+            print("Ornamentalist 0.4.0: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -194,7 +194,7 @@ struct StudioView: View {
 
     private func dock(_ document: DrawingDocument) -> some View {
         HStack(spacing: 4) {
-            dockButton(.brush, symbol: "pencil.tip", detail: "\(document.brush.width.formatted(.number.precision(.fractionLength(1)))) px")
+            dockButton(.brush, symbol: "pencil.tip", detail: document.brush.preset.name)
             Divider().frame(height: 28).padding(.horizontal, 4)
             dockButton(.symmetry, symbol: "circle.hexagongrid", detail: document.symmetry.mirror ? "×\(document.symmetry.instanceCount) · Mirror" : document.symmetry.repetitions == 1 ? "Off" : "×\(document.symmetry.repetitions)")
             Divider().frame(height: 28).padding(.horizontal, 4)

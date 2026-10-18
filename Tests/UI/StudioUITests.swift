@@ -40,6 +40,37 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(app.buttons["drawing-Untitled Drawing"].firstMatch.waitForExistence(timeout: 15))
     }
 
+    func testBrushLibrarySelectionAndSettingsSurviveReopening() {
+        app.buttons["newDrawing"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["createDrawing"].waitForExistence(timeout: 5))
+        app.buttons["createDrawing"].tap()
+        XCTAssertTrue(app.buttons["panel-Brushes"].waitForExistence(timeout: 15))
+        app.buttons["panel-Brushes"].tap()
+        let families = app.segmentedControls["brushFamily"]
+        XCTAssertTrue(families.waitForExistence(timeout: 5))
+        families.buttons["Dots"].tap()
+        let dots = app.buttons["brush-dotShader"]
+        if !dots.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        dots.tap(); XCTAssertTrue(dots.isSelected)
+        screenshot("13-Dot-brushes")
+        app.scrollViews.firstMatch.swipeUp()
+        let opacity = app.sliders["Brush opacity"]
+        if !opacity.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(opacity.isHittable)
+        opacity.adjust(toNormalizedSliderPosition: 0.35)
+        app.buttons["closePanel"].tap(); app.buttons["gallery"].tap()
+        XCTAssertTrue(app.buttons["drawing-Untitled Drawing"].waitForExistence(timeout: 15))
+        app.buttons["drawing-Untitled Drawing"].tap()
+        XCTAssertTrue(app.buttons["panel-Brushes"].waitForExistence(timeout: 15))
+        app.buttons["panel-Brushes"].tap()
+        XCTAssertTrue(app.buttons["brush-dotShader"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["brush-dotShader"].isSelected)
+        families.buttons["Shading"].tap()
+        app.buttons["brush-softShader"].tap()
+        XCTAssertTrue(app.buttons["brush-softShader"].isSelected)
+        screenshot("14-Soft-shading-brushes")
+    }
+
     func testMirrorAndLayerManagementSurviveReopening() {
         app.buttons["newDrawing"].firstMatch.tap()
         XCTAssertTrue(app.textFields["drawingName"].waitForExistence(timeout: 5))
@@ -113,7 +144,7 @@ final class StudioUITests: XCTestCase {
         screenshot("04-Focus")
         app.buttons["leaveZen"].tap()
 
-        app.buttons["panel-Fineliner"].tap()
+        app.buttons["panel-Brushes"].tap()
         XCTAssertTrue(app.sliders["Line width"].waitForExistence(timeout: 5))
         screenshot("05-Fineliner")
         app.buttons["closePanel"].tap()

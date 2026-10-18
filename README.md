@@ -28,7 +28,7 @@ App playground manifest handling can vary across installed versions. Update Swif
 
 1. Create a new **App** in Swift Playground, named Ornamentalist.
 2. Remove its generated `MyApp.swift` and `ContentView.swift` source files. There must be exactly one `@main` declaration.
-3. Use the sidebar **+ → Insert from** to add all **21 `.swift` source files** inside the supplied `Ornamentalist.swiftpm` folders, excluding `Package.swift`. You can also add empty Swift files and paste each file's complete contents. Folder layout is organizational; all files belong to the same app target.
+3. Use the sidebar **+ → Insert from** to add all **23 `.swift` source files** inside the supplied `Ornamentalist.swiftpm` folders, excluding `Package.swift`. You can also add empty Swift files and paste each file's complete contents. Folder layout is organizational; all files belong to the same app target.
 4. Keep the new app's automatically generated manifest. Use an iPadOS 17+ deployment target and Swift 5 language mode if those options are exposed. The supplied source uses Swift 5.9 syntax.
 5. Run App again. You do not need the repository's `Tests`, cloud workflow, or `project.yml` on iPad.
 
@@ -76,7 +76,7 @@ LayerManager implements adding, renaming, hiding, locking, reordering and deleti
 
 ## Apple build verification without owning a Mac
 
-The app manifest explicitly enumerates all 21 sources, and packaging checks that this list matches the shipped files exactly. `python3 tools/check_playground_target.py` additionally uses real SwiftPM source discovery in a temporary copy with a standard executable product. It preserves the exact target declaration but replaces AppleProductTypes application metadata; it therefore verifies target source membership, not the installed iPad editor's preview/file-provider integration.
+The app manifest explicitly enumerates all 23 sources, and packaging checks that this list matches the shipped files exactly. `python3 tools/check_playground_target.py` additionally uses real SwiftPM source discovery in a temporary copy with a standard executable product. It preserves the exact target declaration but replaces AppleProductTypes application metadata; it therefore verifies target source membership, not the installed iPad editor's preview/file-provider integration.
 
 The supplied GitHub Actions workflow runs on a hosted macOS runner in [the Ornamentalist repository](https://github.com/hahanooben123-spec/ornamentalist). Open **Actions → Apple validation** to inspect builds. A green build verifies compilation/tests, not physical Pencil behavior. The job also uploads a source ZIP for iPad.
 
@@ -101,6 +101,6 @@ Drawings remain in Documents/MandalaDrawings for compatibility with existing ins
 
 Autosave has both idle and maximum dirty deadlines. A two-second rolling journal captures confirmed active points; predictions are excluded. Deactivation finishes confirmed input and requests a primary save. These are best-effort deadlines, not guaranteed disk-write completion times. A sudden kill can still lose points since the latest completed checkpoint; there is no synchronous per-sample durability guarantee. A failed primary save retries after five seconds and remains visible.
 
-Validation bounds are 64 MB encoded data, 20,000 source strokes, 100,000 samples per document, 20,000 samples per stroke, 250,000 estimated vertices per stroke and 2,000,000 across the document. Input reserves tail geometry before accepting each sample. The source GPU vertex budget is about 16 MB; frame buffers, MSAA, predictions, metadata and temporary copies use additional memory. Mesh reconstruction runs off the main actor. Paper, guides and symmetry coefficients are cached. These are guardrails, not certified capacity or latency targets. Full-scene replay, large exports, estimated-property correction and physical-device profiling still need hardening.
+Validation bounds are 64 MB encoded data, 20,000 source strokes, 100,000 samples per document, 20,000 samples per stroke, 250,000 estimated vertices per stroke and 2,000,000 across the document. Input reserves tail geometry before accepting each sample. The source GPU vertex budget is about 32 MB; frame buffers, MSAA, predictions, metadata and temporary copies use additional memory. Mesh reconstruction runs off the main actor. Paper, guides and symmetry coefficients are cached. These are guardrails, not certified capacity or latency targets. Full-scene replay, large exports, estimated-property correction and physical-device profiling still need hardening.
 
 To rebuild the iPad archive from this workspace, run `python tools/package_ipad.py`. This checks and packages source; it does not compile Swift.

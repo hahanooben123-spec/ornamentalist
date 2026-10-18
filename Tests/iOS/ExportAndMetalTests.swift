@@ -5,6 +5,79 @@ import UIKit
 
 final class ExportAndMetalTests: XCTestCase {
     @MainActor
+    func testDotBrushHasGapsInLiveMetalReopenedMetalAndMirroredPNG() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64), mirror: true)
+        var b = BrushPreset.dots.makeBrush(); b.stabilization = 0
+        var session = StrokeSession(brush: b, symmetry: d.symmetry, existingSamples: 0, existingVertices: 0)
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero)); renderer.begin()
+        for (i, x) in [20.0, 80].enumerated() {
+            try renderer.append(session.append(StrokeSample(point: Point(x: x, y: 80), pressure: 1,
+                                                            altitude: 1, azimuth: 0, time: Double(i))))
+        }
+        let live = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, active: session.stroke)
+        try renderer.commit(session.stroke); d.strokes = [session.stroke]
+        let committed = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        let reopened = try MetalCanvasRenderer(view: MTKView(frame: .zero)); try await reopened.synchronize(d.strokes)
+        let restored = try await reopened.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        XCTAssertEqual(live, committed); XCTAssertEqual(committed, restored)
+        let png = try XCTUnwrap(UIImage(data: PNGExporter.data(document: d, transparent: true))?.cgImage)
+        for y in [48, 80] {
+            for x in [20, 32, 44, 56, 68, 80] {
+                let sx = Int((128 + (Double(x) - 64) * 1.84).rounded()), sy = Int((128 + (Double(y) - 64) * 1.84).rounded())
+                XCTAssertLessThan(committed[(sy * 256 + sx) * 4], 15)
+                XCTAssertGreaterThan(try pixel(png, x: x, y: y)[3], 245)
+            }
+            XCTAssertEqual(try pixel(png, x: 26, y: y)[3], 0)
+        }
+    }
+
+    @MainActor
+    func testSoftBrushMetalAndPNGHaveMatchingFeatheredOpacity() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        var b = BrushPreset.softShader.makeBrush(); b.width = 48; b.opacity = 0.5
+        let sample = StrokeSample(point: Point(x: 64, y: 64), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        d.strokes = [InkStroke(brush: b, symmetry: d.symmetry, samples: [sample])]
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero)); try await renderer.synchronize(d.strokes)
+        let pixels = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        let png = try XCTUnwrap(UIImage(data: PNGExporter.data(document: d, transparent: true))?.cgImage)
+        let center = try pixel(png, x: 64, y: 64)[3], middle = try pixel(png, x: 76, y: 64)[3]
+        XCTAssertGreaterThan(center, 115); XCTAssertLessThan(center, 140)
+        XCTAssertGreaterThan(middle, 45); XCTAssertLessThan(middle, 80)
+        XCTAssertEqual(try pixel(png, x: 90, y: 64)[3], 0)
+        for x in [64, 70, 76, 82, 90] {
+            let sx = Int((128 + (Double(x) - 64) * 1.84).rounded())
+            let alpha = try pixel(png, x: x, y: 64)[3]
+            XCTAssertEqual(Double(pixels[(128 * 256 + sx) * 4]), 255 - Double(alpha), accuracy: 10)
+        }
+        d.layers[0].isVisible = false
+        let hidden = try XCTUnwrap(UIImage(data: PNGExporter.data(document: d, transparent: true))?.cgImage)
+        XCTAssertEqual(try pixel(hidden, x: 64, y: 64)[3], 0)
+    }
+
+    @MainActor
+    func testEveryBrushProducesMetalAndPNGInk() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        for preset in BrushPreset.allCases {
+            var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+            d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+            let sample = StrokeSample(point: Point(x: 64, y: 64), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+            d.strokes = [InkStroke(brush: preset.makeBrush(), symmetry: d.symmetry, samples: [sample])]
+            try await renderer.synchronize(d.strokes)
+            let pixels = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 128, height: 128)
+            // Inspect the paper interior, excluding the dark workspace border.
+            let minimum = (12..<116).flatMap { y in (12..<116).map { x in pixels[(y * 128 + x) * 4] } }.min() ?? 255
+            XCTAssertLessThan(minimum, 253, preset.name)
+            let image = try XCTUnwrap(UIImage(data: PNGExporter.data(document: d, transparent: false))?.cgImage)
+            XCTAssertEqual(image.width, 128)
+        }
+    }
+
+    @MainActor
     func testMirrorLiveAndCommittedPixelsAndHiddenLayerPNG() async throws {
         guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
         var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
