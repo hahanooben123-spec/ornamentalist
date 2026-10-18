@@ -70,7 +70,10 @@ final class ExportAndMetalTests: XCTestCase {
             try await renderer.synchronize(d.strokes)
             let pixels = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 128, height: 128)
             // Inspect the paper interior, excluding the dark workspace border.
-            let minimum = (12..<116).flatMap { y in (12..<116).map { x in pixels[(y * 128 + x) * 4] } }.min() ?? 255
+            var minimum: UInt8 = 255
+            for y in 12..<116 {
+                for x in 12..<116 { minimum = min(minimum, pixels[(y * 128 + x) * 4]) }
+            }
             XCTAssertLessThan(minimum, 253, preset.name)
             let image = try XCTUnwrap(UIImage(data: PNGExporter.data(document: d, transparent: false))?.cgImage)
             XCTAssertEqual(image.width, 128)
