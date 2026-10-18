@@ -85,6 +85,8 @@ struct StudioPanelView: View {
                     .font(.subheadline.weight(.medium))
                 Text("Pinch to zoom, twist to rotate, and drag with two fingers to pan.")
                     .font(.caption).foregroundStyle(.secondary)
+                Text("Two-finger tap: Undo. Three-finger tap: Redo.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Button { model.resetViewToken = UUID(); dismiss() } label: {
                 Label("Fit drawing to screen", systemImage: "arrow.up.left.and.arrow.down.right")
@@ -102,7 +104,7 @@ struct StudioPanelView: View {
             }
             Button("Drawing performance", systemImage: "speedometer", action: diagnostics)
                 .font(.subheadline).frame(minHeight: 44)
-            Text("Ornamentalist 0.7.0").font(.caption).foregroundStyle(.secondary)
+            Text("Ornamentalist 0.8.0").font(.caption).foregroundStyle(.secondary)
                 .accessibilityIdentifier("appVersion")
         }
     }

@@ -26,6 +26,10 @@ final class StudioModel: ObservableObject {
     // Canvas exposes confirmed ink only; no predicted points enter a checkpoint.
     var captureActiveStroke: (() -> InkStroke?)?
     var rendererDiagnostics: (() -> String)?
+    // UIKit owns the transient cursor; hover never publishes a model revision.
+    var brushPreviewRequested: ((Bool) -> Void)?
+    private var brushSettings: [BrushPreset: InkBrush] = [:]
+    private let preferences: UserDefaults?
     private(set) var generation = 0
     private var writeSequence = 0
     private var schedule = SaveSchedule()
@@ -42,7 +46,15 @@ final class StudioModel: ObservableObject {
     private(set) var usedVertices = 0
     private var opacityEditBefore: DrawingDocument?
 
-    init(repository: DocumentRepository = DocumentRepository()) { self.repository = repository }
+    init(repository: DocumentRepository = DocumentRepository(), preferences: UserDefaults? = nil) {
+        self.repository = repository; self.preferences = preferences
+        if let data = preferences?.data(forKey: "brushSettings"),
+           let settings = try? JSONDecoder().decode([String: InkBrush].self, from: data) {
+            for (key, brush) in settings where brush.isValid {
+                if let preset = BrushPreset(rawValue: key), preset == brush.preset { brushSettings[preset] = brush }
+            }
+        }
+    }
 
     func startMaintenance() {
         guard maintenance == nil else { return }
@@ -71,6 +83,7 @@ final class StudioModel: ObservableObject {
         opacityEditBefore = nil
         tool = .brush
         document = d; history = StrokeHistory()
+        brushSettings[d.brush.preset] = d.brush
         writeSequence = max(writeSequence, d.storageRevision)
         generation += 1; nextSaveAttempt = 0; reportedSaveFailure = false
         schedule.saved(); lastCheckpointSampleCount = -1
@@ -200,6 +213,15 @@ final class StudioModel: ObservableObject {
         guard canEdit, !isDrawing, width.isFinite else { return }
         eraserBrush.width = max(0.5, min(160, width))
     }
+    var inputBrush: InkBrush { tool == .eraser ? eraserBrush : document?.brush ?? InkBrush() }
+    func setInputWidth(_ width: Double) {
+        if tool == .eraser { setEraserWidth(width) } else { setWidth(width) }
+    }
+    func setInputOpacity(_ value: Double) {
+        guard canEdit, !isDrawing, value.isFinite else { return }
+        if tool == .eraser { eraserBrush.opacity = max(0.01, min(1, value)) }
+        else { setOpacity(value) }
+    }
     func setSoftEraser(_ soft: Bool) {
         guard canEdit, !isDrawing else { return }
         let width = eraserBrush.width
@@ -254,11 +276,12 @@ final class StudioModel: ObservableObject {
     }
     func setBrush(_ preset: BrushPreset) {
         guard canEdit, !isDrawing, document != nil else { return }
-        document?.brush = preset.makeBrush(); changed()
+        if let current = document?.brush { brushSettings[current.preset] = current }
+        document?.brush = brushSettings[preset] ?? preset.makeBrush(); changed()
         tool = .brush
     }
     func setOpacity(_ value: Double) {
-        guard canEdit, !isDrawing, value.isFinite, document?.brush.usesStamps == true else { return }
+        guard canEdit, !isDrawing, value.isFinite, document != nil else { return }
         document?.brush.opacity = max(0.01, min(1, value)); changed()
     }
     func setSpacing(_ value: Double) {
@@ -278,7 +301,12 @@ final class StudioModel: ObservableObject {
         document?.brush.stabilization = max(0, min(0.85, amount)); changed()
     }
     private func changed() {
-        document?.version = 6; document?.modified = Date()
+        document?.version = 7; document?.modified = Date()
+        if let brush = document?.brush, brushSettings[brush.preset] != brush {
+            brushSettings[brush.preset] = brush
+            let settings = Dictionary(uniqueKeysWithValues: brushSettings.map { ($0.key.rawValue, $0.value) })
+            if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "brushSettings") }
+        }
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)

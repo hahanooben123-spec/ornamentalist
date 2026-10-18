@@ -10,6 +10,12 @@ struct InkBrush: Codable, Equatable, Sendable {
     var spacing = 0.2
     var density = 0.5
     var usesStamps: Bool { preset != .fineliner && preset != .brushPen }
+    var isValid: Bool {
+        width.isFinite && (0.5...160).contains(width) && stabilization.isFinite &&
+        (0...0.85).contains(stabilization) && (1...2).contains(geometryVersion) &&
+        opacity.isFinite && (0.01...1).contains(opacity) &&
+        spacing.isFinite && (0.06...4).contains(spacing) && density.isFinite && (0.05...1).contains(density)
+    }
     func radius(pressure: Double) -> Double {
         guard pressureEnabled else { return width * 0.5 }
         return width * (0.2 + 0.8 * sqrt(max(0, min(1, pressure)))) * 0.5

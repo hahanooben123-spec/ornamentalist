@@ -17,7 +17,7 @@ struct StudioEraserView: View {
             }.font(.subheadline)
             Slider(value: Binding(get: { model.eraserBrush.width }, set: { model.setEraserWidth($0) }), in: 0.5...160)
                 .accessibilityLabel("Eraser size")
-            Text("Hard removes completely. Soft builds removal with overlapping passes. Each eraser stroke can be undone.")
+            Text("Hard has a crisp edge. Opacity controls removal strength; Soft builds removal with overlapping passes. Adjust both from the left rail. Each eraser stroke can be undone.")
                 .font(.caption).foregroundStyle(.secondary)
             Button("Return to brush", systemImage: "pencil.tip") { model.selectTool(.brush) }
                 .frame(minHeight: 44).accessibilityIdentifier("returnToBrush")

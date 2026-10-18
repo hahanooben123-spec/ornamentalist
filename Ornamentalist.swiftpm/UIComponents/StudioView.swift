@@ -21,6 +21,7 @@ struct StudioView: View {
     @State private var performanceText: String?
     @State private var panel: StudioPanel?
     @State private var zen = false
+    @AppStorage("layersSidebarVisible") private var layersVisible = true
     private let exportService = ExportService()
 
     init() {
@@ -31,7 +32,7 @@ struct StudioView: View {
             return
         }
         #endif
-        _model = StateObject(wrappedValue: StudioModel())
+        _model = StateObject(wrappedValue: StudioModel(preferences: .standard))
     }
 
     var body: some View {
@@ -49,10 +50,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.7.0: studio visible; loading gallery")
+            print("Ornamentalist 0.8.0: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.7.0: gallery loading finished")
+            print("Ornamentalist 0.8.0: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -114,6 +115,7 @@ struct StudioView: View {
             .padding(.top, 84).padding(.bottom, 116)
             .ignoresSafeArea()
             .allowsHitTesting(!exporting && !model.busy && !model.isPreparing)
+            .overlay { editorRails }
             .overlay(alignment: .top) {
                 if !zen { editorHeader(document).padding(.horizontal, 20).padding(.top, 10) }
             }
@@ -156,6 +158,37 @@ struct StudioView: View {
                 }
             }
             .background(StudioStyle.workspace)
+    }
+
+    private var editorRails: some View {
+        GeometryReader { geometry in
+            if !zen {
+                HStack(spacing: 0) {
+                    StudioBrushRail(model: model, sliderHeight: min(128, max(60, (geometry.size.height - 390) / 2)))
+                    Spacer(minLength: 12)
+                    if layersVisible && panel == nil {
+                        VStack(spacing: 0) {
+                            HStack {
+                                Text("Layers").font(.system(.title3, design: .serif))
+                                Spacer()
+                                Button { layersVisible = false } label: { StudioIcon(symbol: "chevron.right") }
+                                    .accessibilityLabel("Collapse layers").accessibilityIdentifier("closePanel")
+                            }.padding(.horizontal, 14).padding(.top, 4)
+                            ScrollView {
+                                StudioLayersView(model: model, onMerge: { layersVisible = false })
+                                    .padding(12)
+                            }
+                        }
+                        .frame(width: min(330, geometry.size.width * 0.46), height: min(620, max(180, geometry.size.height - 260)))
+                        .studioSurface()
+                        .accessibilityIdentifier("layersSidebar")
+                        .disabled(controlsDisabled)
+                    }
+                }
+                .padding(.horizontal, 12).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .disabled(exporting)
+            }
+        }
     }
 
     private func editorHeader(_ document: DrawingDocument) -> some View {
@@ -242,7 +275,10 @@ struct StudioView: View {
     }
 
     private func dockButton(_ item: StudioPanel, symbol: String, detail: String?) -> some View {
-        Button { panel = panel == item ? nil : item } label: {
+        Button {
+            if item == .layers { panel = nil; layersVisible.toggle() }
+            else { panel = panel == item ? nil : item }
+        } label: {
             Group {
                 if horizontalSizeClass == .compact {
                     VStack(spacing: 4) {
@@ -260,11 +296,12 @@ struct StudioView: View {
                 }
             }
             .frame(minHeight: 48)
-            .background(panel == item ? StudioStyle.copper.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 15))
+            .background((panel == item || item == .layers && layersVisible && panel == nil) ? StudioStyle.copper.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 15))
             .contentShape(Rectangle())
         }
         .buttonStyle(StudioPressStyle()).accessibilityLabel(item.rawValue).accessibilityValue(detail ?? "")
         .accessibilityIdentifier("panel-\(item.id)")
+        .accessibilityAddTraits(item == .layers && layersVisible && panel == nil ? .isSelected : [])
         .popover(isPresented: Binding(get: { panel == item }, set: { if !$0 && panel == item { panel = nil } }), arrowEdge: .bottom) {
             StudioPanelView(panel: item, model: model, appearance: $appearance) {
                 panel = nil; performanceText = model.rendererDiagnostics?()

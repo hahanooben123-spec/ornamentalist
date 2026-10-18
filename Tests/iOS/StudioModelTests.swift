@@ -1,8 +1,56 @@
 import XCTest
+import UIKit
+import MetalKit
 @testable import Ornamentalist
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testQuickBrushSettingsRememberPresetsAndFreezeDuringStroke() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "Ornamentalist-brush-test-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder), preferences: preferences)
+        await model.create()
+        model.setInputWidth(42); model.setInputOpacity(0.35)
+        let fineliner = try XCTUnwrap(model.document?.brush)
+        model.setBrush(.airbrush); model.setInputWidth(95); model.setInputOpacity(0.12)
+        let airbrush = try XCTUnwrap(model.document?.brush)
+        model.setBrush(.fineliner); XCTAssertEqual(model.document?.brush, fineliner)
+        model.selectTool(.eraser); model.setInputWidth(66); model.setInputOpacity(0.45)
+        XCTAssertEqual(model.inputBrush.width, 66); XCTAssertEqual(model.document?.brush, fineliner)
+        model.setDrawing(true); model.setInputWidth(20); model.setInputOpacity(1)
+        XCTAssertEqual(model.inputBrush.width, 66); XCTAssertEqual(model.inputBrush.opacity, 0.45)
+        model.setDrawing(false); model.selectTool(.brush); model.setBrush(.airbrush)
+        XCTAssertEqual(model.document?.brush, airbrush)
+        let saved = await model.saveNow(); XCTAssertTrue(saved)
+        let reopened = StudioModel(repository: DocumentRepository(directory: folder), preferences: preferences)
+        await reopened.open(try XCTUnwrap(model.document?.id))
+        XCTAssertEqual(reopened.document?.brush, airbrush)
+        reopened.setBrush(.fineliner); XCTAssertEqual(reopened.document?.brush, fineliner)
+    }
+
+    func testSizePreviewUsesCanvasScaleWithoutModelRevisions() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder)); await model.create()
+        model.setWidth(100)
+        let view = PencilCanvasView(model: model)
+        view.frame = CGRect(x: 0, y: 0, width: 800, height: 600); view.layoutIfNeeded()
+        let before = model.generation
+        model.brushPreviewRequested?(true)
+        let cursors = (view.layer.sublayers ?? []).compactMap { $0 as? CAShapeLayer }
+        let cursor = try XCTUnwrap(cursors.last)
+        XCTAssertFalse(cursor.isHidden)
+        XCTAssertEqual(try XCTUnwrap(cursor.path).boundingBoxOfPath.width, 100 * 600 / 2048 * 0.92, accuracy: 0.001)
+        view.frame.size = CGSize(width: 400, height: 300); view.setNeedsLayout(); view.layoutIfNeeded()
+        XCTAssertEqual(try XCTUnwrap(cursor.path).boundingBoxOfPath.width, 100 * 300 / 2048 * 0.92, accuracy: 0.001)
+        XCTAssertEqual(model.generation, before)
+        model.selectTool(.eyedropper); view.synchronize(); XCTAssertTrue(cursor.isHidden)
+        let taps = (view.gestureRecognizers ?? []).compactMap { $0 as? UITapGestureRecognizer }
+        XCTAssertEqual(Set(taps.map(\.numberOfTouchesRequired)), Set([2, 3]))
+        XCTAssertTrue(taps.allSatisfy { $0.numberOfTapsRequired == 1 && !$0.cancelsTouchesInView })
+    }
     func testDuplicateMergeUndoAndEyedropperTools() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

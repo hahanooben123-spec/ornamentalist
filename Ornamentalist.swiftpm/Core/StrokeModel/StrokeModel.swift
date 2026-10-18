@@ -44,7 +44,7 @@ extension InkStroke {
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 6
+    var version = 7
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -66,7 +66,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard (1...6).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...7).contains(version) else { throw DocumentError.unsupportedVersion }
         let layerIDs = Set(layers.map(\.id))
         guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
               layerIDs.contains(activeLayerID), layers.allSatisfy({
@@ -88,11 +88,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
                 (0...size.x).contains(s.center.x) && (0...size.y).contains(s.center.y)
         }
         func validBrush(_ b: InkBrush) -> Bool {
-            b.width.isFinite && (0.5...160).contains(b.width) && b.stabilization.isFinite &&
-                (0...0.85).contains(b.stabilization) && (1...2).contains(b.geometryVersion) &&
-                b.opacity.isFinite && (0.01...1).contains(b.opacity) && (b.usesStamps || b.opacity == 1) &&
-                b.spacing.isFinite && (0.06...4).contains(b.spacing) &&
-                b.density.isFinite && (0.05...1).contains(b.density)
+            b.isValid && (version >= 7 || b.usesStamps || b.opacity == 1)
         }
         guard storageRevision >= 0, validSymmetry(symmetry), validBrush(brush), color.isValid,
               recentColors.count <= 12, recentColors.allSatisfy(\.isValid) else {

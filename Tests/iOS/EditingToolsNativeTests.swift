@@ -4,6 +4,25 @@ import MetalKit
 @testable import Ornamentalist
 
 final class EditingToolsNativeTests: XCTestCase {
+    @MainActor
+    func testTranslucentFinelinerMatchesPNGAndLiveCommit() async throws {
+        var d = fixture()
+        d.strokes[1].brush.opacity = 0.35
+        try d.validate()
+        let stroke = d.strokes.removeLast()
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(d.strokes, layers: d.layers)
+        renderer.begin(); try renderer.append(BrushGeometry.mesh(stroke))
+        let live = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, active: stroke)
+        try renderer.commit(stroke); d.strokes.append(stroke)
+        let committed = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        XCTAssertEqual(live, committed)
+        let i = screenIndex(85, 68), png = try pixel(d, x: 85, y: 68)
+        XCTAssertEqual(Double(png[0]), 89, accuracy: 3)
+        XCTAssertEqual(Double(png[2]), 166, accuracy: 3)
+        XCTAssertEqual(Double(committed[i + 2]), Double(png[0]), accuracy: 3)
+        XCTAssertEqual(Double(committed[i]), Double(png[2]), accuracy: 3)
+    }
     private func fixture() -> DrawingDocument {
         var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
         d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))

@@ -24,6 +24,11 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private var drawingTouch: UITouch?
     private var preview: [BrushVertex] = []
     private var navigationGestures: [UIGestureRecognizer] = []
+    private let brushCursor = CAShapeLayer()
+    private let cursorHalo = CAShapeLayer()
+    private var hoverPoint: CGPoint?
+    private var sizePreview = false
+    private var hideCursorTask: Task<Void, Never>?
 
     init(model: StudioModel) {
         self.model = model
@@ -37,31 +42,57 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         accessibilityLabel = "Ornamentalist drawing canvas"
         accessibilityIdentifier = "drawingCanvas"
         isAccessibilityElement = true
-        accessibilityHint = "Draw with Apple Pencil. Use two fingers to pan, pinch to zoom, or rotate."
+        accessibilityHint = "Draw with Apple Pencil. Two-finger tap undoes; three-finger tap redoes. Use two fingers to pan, pinch to zoom, or rotate."
+        for cursor in [cursorHalo, brushCursor] {
+            cursor.fillColor = UIColor.clear.cgColor
+            cursor.actions = ["path": NSNull(), "hidden": NSNull(), "position": NSNull()]
+            layer.addSublayer(cursor)
+        }
+        cursorHalo.strokeColor = UIColor.white.cgColor; cursorHalo.lineWidth = 3
+        brushCursor.strokeColor = UIColor.black.withAlphaComponent(0.85).cgColor; brushCursor.lineWidth = 1
+        updateBrushCursor()
         do {
             renderer = try MetalCanvasRenderer(view: self)
             delegate = self
         } catch { report(error) }
         model.captureActiveStroke = { [weak self] in self?.session?.stroke }
         model.rendererDiagnostics = { [weak self] in self?.renderer?.performanceReport() ?? "Renderer unavailable" }
+        model.brushPreviewRequested = { [weak self] editing in self?.showSizePreview(editing) }
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panCanvas(_:)))
         pan.minimumNumberOfTouches = 2; pan.maximumNumberOfTouches = 2
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinchCanvas(_:)))
         let rotate = UIRotationGestureRecognizer(target: self, action: #selector(rotateCanvas(_:)))
-        navigationGestures = [pan, pinch, rotate]
+        let undo = UITapGestureRecognizer(target: self, action: #selector(undoTap(_:)))
+        undo.numberOfTouchesRequired = 2
+        let redo = UITapGestureRecognizer(target: self, action: #selector(redoTap(_:)))
+        redo.numberOfTouchesRequired = 3
+        undo.require(toFail: redo)
+        let transforms: [UIGestureRecognizer] = [pan, pinch, rotate]
+        for tap in [undo, redo] {
+            for navigation in transforms { tap.require(toFail: navigation) }
+        }
+        navigationGestures = [pan, pinch, rotate, undo, redo]
         for gesture in navigationGestures {
             gesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
             gesture.cancelsTouchesInView = false
             gesture.delegate = self
             addGestureRecognizer(gesture)
         }
+        let hover = UIHoverGestureRecognizer(target: self, action: #selector(hoverPencil(_:)))
+        hover.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        hover.delegate = self; addGestureRecognizer(hover)
     }
     required init(coder: NSCoder) { fatalError("Create PencilCanvasView programmatically") }
-    deinit { preparation?.cancel(); NotificationCenter.default.removeObserver(self) }
+    deinit { preparation?.cancel(); hideCursorTask?.cancel(); NotificationCenter.default.removeObserver(self) }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateBrushCursor()
+    }
     func synchronize() {
         if resetToken != model.resetViewToken {
             resetToken = model.resetViewToken; viewport = Viewport()
         }
+        updateBrushCursor()
         guard let document = model.document, let renderer else { return }
         let ids = document.strokes.map(\.id)
         let rasters = document.layers.compactMap { $0.raster?.id }
@@ -126,6 +157,12 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
                             time: touch.timestamp)
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let fingers = event?.allTouches?.filter { $0.type == .direct && $0.phase != .ended && $0.phase != .cancelled }.count ?? 0
+        if fingers > 1 {
+            discardFingerStroke()
+            return
+        }
+        sizePreview = false; hoverPoint = nil; updateBrushCursor()
         if model.tool == .eyedropper, model.canEdit, active == nil,
            let touch = touches.first(where: { $0.type == .pencil }) ?? touches.first(where: { $0.type == .direct }) {
             let picked = point(touch)
@@ -208,18 +245,63 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         // In optional finger mode, a second finger abandons the tentative finger stroke.
-        if drawingTouch?.type == .direct {
-            session = nil; drawingTouch = nil; preview = []; renderer?.cancel(); model.discardActiveCheckpoint()
-        }
-        return active == nil
+        if navigationGestures.contains(where: { $0 === gestureRecognizer }) { discardFingerStroke() }
+        return active == nil && model.canEdit
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // A tap never shares recognition with a pan/pinch/rotation or another tap.
+        !(gestureRecognizer is UITapGestureRecognizer) && !(otherGestureRecognizer is UITapGestureRecognizer)
+    }
+    private func discardFingerStroke() {
+        guard drawingTouch?.type == .direct else { return }
+        session = nil; drawingTouch = nil; preview = []; renderer?.cancel(); model.discardActiveCheckpoint()
+        setNeedsDisplay()
+    }
+    @objc private func undoTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended, active == nil, model.canEdit else { return }
+        model.undo()
+    }
+    @objc private func redoTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended, active == nil, model.canEdit else { return }
+        model.redo()
+    }
+    private func showSizePreview(_ editing: Bool) {
+        guard editing || sizePreview else { return }
+        hideCursorTask?.cancel(); sizePreview = true; updateBrushCursor()
+        if !editing {
+            hideCursorTask = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 900_000_000) } catch { return }
+                self?.sizePreview = false; self?.updateBrushCursor()
+            }
+        }
+    }
+    @objc private func hoverPencil(_ gesture: UIHoverGestureRecognizer) {
+        if gesture.state == .began || gesture.state == .changed { hoverPoint = gesture.location(in: self) }
+        else { hoverPoint = nil }
+        updateBrushCursor()
+    }
+    private func updateBrushCursor() {
+        let hidden = !(sizePreview || hoverPoint != nil) || active != nil || model.tool == .eyedropper || !model.canDraw
+        accessibilityValue = "Strokes: \(model.document?.strokes.count ?? 0)"
+        brushCursor.isHidden = hidden; cursorHalo.isHidden = hidden
+        guard !hidden, bounds.width > 0, bounds.height > 0 else { return }
+        let center = hoverPoint ?? CGPoint(x: bounds.midX, y: bounds.midY)
+        let canvasPoint = canvasMatrix.inverse.apply(Point(x: Double(center.x), y: Double(center.y)))
+        guard let size = model.document?.size, (0...size.x).contains(canvasPoint.x), (0...size.y).contains(canvasPoint.y) else {
+            brushCursor.isHidden = true; cursorHalo.isHidden = true; return
+        }
+        let diameter = CGFloat(model.inputBrush.width * hypot(canvasMatrix.a, canvasMatrix.b))
+        let circle = CGPath(ellipseIn: CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2,
+                                             width: diameter, height: diameter), transform: nil)
+        brushCursor.path = circle; cursorHalo.path = circle
+    }
     @objc private func panCanvas(_ gesture: UIPanGestureRecognizer) {
         guard active == nil else { return }
         let p = gesture.translation(in: self)
         viewport.pan = viewport.pan + Point(x: Double(p.x), y: Double(p.y))
         gesture.setTranslation(.zero, in: self); setNeedsDisplay()
+        updateBrushCursor()
     }
     private func anchor(_ gesture: UIGestureRecognizer) -> Point {
         let p = gesture.location(in: self)
@@ -231,6 +313,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         viewport.zoom = max(0.25, min(12, viewport.zoom * Double(gesture.scale)))
         viewport.pan = viewport.pan + screen - canvasMatrix.apply(canvas)
         gesture.scale = 1; setNeedsDisplay()
+        updateBrushCursor()
     }
     @objc private func rotateCanvas(_ gesture: UIRotationGestureRecognizer) {
         guard active == nil else { return }
@@ -238,5 +321,6 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         viewport.rotation += Double(gesture.rotation)
         viewport.pan = viewport.pan + screen - canvasMatrix.apply(canvas)
         gesture.rotation = 0; setNeedsDisplay()
+        updateBrushCursor()
     }
 }

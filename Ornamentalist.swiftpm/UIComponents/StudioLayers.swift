@@ -3,6 +3,7 @@ import SwiftUI
 @MainActor
 struct StudioLayersView: View {
     @ObservedObject var model: StudioModel
+    var onMerge: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var renaming: DrawingLayer?
     @State private var deleting: DrawingLayer?
@@ -92,7 +93,7 @@ struct StudioLayersView: View {
                 Button("Duplicate layer", systemImage: "square.on.square") { model.duplicateLayer(layer.id) }
                     .disabled(document.layers.count >= LayerManager.maximumLayers)
                 Button("Merge down", systemImage: "arrow.down.square") {
-                    dismiss()
+                    if let onMerge { onMerge() } else { dismiss() }
                     Task { await model.mergeLayerDown(layer.id) }
                 }
                     .disabled(!LayerManager.canMergeDown(layer.id, in: document))

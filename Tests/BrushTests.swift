@@ -79,7 +79,20 @@ final class BrushTests: XCTestCase {
         d.brush.opacity = .nan; XCTAssertThrowsError(try d.validate())
         d.brush = b; d.brush.density = 2; XCTAssertThrowsError(try d.validate())
         d.brush = b; d.brush.spacing = 0; XCTAssertThrowsError(try d.validate())
-        d.brush = InkBrush(); d.brush.opacity = 0.5; XCTAssertThrowsError(try d.validate())
+        d.brush = InkBrush(); d.brush.opacity = 0.5; XCTAssertNoThrow(try d.validate())
+        d.version = 6; XCTAssertThrowsError(try d.validate())
+    }
+
+    func testTranslucentSolidBrushesRoundTripWithoutChangingGeometry() throws {
+        for preset in [BrushPreset.fineliner, .brushPen] {
+            var d = DrawingDocument(); d.brush = preset.makeBrush(); d.brush.opacity = 0.35
+            d.strokes = [InkStroke(brush: d.brush, samples: [sample(30), sample(70, time: 2)])]
+            try d.validate()
+            let restored = try JSONDecoder().decode(DrawingDocument.self, from: JSONEncoder().encode(d))
+            try restored.validate(); XCTAssertEqual(restored.brush.opacity, 0.35)
+            var opaque = d.strokes[0]; opaque.brush.opacity = 1
+            XCTAssertEqual(BrushGeometry.mesh(opaque), BrushGeometry.mesh(restored.strokes[0]))
+        }
     }
     func testBrushesAndHiddenLayerSurviveRepositoryAndEditableExport() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -96,7 +109,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 6); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 7); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }

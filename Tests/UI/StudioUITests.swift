@@ -14,6 +14,13 @@ final class StudioUITests: XCTestCase {
         screenshot("00-Launch")
     }
 
+    private func openLayersPanel() {
+        let button = app.buttons["panel-Layers"]
+        XCTAssertTrue(button.waitForExistence(timeout: 10))
+        if !button.isSelected { button.tap() }
+        XCTAssertTrue(app.buttons["addLayer"].waitForExistence(timeout: 5))
+    }
+
     private func screenshot(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
@@ -40,6 +47,58 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(app.buttons["drawing-Untitled Drawing"].firstMatch.waitForExistence(timeout: 15))
     }
 
+    func testSideControlsAndMultiFingerHistory() {
+        app.buttons["newDrawing"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["createDrawing"].waitForExistence(timeout: 5))
+        app.buttons["createDrawing"].tap()
+        let size = app.sliders["railSize"], opacity = app.sliders["railOpacity"]
+        XCTAssertTrue(size.waitForExistence(timeout: 15)); XCTAssertTrue(opacity.isHittable)
+        size.adjust(toNormalizedSliderPosition: 0.55); opacity.adjust(toNormalizedSliderPosition: 0.3)
+        let sizeValue = app.staticTexts["railSizeValue"].label
+        let opacityValue = app.staticTexts["railOpacityValue"].label
+        XCTAssertNotEqual(sizeValue, "5.0"); XCTAssertNotEqual(opacityValue, "100%")
+        app.buttons["panel-Brushes"].tap()
+        XCTAssertTrue(app.buttons["brush-brushPen"].waitForExistence(timeout: 5))
+        app.buttons["brush-brushPen"].tap(); app.buttons["closePanel"].tap()
+        XCTAssertNotEqual(app.staticTexts["railSizeValue"].label, sizeValue)
+        app.buttons["panel-Brushes"].tap(); app.buttons["brush-fineliner"].tap(); app.buttons["closePanel"].tap()
+        XCTAssertEqual(app.staticTexts["railSizeValue"].label, sizeValue)
+        XCTAssertEqual(app.staticTexts["railOpacityValue"].label, opacityValue)
+        let canvas = app.descendants(matching: .any)["drawingCanvas"].firstMatch
+        let originalFrame = canvas.frame
+        openLayersPanel(); app.buttons["addLayer"].tap()
+        XCTAssertTrue(app.buttons["select-layer-Layer 2"].isSelected)
+        app.buttons["visibility-Layer 2"].tap()
+        XCTAssertEqual(app.buttons["visibility-Layer 2"].value as? String, "Hidden")
+        app.buttons["visibility-Layer 2"].tap()
+        screenshot("20-Side-controls-and-layers")
+        app.buttons["closePanel"].tap()
+        XCTAssertEqual(canvas.frame, originalFrame)
+        app.buttons["panel-Canvas"].tap()
+        let finger = app.switches["Draw with finger"]
+        XCTAssertTrue(finger.waitForExistence(timeout: 5)); finger.tap()
+        app.buttons["closePanel"].tap()
+        let start = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
+        let end = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.6))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        expectation(for: NSPredicate(format: "value == 'Strokes: 1'"), evaluatedWith: canvas)
+        waitForExpectations(timeout: 10)
+        canvas.tap(withNumberOfTaps: 1, numberOfTouches: 2)
+        expectation(for: NSPredicate(format: "value == 'Strokes: 0'"), evaluatedWith: canvas)
+        waitForExpectations(timeout: 10)
+        canvas.tap(withNumberOfTaps: 1, numberOfTouches: 3)
+        expectation(for: NSPredicate(format: "value == 'Strokes: 1'"), evaluatedWith: canvas)
+        waitForExpectations(timeout: 10)
+        // Pinching is navigation and must neither add ink nor trigger Undo.
+        canvas.pinch(withScale: 1.3, velocity: 1)
+        XCTAssertEqual(canvas.value as? String, "Strokes: 1")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(app.sliders["railSize"].waitForExistence(timeout: 5))
+        openLayersPanel()
+        XCTAssertTrue(app.buttons["visibility-Layer 2"].isHittable)
+        screenshot("21-Portrait-side-controls")
+    }
+
     func testEraserEyedropperDuplicateAndMergeFlow() {
         XCTAssertTrue(app.buttons["drawing-Solstice"].waitForExistence(timeout: 30))
         app.buttons["drawing-Solstice"].tap()
@@ -58,7 +117,7 @@ final class StudioUITests: XCTestCase {
         let unselected = NSPredicate(format: "selected == false")
         expectation(for: unselected, evaluatedWith: app.buttons["tool-eyedropper"])
         waitForExpectations(timeout: 15)
-        app.buttons["panel-Layers"].tap()
+        openLayersPanel()
         app.buttons["layer-options-Layer 1"].tap(); app.buttons["Duplicate layer"].tap()
         XCTAssertTrue(app.buttons["select-layer-Layer 1 copy"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["select-layer-Layer 1 copy"].isSelected)
@@ -70,12 +129,12 @@ final class StudioUITests: XCTestCase {
         let ready = NSPredicate(format: "enabled == true")
         expectation(for: ready, evaluatedWith: app.buttons["panel-Layers"])
         waitForExpectations(timeout: 20)
-        app.buttons["panel-Layers"].tap()
+        openLayersPanel()
         XCTAssertTrue(app.buttons["select-layer-Layer 1"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["select-layer-Layer 1 copy"].exists)
         screenshot("19-Merged-layer")
         app.buttons["closePanel"].tap(); app.buttons["undo"].tap()
-        app.buttons["panel-Layers"].tap()
+        openLayersPanel()
         XCTAssertTrue(app.buttons["select-layer-Layer 1 copy"].waitForExistence(timeout: 10))
     }
 
@@ -93,11 +152,11 @@ final class StudioUITests: XCTestCase {
         field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7) + "#327DD1\n")
         app.buttons["closePanel"].tap()
         XCTAssertEqual(app.buttons["panel-Colors"].value as? String, "#327DD1")
-        app.buttons["panel-Layers"].tap(); app.buttons["addLayer"].tap()
+        openLayersPanel(); app.buttons["addLayer"].tap()
         let opacity = app.sliders["layerOpacity"]
         XCTAssertTrue(opacity.waitForExistence(timeout: 5)); opacity.adjust(toNormalizedSliderPosition: 0.4)
         // Read the committed value after the final drag event and panel dismissal.
-        app.buttons["closePanel"].tap(); app.buttons["panel-Layers"].tap()
+        app.buttons["closePanel"].tap(); openLayersPanel()
         let percentage = app.staticTexts["layerOpacityValue"].label
         XCTAssertNotEqual(percentage, "100%")
         app.buttons["visibility-Layer 2"].tap()
@@ -108,7 +167,7 @@ final class StudioUITests: XCTestCase {
         app.buttons["drawing-Untitled Drawing"].tap()
         XCTAssertTrue(app.buttons["panel-Colors"].waitForExistence(timeout: 15))
         XCTAssertEqual(app.buttons["panel-Colors"].value as? String, "#327DD1")
-        app.buttons["panel-Layers"].tap()
+        openLayersPanel()
         XCTAssertEqual(app.staticTexts["layerOpacityValue"].label, percentage)
         XCTAssertEqual(app.buttons["visibility-Layer 2"].value as? String, "Hidden")
         app.buttons["visibility-Layer 2"].tap()
@@ -160,7 +219,7 @@ final class StudioUITests: XCTestCase {
         mirror.tap(); XCTAssertEqual(mirror.value as? String, "1")
         screenshot("11-Mirror")
         app.buttons["closePanel"].tap()
-        app.buttons["panel-Layers"].tap()
+        openLayersPanel()
         XCTAssertTrue(app.buttons["addLayer"].waitForExistence(timeout: 5))
         app.buttons["addLayer"].tap()
         XCTAssertTrue(app.buttons["select-layer-Layer 2"].isSelected)
@@ -182,13 +241,13 @@ final class StudioUITests: XCTestCase {
         app.alerts.buttons["Delete layer"].tap()
         XCTAssertFalse(app.buttons["select-layer-Details"].exists)
         app.buttons["closePanel"].tap(); app.buttons["undo"].tap()
-        app.buttons["panel-Layers"].tap()
+        openLayersPanel()
         XCTAssertTrue(app.buttons["select-layer-Details"].waitForExistence(timeout: 5))
         app.buttons["closePanel"].tap(); app.buttons["gallery"].tap()
         XCTAssertTrue(app.buttons["drawing-Mirror layers"].waitForExistence(timeout: 15))
         app.buttons["drawing-Mirror layers"].tap()
         XCTAssertTrue(app.buttons["panel-Layers"].waitForExistence(timeout: 10))
-        app.buttons["panel-Layers"].tap()
+        openLayersPanel()
         XCTAssertTrue(app.buttons["select-layer-Details"].isSelected)
         app.buttons["closePanel"].tap(); app.buttons["panel-Symmetry"].tap()
         XCTAssertEqual(app.switches["mirrorToggle"].value as? String, "1")

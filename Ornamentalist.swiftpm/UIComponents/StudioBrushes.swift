@@ -53,12 +53,12 @@ struct StudioBrushesView: View {
                     }
                 }
             }
-            if brush.usesStamps {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                     valueLabel("Opacity", value: "\(Int((brush.opacity * 100).rounded()))%")
                     Slider(value: Binding(get: { brush.opacity }, set: { model.setOpacity($0) }), in: 0.01...1)
                         .accessibilityLabel("Brush opacity")
-                }
+            }
+            if brush.usesStamps {
                 VStack(alignment: .leading, spacing: 8) {
                     valueLabel("Spacing", value: "\(Int((brush.spacing * 100).rounded()))%")
                     Slider(value: Binding(get: { brush.spacing }, set: { model.setSpacing($0) }), in: 0.06...4)
@@ -85,6 +85,90 @@ struct StudioBrushesView: View {
         HStack {
             Text(name); Spacer(); Text(value).monospacedDigit().foregroundStyle(.secondary)
         }.font(.subheadline)
+    }
+}
+
+/// Native sliders retain UIKit's tracking and adjustable accessibility behavior.
+/// Rotating their own bounds avoids stealing canvas touches beside the rail.
+@MainActor
+private struct VerticalBrushSlider: UIViewRepresentable {
+    @Binding var value: Double
+    let label: String
+    let identifier: String
+    let editing: (Bool) -> Void
+
+    func makeUIView(context: Context) -> VerticalSliderContainer {
+        let view = VerticalSliderContainer()
+        view.slider.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
+        view.slider.addTarget(context.coordinator, action: #selector(Coordinator.began), for: .touchDown)
+        view.slider.addTarget(context.coordinator, action: #selector(Coordinator.ended), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        return view
+    }
+    func updateUIView(_ view: VerticalSliderContainer, context: Context) {
+        context.coordinator.parent = self
+        if !view.slider.isTracking { view.slider.value = Float(value) }
+        view.slider.accessibilityLabel = label
+        view.slider.accessibilityIdentifier = identifier
+        view.slider.isEnabled = context.environment.isEnabled
+        view.slider.minimumTrackTintColor = UIColor(StudioStyle.copper)
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    final class Coordinator: NSObject {
+        var parent: VerticalBrushSlider
+        init(_ parent: VerticalBrushSlider) { self.parent = parent }
+        @objc func changed(_ slider: UISlider) { parent.value = Double(slider.value) }
+        @objc func began() { parent.editing(true) }
+        @objc func ended() { parent.editing(false) }
+    }
+}
+
+@MainActor
+private final class VerticalSliderContainer: UIView {
+    let slider = UISlider()
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        slider.minimumValue = 0; slider.maximumValue = 1
+        addSubview(slider)
+    }
+    required init?(coder: NSCoder) { fatalError("Create sliders programmatically") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        slider.transform = .identity
+        slider.bounds = CGRect(x: 0, y: 0, width: bounds.height, height: bounds.width)
+        slider.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        slider.transform = CGAffineTransform(rotationAngle: -.pi / 2)
+    }
+}
+
+@MainActor
+struct StudioBrushRail: View {
+    @ObservedObject var model: StudioModel
+    let sliderHeight: CGFloat
+    var body: some View {
+        let brush = model.inputBrush
+        VStack(spacing: 8) {
+            Image(systemName: model.tool == .eraser ? "eraser" : "pencil.tip").font(.title3)
+                .accessibilityHidden(true)
+            Text("Size").font(.caption2)
+            Text(brush.width.formatted(.number.precision(.fractionLength(1))))
+                .font(.caption.monospacedDigit()).accessibilityIdentifier("railSizeValue")
+            VerticalBrushSlider(value: Binding(get: { sqrt((brush.width - 0.5) / 159.5) },
+                set: { model.setInputWidth(0.5 + $0 * $0 * 159.5) }), label: "Quick brush size", identifier: "railSize") {
+                    model.brushPreviewRequested?($0)
+                }.frame(width: 44, height: sliderHeight)
+            Divider().padding(.vertical, 4)
+            Text("Opacity").font(.caption2)
+            Text("\(Int((brush.opacity * 100).rounded()))%")
+                .font(.caption.monospacedDigit()).accessibilityIdentifier("railOpacityValue")
+            VerticalBrushSlider(value: Binding(get: { (brush.opacity - 0.01) / 0.99 },
+                set: { model.setInputOpacity(0.01 + $0 * 0.99) }), label: "Quick brush opacity", identifier: "railOpacity") { _ in }
+                .frame(width: 44, height: sliderHeight)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 14).frame(width: 68)
+        .studioSurface()
+        .disabled(model.isDrawing || !model.canEdit || model.tool == .eyedropper)
+        .accessibilityElement(children: .contain).accessibilityIdentifier("brushRail")
+        .onDisappear { model.brushPreviewRequested?(false) }
     }
 }
 
