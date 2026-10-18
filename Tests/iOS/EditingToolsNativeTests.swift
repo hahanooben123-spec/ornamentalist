@@ -17,22 +17,48 @@ final class EditingToolsNativeTests: XCTestCase {
         try renderer.commit(stroke); d.strokes.append(stroke)
         let committed = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
         XCTAssertEqual(live, committed)
-        // Flat interior probes lie inside a single triangle, away from its
-        // antialiased edges: they measure opacity rather than coverage filtering.
-        for (x, y) in [(95, 66), (83, 80)] {
+        // Include the original narrow fan seam: solid opacity is uniform there.
+        for (x, y) in [(85, 68), (95, 66), (83, 80)] {
             let i = screenIndex(Double(x), Double(y)), png = try pixel(d, x: x, y: y)
             XCTAssertEqual(Double(png[0]), 89, accuracy: 3)
             XCTAssertEqual(Double(png[2]), 166, accuracy: 3)
             XCTAssertEqual(Double(committed[i + 2]), Double(png[0]), accuracy: 3)
             XCTAssertEqual(Double(committed[i]), Double(png[2]), accuracy: 3)
         }
-        // Keep the original seam probe too. CG integrates per-primitive coverage
-        // before blending, whereas Metal blends each MSAA sample. Two adjacent
-        // half-covered primitives differ by at most alpha²/4 (8 codes at 35%).
-        let seam = try pixel(d, x: 85, y: 68), i = screenIndex(85, 68)
-        let filteringBound = ceil(255 * stroke.brush.opacity * stroke.brush.opacity / 4)
-        XCTAssertEqual(Double(committed[i + 2]), Double(seam[0]), accuracy: filteringBound)
-        XCTAssertEqual(Double(committed[i]), Double(seam[2]), accuracy: filteringBound)
+    }
+
+    @MainActor
+    func testSolidOpacityDoesNotAccumulateWithinLiveMirroredStroke() async throws {
+        for preset in [BrushPreset.fineliner, .brushPen] {
+            for operation in [StrokeOperation.ink, .erase] {
+                var d = fixture()
+                if operation == .ink { d.strokes.removeLast() }
+                var brush = preset.makeBrush(); brush.width = 40; brush.opacity = 0.35; brush.pressureEnabled = false
+                let symmetry = SymmetryConfiguration(repetitions: 4, center: Point(x: 64, y: 64), mirror: true)
+                var session = StrokeSession(brush: brush, symmetry: symmetry, existingSamples: 0,
+                    existingVertices: 0, layerID: d.activeLayerID, color: InkColor(red: 1), operation: operation)
+                let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+                try await renderer.synchronize(d.strokes, layers: d.layers)
+                renderer.begin()
+                var live: [UInt8] = []
+                for step in 0..<8 {
+                    let sample = StrokeSample(point: Point(x: 80 + Double(step % 2) * 4, y: 64),
+                        pressure: 1, altitude: 1, azimuth: 0, time: Double(step))
+                    try renderer.append(session.append(sample))
+                    live = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256,
+                        active: session.stroke, preview: session.preview(predictions: []))
+                    let i = screenIndex(85, 68)
+                    XCTAssertEqual(Double(live[i + 2]), operation == .ink ? 89 : 166, accuracy: 3)
+                    XCTAssertEqual(Double(live[i]), operation == .ink ? 166 : 89, accuracy: 3)
+                }
+                try renderer.commit(session.stroke); d.strokes.append(session.stroke)
+                let committed = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+                XCTAssertEqual(live, committed)
+                let png = try pixel(d, x: 85, y: 68)
+                XCTAssertEqual(Double(png[0]), operation == .ink ? 89 : 166, accuracy: 3)
+                XCTAssertEqual(Double(png[2]), operation == .ink ? 166 : 89, accuracy: 3)
+            }
+        }
     }
     private func fixture() -> DrawingDocument {
         var d = DrawingDocument(); d.size = Point(x: 128, y: 128)

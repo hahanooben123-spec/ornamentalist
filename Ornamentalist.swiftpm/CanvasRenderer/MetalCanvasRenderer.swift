@@ -39,6 +39,11 @@ final class MetalCanvasRenderer {
     private let singlePipeline: MTLRenderPipelineState
     private let compositePipeline: MTLRenderPipelineState
     private let restoreSamplesPipeline: MTLRenderPipelineState
+    private let restoreColorPipeline: MTLRenderPipelineState
+    private let clearCoveragePipeline: MTLRenderPipelineState
+    private let clearCoverageState: MTLDepthStencilState
+    private let paintOnceState: MTLDepthStencilState
+    private var coverageStencil: MTLTexture?
     private var workTexture: MTLTexture?
     private var workMultisample: MTLTexture?
     private var surfaceKey: SurfaceKey?
@@ -126,6 +131,7 @@ final class MetalCanvasRenderer {
         descriptor.fragmentFunction = library.makeFunction(name: "inkFragment")
         descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
         descriptor.rasterSampleCount = sampleCount
+        descriptor.stencilAttachmentPixelFormat = .stencil8
         let attachment = descriptor.colorAttachments[0]!
         attachment.isBlendingEnabled = true
         attachment.sourceRGBBlendFactor = .sourceAlpha
@@ -143,15 +149,32 @@ final class MetalCanvasRenderer {
         descriptor.fragmentFunction = library.makeFunction(name: "inkFragment")
         attachment.sourceRGBBlendFactor = .sourceAlpha
         descriptor.rasterSampleCount = 1
+        descriptor.stencilAttachmentPixelFormat = .invalid
         singlePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.vertexFunction = library.makeFunction(name: "compositeVertex")
         descriptor.fragmentFunction = library.makeFunction(name: "compositeFragment")
         attachment.sourceRGBBlendFactor = .one // Layer textures are premultiplied.
         compositePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.rasterSampleCount = sampleCount
-        descriptor.fragmentFunction = library.makeFunction(name: "restoreSamplesFragment")
+        descriptor.stencilAttachmentPixelFormat = .stencil8
         attachment.isBlendingEnabled = false
+        restoreColorPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.fragmentFunction = library.makeFunction(name: "restoreSamplesFragment")
         restoreSamplesPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.fragmentFunction = nil
+        attachment.writeMask = []
+        clearCoveragePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        let stencil = MTLStencilDescriptor()
+        stencil.stencilCompareFunction = .always
+        stencil.depthStencilPassOperation = .replace
+        let depth = MTLDepthStencilDescriptor()
+        depth.frontFaceStencil = stencil; depth.backFaceStencil = stencil
+        guard let clearing = device.makeDepthStencilState(descriptor: depth) else { throw DocumentError.graphics }
+        clearCoverageState = clearing
+        stencil.stencilCompareFunction = .notEqual
+        depth.frontFaceStencil = stencil; depth.backFaceStencil = stencil
+        guard let once = device.makeDepthStencilState(descriptor: depth) else { throw DocumentError.graphics }
+        paintOnceState = once
         view.clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
         view.isPaused = true
         view.enableSetNeedsDisplay = true
@@ -302,6 +325,7 @@ final class MetalCanvasRenderer {
                              viewSize: Point, active: InkStroke?, preview: [BrushVertex], guides: Bool,
                              layerOnly: UUID? = nil, backgroundOnly: Bool = false,
                              state: MTLRenderPipelineState? = nil) throws {
+        encoder.setDepthStencilState(nil)
         encoder.setRenderPipelineState(state ?? pipeline)
         let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
         let identity = SymmetryConfiguration(repetitions: 1, center: .zero)
@@ -341,6 +365,7 @@ final class MetalCanvasRenderer {
         if backgroundOnly { return }
         for layer in document.layers where layer.isVisible && layer.opacity > 0 && (layerOnly == nil || layerOnly == layer.id) {
             if let raster = layer.raster {
+                encoder.setDepthStencilState(nil)
                 guard let texture = rasterTextures[raster.id] else { throw DocumentError.graphics }
                 encoder.setRenderPipelineState(rasterPipeline)
                 encoder.setFragmentTexture(texture, index: 0)
@@ -349,7 +374,7 @@ final class MetalCanvasRenderer {
             }
             for stroke in sceneLayerStrokes[layer.id] ?? [] {
                 committedStrokeDraws += 1
-                encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
+                beginStroke(stroke, encoder: encoder)
                 try encode(cache[stroke.id] ?? [], symmetry: stroke.symmetry, transform: transform,
                            size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
             }
@@ -364,10 +389,27 @@ final class MetalCanvasRenderer {
         SIMD4(Float(stroke.color.red), Float(stroke.color.green), Float(stroke.color.blue), Float(stroke.brush.opacity))
     }
 
+    private func usesUniformOpacity(_ stroke: InkStroke) -> Bool {
+        !stroke.brush.usesStamps && stroke.brush.opacity < 1
+    }
+    private func beginStroke(_ stroke: InkStroke, encoder: MTLRenderCommandEncoder) {
+        if usesUniformOpacity(stroke) {
+            // Clear only coverage, leaving the layer's color intact. A sample
+            // receives this solid stroke's opacity once across chunks/symmetry.
+            encoder.setDepthStencilState(clearCoverageState)
+            encoder.setStencilReferenceValue(0)
+            encoder.setRenderPipelineState(clearCoveragePipeline)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+            encoder.setDepthStencilState(paintOnceState)
+            encoder.setStencilReferenceValue(1)
+        } else { encoder.setDepthStencilState(nil) }
+        encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
+    }
+
     private func encodeLive(_ stroke: InkStroke, preview: [BrushVertex], transform: Matrix,
                             viewSize: Point, canvas: Point, encoder: MTLRenderCommandEncoder) throws {
         try prepareLiveBuffers(preview)
-        encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
+        beginStroke(stroke, encoder: encoder)
         try encode(uploadedLive, symmetry: stroke.symmetry, transform: transform, size: viewSize,
                    canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
         try encode(predictionBuffers, symmetry: stroke.symmetry, transform: transform, size: viewSize,
@@ -410,7 +452,7 @@ final class MetalCanvasRenderer {
         if workTexture?.width == width && workTexture?.height == height { return }
         // Release the old viewport before allocating its replacement. Submitted
         // command buffers retain resources still needed by the GPU.
-        clearLayerCaches(); workTexture = nil; workMultisample = nil
+        clearLayerCaches(); workTexture = nil; workMultisample = nil; coverageStencil = nil
         let resolved = try texture(width: width, height: height)
         let multisample: MTLTexture?
         if sampleCount > 1 { multisample = try texture(width: width, height: height, samples: sampleCount, transient: true) }
@@ -426,6 +468,28 @@ final class MetalCanvasRenderer {
         color.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         color.resolveTexture = resolve
         color.storeAction = resolve == nil ? .store : .multisampleResolve
+        return pass
+    }
+
+    private func attachCoverage(to pass: MTLRenderPassDescriptor, target: MTLTexture) throws {
+        if coverageStencil?.width != target.width || coverageStencil?.height != target.height {
+            coverageStencil = nil
+            let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .stencil8,
+                width: target.width, height: target.height, mipmapped: false)
+            if sampleCount > 1 { info.textureType = .type2DMultisample; info.sampleCount = sampleCount }
+            info.storageMode = device.supportsFamily(.apple1) ? .memoryless : .private
+            info.usage = .renderTarget
+            guard let stencil = device.makeTexture(descriptor: info) else { throw DocumentError.memoryLimit }
+            coverageStencil = stencil; workingTextureAllocations += 1
+        }
+        pass.stencilAttachment.texture = coverageStencil
+        pass.stencilAttachment.loadAction = .clear; pass.stencilAttachment.storeAction = .dontCare
+        pass.stencilAttachment.clearStencil = 0
+    }
+    private func geometryPass(_ target: MTLTexture, load: MTLLoadAction = .clear,
+                              resolve: MTLTexture? = nil) throws -> MTLRenderPassDescriptor {
+        let pass = targetPass(target, load: load, resolve: resolve)
+        try attachCoverage(to: pass, target: target)
         return pass
     }
 
@@ -462,7 +526,7 @@ final class MetalCanvasRenderer {
         guard let work = workTexture else { throw DocumentError.graphics }
         let result = try target ?? texture(width: work.width, height: work.height)
         for (index, layer) in layers.enumerated() {
-            let pass = targetPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
+            let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
             do {
                 try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,
@@ -486,14 +550,14 @@ final class MetalCanvasRenderer {
             incremental = old.id == key.id && old.raster == key.raster && old.strokes.count < key.strokes.count &&
                 Array(key.strokes.prefix(old.strokes.count)) == old.strokes
         } else { incremental = false }
-        let pass = targetPass(target, load: incremental ? .load : .clear)
+        let pass = try geometryPass(target, load: incremental ? .load : .clear)
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
         do {
             if incremental, let old = activeKey {
                 let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
                 for stroke in (sceneLayerStrokes[layer.id] ?? []).dropFirst(old.strokes.count) {
                     committedStrokeDraws += 1
-                    encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
+                    beginStroke(stroke, encoder: encoder)
                     let buffers = cache[stroke.id] ?? []
                     let remaining = pendingLiveCommit == stroke.id && activeLiveID == stroke.id
                         ? suffix(buffers, after: activeLiveVertices) : buffers
@@ -518,11 +582,30 @@ final class MetalCanvasRenderer {
                                  document: DrawingDocument, viewport: Viewport, viewSize: Point) throws -> MTLTexture {
         guard let base = activeTexture, let work = workTexture else { throw DocumentError.graphics }
         try prepareLiveBuffers(preview)
+        if usesUniformOpacity(active) {
+            // Solid translucent ink is a union, not accumulating flow. Reuse
+            // committed layers, then cover each live sample once across the
+            // confirmed mesh and prediction. Opaque/stamped ink keeps its
+            // incremental confirmed-prefix path below.
+            let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
+            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+            do {
+                encoder.setRenderPipelineState(sampleCount > 1 ? restoreSamplesPipeline : restoreColorPipeline)
+                encoder.setFragmentTexture(base, index: 0)
+                var alpha: Float = 1
+                encoder.setFragmentBytes(&alpha, length: MemoryLayout<Float>.stride, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+                try encodeLive(active, preview: preview, transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size),
+                               viewSize: viewSize, canvas: document.size, encoder: encoder)
+            } catch { encoder.endEncoding(); throw error }
+            encoder.endEncoding()
+            return work
+        }
         let confirmed = sealedVertexCount + scratch.count
         if activeLiveID == nil { activeLiveID = active.id; activeLiveVertices = 0 }
         if confirmed > activeLiveVertices {
             let delta = suffix(uploadedLive, after: activeLiveVertices)
-            guard let stable = command.makeRenderCommandEncoder(descriptor: targetPass(base, load: .load)) else { throw DocumentError.graphics }
+            guard let stable = command.makeRenderCommandEncoder(descriptor: try geometryPass(base, load: .load)) else { throw DocumentError.graphics }
             do {
                 stable.setRenderPipelineState(active.operation == .erase ? erasePipeline : pipeline)
                 try encode(delta, symmetry: active.symmetry, transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size),
@@ -531,10 +614,10 @@ final class MetalCanvasRenderer {
             stable.endEncoding()
             liveConfirmedVertexDraws += confirmed - activeLiveVertices; activeLiveVertices = confirmed
         }
-        let pass = targetPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
+        let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
         do {
-            encoder.setRenderPipelineState(sampleCount > 1 ? restoreSamplesPipeline : compositePipeline)
+            encoder.setRenderPipelineState(sampleCount > 1 ? restoreSamplesPipeline : restoreColorPipeline)
             encoder.setFragmentTexture(base, index: 0)
             var alpha: Float = 1
             encoder.setFragmentBytes(&alpha, length: MemoryLayout<Float>.stride, index: 0)
@@ -670,6 +753,7 @@ final class MetalCanvasRenderer {
             if let multisample {
                 color.texture = multisample; color.resolveTexture = layerTexture; color.storeAction = .multisampleResolve
             } else { color.texture = layerTexture; color.storeAction = .store }
+            try attachCoverage(to: pass, target: multisample ?? layerTexture)
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
             do {
                 try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,
@@ -718,6 +802,7 @@ final class MetalCanvasRenderer {
             try encodeGroups(command: command, output: output, document: document, viewport: viewport,
                              viewSize: Point(x: Double(width), y: Double(height)), active: active, preview: preview, guides: guides)
         } else {
+            try attachCoverage(to: pass, target: color.texture!)
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
             do {
                 try encodeScene(encoder: encoder, document: document, viewport: viewport,
