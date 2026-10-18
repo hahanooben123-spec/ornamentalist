@@ -41,11 +41,16 @@ struct StudioBrushesView: View {
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 valueLabel("Size", value: "\(brush.width.formatted(.number.precision(.fractionLength(1)))) px")
-                Slider(value: Binding(get: { brush.width }, set: { model.setWidth($0) }), in: 0.5...160)
+                Slider(value: Binding(get: { brush.width }, set: { model.setWidth($0) }), in: 0.5...160,
+                       onEditingChanged: { model.brushPreviewRequested?($0) })
                     .accessibilityLabel("Line width")
                 HStack(spacing: 8) {
                     ForEach([2.0, 5, 20, 80], id: \.self) { width in
-                        Button { model.setWidth(width) } label: {
+                        Button {
+                            model.setWidth(width)
+                            model.brushPreviewRequested?(true)
+                            model.brushPreviewRequested?(false)
+                        } label: {
                             Text("\(Int(width))").font(.subheadline.monospacedDigit())
                                 .frame(maxWidth: .infinity).frame(height: 44)
                                 .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
@@ -80,6 +85,7 @@ struct StudioBrushesView: View {
                     .accessibilityLabel("Line stabilization")
             }
         }.onAppear { family = brush.preset.family }
+        .onDisappear { model.brushPreviewRequested?(false) }
     }
     private func valueLabel(_ name: String, value: String) -> some View {
         HStack {

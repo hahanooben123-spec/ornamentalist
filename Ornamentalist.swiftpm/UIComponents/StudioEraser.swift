@@ -15,12 +15,14 @@ struct StudioEraserView: View {
                 Text("Size"); Spacer()
                 Text("\(Int(model.eraserBrush.width)) px").monospacedDigit().foregroundStyle(.secondary)
             }.font(.subheadline)
-            Slider(value: Binding(get: { model.eraserBrush.width }, set: { model.setEraserWidth($0) }), in: 0.5...160)
+            Slider(value: Binding(get: { model.eraserBrush.width }, set: { model.setEraserWidth($0) }), in: 0.5...160,
+                   onEditingChanged: { model.brushPreviewRequested?($0) })
                 .accessibilityLabel("Eraser size")
             Text("Hard has a crisp edge. Opacity controls removal strength; Soft builds removal with overlapping passes. Adjust both from the left rail. Each eraser stroke can be undone.")
                 .font(.caption).foregroundStyle(.secondary)
             Button("Return to brush", systemImage: "pencil.tip") { model.selectTool(.brush) }
                 .frame(minHeight: 44).accessibilityIdentifier("returnToBrush")
         }
+        .onDisappear { model.brushPreviewRequested?(false) }
     }
 }

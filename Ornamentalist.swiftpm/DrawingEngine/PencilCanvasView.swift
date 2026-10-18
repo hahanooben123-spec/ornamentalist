@@ -309,7 +309,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         guard !hidden, bounds.width > 0, bounds.height > 0 else { return }
         let center = hoverPoint ?? CGPoint(x: bounds.midX, y: bounds.midY)
         let canvasPoint = canvasMatrix.inverse.apply(Point(x: Double(center.x), y: Double(center.y)))
-        guard let size = model.document?.size, (0...size.x).contains(canvasPoint.x), (0...size.y).contains(canvasPoint.y) else {
+        guard let size = model.document?.size,
+              sizePreview || ((0...size.x).contains(canvasPoint.x) && (0...size.y).contains(canvasPoint.y)) else {
             brushCursor.isHidden = true; cursorHalo.isHidden = true; return
         }
         let diameter = CGFloat(model.inputBrush.width * hypot(canvasMatrix.a, canvasMatrix.b))
