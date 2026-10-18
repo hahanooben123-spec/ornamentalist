@@ -10,7 +10,7 @@ SOURCES = sorted(p for p in APP.rglob("*.swift") if p.name != "Package.swift")
 
 
 def verify_sources():
-    assert len(SOURCES) == 23, f"Update source inventory: found {len(SOURCES)}"
+    assert len(SOURCES) == 26, f"Update source inventory: found {len(SOURCES)}"
     assert sum(len(re.findall(r"(?m)^@main\s*$", p.read_text(encoding="utf-8"))) for p in SOURCES) == 1
     assert (APP / "Package.swift").is_file()
     manifest = (APP / "Package.swift").read_text(encoding="utf-8")
@@ -24,7 +24,7 @@ def verify_sources():
     assert "WKWebView" not in source_text and "<canvas" not in source_text
     assert "predictedTouches(for:" in source_text and "coalescedTouches(for:" in source_text
     assert "makeLibrary(source:" in source_text and "instanceCount:" in source_text
-    assert "23 `.swift` source files" in (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "26 `.swift` source files" in (ROOT / "README.md").read_text(encoding="utf-8")
     for p in SOURCES:
         text = p.read_text(encoding="utf-8")
         assert not re.search(r"\b(TODO|FIXME|fatalError\(\"Not implemented)\b", text), p
@@ -36,7 +36,7 @@ def main():
     output = ROOT / "dist"
     output.mkdir(exist_ok=True)
     archive = output / "Ornamentalist-iPad.zip"
-    files = sorted(APP.rglob("*.swift")) + [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md"))
+    files = sorted(APP.rglob("*.swift")) + [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md")) + sorted((ROOT / "ThirdParty").glob("*-LICENSE.txt"))
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for p in files:
             info = zipfile.ZipInfo(p.relative_to(ROOT).as_posix(), date_time=(2026, 10, 17, 0, 0, 0))

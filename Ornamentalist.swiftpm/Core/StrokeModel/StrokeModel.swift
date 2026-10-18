@@ -20,6 +20,7 @@ struct InkStroke: Codable, Identifiable, Equatable, Sendable {
     var symmetry = SymmetryConfiguration()
     var samples: [StrokeSample] = []
     var layerID = DrawingLayer.legacyID
+    var color = InkColor.black
 }
 
 extension InkStroke {
@@ -30,11 +31,12 @@ extension InkStroke {
         symmetry = try c.decode(SymmetryConfiguration.self, forKey: .symmetry)
         samples = try c.decode([StrokeSample].self, forKey: .samples)
         layerID = try c.decodeIfPresent(UUID.self, forKey: .layerID) ?? DrawingLayer.legacyID
+        color = try c.decodeIfPresent(InkColor.self, forKey: .color) ?? .black
     }
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 4
+    var version = 5
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -42,6 +44,8 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     var size = Point(x: 2048, y: 2048)
     var symmetry = SymmetryConfiguration()
     var brush = InkBrush()
+    var color = InkColor.black
+    var recentColors: [InkColor] = []
     var strokes: [InkStroke] = []
     // Bottom to top; stroke storage remains chronological for input/history.
     var layers = [DrawingLayer(id: DrawingLayer.legacyID)]
@@ -54,11 +58,12 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard (1...4).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...5).contains(version) else { throw DocumentError.unsupportedVersion }
         let layerIDs = Set(layers.map(\.id))
         guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
               layerIDs.contains(activeLayerID), layers.allSatisfy({
-                  !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.name.count <= 80
+                  !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.name.count <= 80 &&
+                  $0.opacity.isFinite && (0...1).contains($0.opacity)
               }) else { throw DocumentError.invalidData }
         guard size.isFinite, size.x >= 64, size.y >= 64, size.x <= 8192, size.y <= 8192,
               title.count <= 200, strokes.count <= 20_000 else { throw DocumentError.invalidData }
@@ -73,7 +78,8 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
                 b.spacing.isFinite && (0.06...4).contains(b.spacing) &&
                 b.density.isFinite && (0.05...1).contains(b.density)
         }
-        guard storageRevision >= 0, validSymmetry(symmetry), validBrush(brush) else {
+        guard storageRevision >= 0, validSymmetry(symmetry), validBrush(brush), color.isValid,
+              recentColors.count <= 12, recentColors.allSatisfy(\.isValid) else {
             throw DocumentError.invalidData
         }
         var total = 0, vertices = 0
@@ -82,7 +88,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
             total += stroke.samples.count
             guard ids.insert(stroke.id).inserted, layerIDs.contains(stroke.layerID), total <= DrawingLimits.sampleCount,
                   !stroke.samples.isEmpty, stroke.samples.count <= DrawingLimits.strokeSamples,
-                  validBrush(stroke.brush),
+                  validBrush(stroke.brush), stroke.color.isValid,
                   validSymmetry(stroke.symmetry) else { throw DocumentError.invalidData }
             var lastTime = -Double.infinity
             for sample in stroke.samples {
@@ -112,6 +118,8 @@ extension DrawingDocument {
         size = try c.decode(Point.self, forKey: .size)
         symmetry = try c.decode(SymmetryConfiguration.self, forKey: .symmetry)
         brush = try c.decode(InkBrush.self, forKey: .brush)
+        color = try c.decodeIfPresent(InkColor.self, forKey: .color) ?? .black
+        recentColors = try c.decodeIfPresent([InkColor].self, forKey: .recentColors) ?? []
         strokes = try c.decode([InkStroke].self, forKey: .strokes)
         if version >= 3 {
             layers = try c.decode([DrawingLayer].self, forKey: .layers)

@@ -49,10 +49,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.4.0: studio visible; loading gallery")
+            print("Ornamentalist 0.5.0: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.4.0: gallery loading finished")
+            print("Ornamentalist 0.5.0: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -177,6 +177,15 @@ struct StudioView: View {
                     .disabled(!model.canRedo || controlsDisabled)
                     .accessibilityLabel("Redo").accessibilityIdentifier("redo")
             }
+            Button { panel = panel == .colors ? nil : .colors } label: {
+                Circle().fill(document.color.swiftUIColor)
+                    .overlay(Circle().stroke(.secondary.opacity(0.4), lineWidth: 1))
+                    .frame(width: 26, height: 26).padding(9)
+            }.disabled(controlsDisabled).accessibilityLabel("Drawing color")
+                .accessibilityValue(document.color.hex).accessibilityIdentifier("panel-Colors")
+                .popover(isPresented: Binding(get: { panel == .colors }, set: { if !$0 && panel == .colors { panel = nil } })) {
+                    StudioPanelView(panel: .colors, model: model, appearance: $appearance) {}.tint(StudioStyle.copper)
+                }
             Menu {
                 Button("Save drawing", systemImage: "externaldrive") { Task { await model.saveNow() } }
                 Divider()

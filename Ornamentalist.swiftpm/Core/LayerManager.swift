@@ -7,6 +7,18 @@ struct DrawingLayer: Codable, Equatable, Identifiable, Sendable {
     var name = "Layer 1"
     var isVisible = true
     var isLocked = false
+    var opacity = 1.0
+}
+
+extension DrawingLayer {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        isVisible = try c.decode(Bool.self, forKey: .isVisible)
+        isLocked = try c.decode(Bool.self, forKey: .isLocked)
+        opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
+    }
 }
 
 enum LayerManager {
@@ -33,6 +45,14 @@ enum LayerManager {
     static func toggleVisibility(_ id: UUID, in document: inout DrawingDocument) -> Bool {
         guard let i = document.layers.firstIndex(where: { $0.id == id }) else { return false }
         document.layers[i].isVisible.toggle()
+        return true
+    }
+
+    static func setOpacity(_ id: UUID, value: Double, in document: inout DrawingDocument) -> Bool {
+        guard value.isFinite, let i = document.layers.firstIndex(where: { $0.id == id }) else { return false }
+        let clamped = max(0, min(1, value))
+        guard document.layers[i].opacity != clamped else { return false }
+        document.layers[i].opacity = clamped
         return true
     }
 

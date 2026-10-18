@@ -20,18 +20,27 @@ enum PNGExporter {
             context.scaleBy(x: scale, y: scale)
             context.clip(to: CGRect(x: 0, y: 0, width: document.size.x, height: document.size.y))
             context.setFillColor(UIColor.black.cgColor)
-            for stroke in document.visibleStrokes {
-                paint(stroke, in: context)
+            let grouped = Dictionary(grouping: document.strokes, by: \.layerID)
+            for layer in document.layers where layer.isVisible && layer.opacity > 0 {
+                context.saveGState()
+                context.setAlpha(CGFloat(layer.opacity))
+                // Core Graphics applies alpha ONCE when the isolated group ends.
+                context.beginTransparencyLayer(auxiliaryInfo: nil)
+                for stroke in grouped[layer.id] ?? [] { paint(stroke, in: context) }
+                context.endTransparencyLayer()
+                context.restoreGState()
             }
         }
         guard let data = image.pngData() else { throw DocumentError.graphics }
         return data
     }
     static func paint(_ stroke: InkStroke, in context: CGContext) {
+        let ink = stroke.color
         if stroke.brush.usesStamps {
             let locations: [CGFloat] = (0...32).map { CGFloat($0) / 32 }
             let colors = locations.map { radius in
-                UIColor(white: 0, alpha: CGFloat(stroke.brush.opacity * BrushGeometry.coverage(radius: Double(radius), softness: 1))).cgColor
+                UIColor(red: ink.red, green: ink.green, blue: ink.blue,
+                        alpha: stroke.brush.opacity * BrushGeometry.coverage(radius: Double(radius), softness: 1)).cgColor
             }
             let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations)
             let dabs = BrushGeometry.dabs(stroke)
@@ -50,7 +59,7 @@ enum PNGExporter {
                                                        endCenter: .zero, endRadius: 1, options: [])
                         }
                     } else {
-                        context.setFillColor(UIColor(white: 0, alpha: CGFloat(stroke.brush.opacity)).cgColor)
+                        context.setFillColor(UIColor(red: ink.red, green: ink.green, blue: ink.blue, alpha: stroke.brush.opacity).cgColor)
                         context.fillEllipse(in: CGRect(x: -1, y: -1, width: 2, height: 2))
                     }
                     context.restoreGState()
@@ -59,7 +68,7 @@ enum PNGExporter {
             }
             return
         }
-        context.setFillColor(UIColor.black.cgColor)
+        context.setFillColor(UIColor(red: ink.red, green: ink.green, blue: ink.blue, alpha: 1).cgColor)
         let vertices = StrokeGeometry.mesh(stroke)
         // A single union fill keeps the original opaque fineliner free of seams.
         for matrix in stroke.symmetry.matrices {

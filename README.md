@@ -28,7 +28,7 @@ App playground manifest handling can vary across installed versions. Update Swif
 
 1. Create a new **App** in Swift Playground, named Ornamentalist.
 2. Remove its generated `MyApp.swift` and `ContentView.swift` source files. There must be exactly one `@main` declaration.
-3. Use the sidebar **+ → Insert from** to add all **23 `.swift` source files** inside the supplied `Ornamentalist.swiftpm` folders, excluding `Package.swift`. You can also add empty Swift files and paste each file's complete contents. Folder layout is organizational; all files belong to the same app target.
+3. Use the sidebar **+ → Insert from** to add all **26 `.swift` source files** inside the supplied `Ornamentalist.swiftpm` folders, excluding `Package.swift`. You can also add empty Swift files and paste each file's complete contents. Folder layout is organizational; all files belong to the same app target.
 4. Keep the new app's automatically generated manifest. Use an iPadOS 17+ deployment target and Swift 5 language mode if those options are exposed. The supplied source uses Swift 5.9 syntax.
 5. Run App again. You do not need the repository's `Tests`, cloud workflow, or `project.yml` on iPad.
 
@@ -76,7 +76,7 @@ LayerManager implements adding, renaming, hiding, locking, reordering and deleti
 
 ## Apple build verification without owning a Mac
 
-The app manifest explicitly enumerates all 23 sources, and packaging checks that this list matches the shipped files exactly. `python3 tools/check_playground_target.py` additionally uses real SwiftPM source discovery in a temporary copy with a standard executable product. It preserves the exact target declaration but replaces AppleProductTypes application metadata; it therefore verifies target source membership, not the installed iPad editor's preview/file-provider integration.
+The app manifest explicitly enumerates all 26 sources, and packaging checks that this list matches the shipped files exactly. `python3 tools/check_playground_target.py` additionally uses real SwiftPM source discovery in a temporary copy with a standard executable product. It preserves the exact target declaration but replaces AppleProductTypes application metadata; it therefore verifies target source membership, not the installed iPad editor's preview/file-provider integration.
 
 The supplied GitHub Actions workflow runs on a hosted macOS runner in [the Ornamentalist repository](https://github.com/hahanooben123-spec/ornamentalist). Open **Actions → Apple validation** to inspect builds. A green build verifies compilation/tests, not physical Pencil behavior. The job also uploads a source ZIP for iPad.
 

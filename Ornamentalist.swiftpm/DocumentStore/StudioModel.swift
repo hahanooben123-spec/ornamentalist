@@ -38,6 +38,7 @@ final class StudioModel: ObservableObject {
     private var reportedSaveFailure = false
     private(set) var usedSamples = 0
     private(set) var usedVertices = 0
+    private var opacityEditBefore: DrawingDocument?
 
     init(repository: DocumentRepository = DocumentRepository()) { self.repository = repository }
 
@@ -65,6 +66,7 @@ final class StudioModel: ObservableObject {
         catch { self.error = error.localizedDescription }
     }
     private func adopt(_ d: DrawingDocument, recovered: Bool) {
+        opacityEditBefore = nil
         document = d; history = StrokeHistory()
         writeSequence = max(writeSequence, d.storageRevision)
         generation += 1; nextSaveAttempt = 0; reportedSaveFailure = false
@@ -116,7 +118,7 @@ final class StudioModel: ObservableObject {
             await refresh()
         } catch { self.error = error.localizedDescription }
     }
-    func setDrawing(_ value: Bool) { isDrawing = value }
+    func setDrawing(_ value: Bool) { if value { finishLayerOpacityEdit() }; isDrawing = value }
     func discardActiveCheckpoint() {
         isDrawing = false
         changed()
@@ -131,10 +133,12 @@ final class StudioModel: ObservableObject {
         usedSamples += stroke.samples.count; usedVertices += StrokeGeometry.estimatedVertexCount(stroke)
     }
     func undo() {
+        finishLayerOpacityEdit()
         guard canEdit, !isDrawing, var d = document, history.undo(in: &d) else { return }
         document = d; recountInk(); changed()
     }
     func redo() {
+        finishLayerOpacityEdit()
         guard canEdit, !isDrawing, var d = document, history.redo(in: &d) else { return }
         document = d; recountInk(); changed()
     }
@@ -147,10 +151,12 @@ final class StudioModel: ObservableObject {
         document?.symmetry.mirror = enabled; changed()
     }
     func selectLayer(_ id: UUID) {
+        finishLayerOpacityEdit()
         guard canEdit, !isDrawing, document?.layers.contains(where: { $0.id == id }) == true else { return }
         document?.activeLayerID = id; changed()
     }
     private func editLayers(_ edit: (inout DrawingDocument) -> Bool) {
+        finishLayerOpacityEdit()
         guard canEdit, !isDrawing, let before = document else { return }
         var after = before
         guard edit(&after) else { return }
@@ -163,6 +169,35 @@ final class StudioModel: ObservableObject {
     func toggleLayerLock(_ id: UUID) { editLayers { LayerManager.toggleLock(id, in: &$0) } }
     func moveLayer(_ id: UUID, up: Bool) { editLayers { LayerManager.move(id, up: up, in: &$0) } }
     func deleteLayer(_ id: UUID) { editLayers { LayerManager.delete(id, in: &$0) } }
+    func beginLayerOpacityEdit() {
+        guard canEdit, !isDrawing, opacityEditBefore == nil else { return }
+        opacityEditBefore = document
+    }
+    func finishLayerOpacityEdit() {
+        defer { opacityEditBefore = nil }
+        guard let before = opacityEditBefore, let after = document, before.id == after.id,
+              before.layers != after.layers else { return }
+        history.recordLayerChange(from: before, to: after)
+    }
+    func setLayerOpacity(_ id: UUID, value: Double) {
+        guard canEdit, !isDrawing, var d = document else { return }
+        let before = d
+        guard LayerManager.setOpacity(id, value: value, in: &d) else { return }
+        if opacityEditBefore == nil { history.recordLayerChange(from: before, to: d) }
+        document = d; changed()
+    }
+    func setColor(_ color: InkColor, remember: Bool = true) {
+        guard canEdit, !isDrawing, color.isValid, document != nil else { return }
+        document?.color = color
+        if remember { rememberColor() } else { changed() }
+    }
+    func rememberColor() {
+        guard canEdit, !isDrawing, let color = document?.color else { return }
+        document?.recentColors.removeAll { $0 == color }
+        document?.recentColors.insert(color, at: 0)
+        document?.recentColors = Array((document?.recentColors ?? []).prefix(12))
+        changed()
+    }
     func setRepetitions(_ n: Int) {
         guard canEdit, !isDrawing else { return }
         document?.symmetry.repetitions = max(1, min(64, n)); changed()
@@ -196,7 +231,7 @@ final class StudioModel: ObservableObject {
         document?.brush.stabilization = max(0, min(0.85, amount)); changed()
     }
     private func changed() {
-        document?.version = 4; document?.modified = Date()
+        document?.version = 5; document?.modified = Date()
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)
@@ -246,6 +281,7 @@ final class StudioModel: ObservableObject {
         } catch { saveStatus = "Recovery save failed"; self.error = error.localizedDescription }
     }
     func close() async {
+        finishLayerOpacityEdit()
         guard !busy, !isDrawing, !isPreparing else { return }
         busy = true; defer { busy = false }
         // An autosave may already be in flight. Wait for it without permitting edits.

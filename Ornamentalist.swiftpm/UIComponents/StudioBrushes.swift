@@ -11,7 +11,7 @@ struct StudioBrushesView: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(brush.preset.name).font(.headline).accessibilityIdentifier("selectedBrush")
-                BrushSwatch(brush: brush).frame(height: 72)
+                BrushSwatch(brush: brush, color: model.document?.color ?? .black).frame(height: 72)
                     .background(.white, in: RoundedRectangle(cornerRadius: 14))
                 Text(brush.preset.hint).font(.caption).foregroundStyle(.secondary)
             }
@@ -26,7 +26,7 @@ struct StudioBrushesView: View {
                                 Text(preset.name).font(.subheadline.weight(.medium))
                                 Text(preset.family.rawValue).font(.caption2).foregroundStyle(.secondary)
                             }.frame(maxWidth: .infinity, alignment: .leading)
-                            BrushSwatch(brush: preset.makeBrush()).frame(width: 106, height: 38)
+                            BrushSwatch(brush: preset.makeBrush(), color: model.document?.color ?? .black).frame(width: 106, height: 38)
                                 .background(.white, in: RoundedRectangle(cornerRadius: 8))
                             Image(systemName: brush.preset == preset ? "checkmark.circle.fill" : "circle")
                                 .foregroundStyle(brush.preset == preset ? StudioStyle.copper : Color.secondary)
@@ -92,12 +92,13 @@ struct StudioBrushesView: View {
 /// generic line. All presets use a fixed preview seed and document coordinates.
 struct BrushSwatch: View {
     let brush: InkBrush
+    var color = InkColor.black
     var body: some View {
         Canvas { context, size in
             var b = brush
             b.width = max(1, min(Double(size.height) * 0.6, brush.width * 0.45))
             var stroke = InkStroke(id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
-                                   brush: b, symmetry: SymmetryConfiguration(repetitions: 1, center: .zero))
+                                   brush: b, symmetry: SymmetryConfiguration(repetitions: 1, center: .zero), color: color)
             stroke.samples = (0...48).map { i in
                 let t = Double(i) / 48
                 return StrokeSample(point: Point(x: 12 + (Double(size.width) - 24) * t,

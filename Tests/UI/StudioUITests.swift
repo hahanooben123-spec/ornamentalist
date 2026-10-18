@@ -40,6 +40,41 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(app.buttons["drawing-Untitled Drawing"].firstMatch.waitForExistence(timeout: 15))
     }
 
+    func testColorPickerLayerVisibilityAndOpacityPersist() {
+        app.buttons["newDrawing"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["createDrawing"].waitForExistence(timeout: 5))
+        app.buttons["createDrawing"].tap()
+        XCTAssertTrue(app.buttons["panel-Colors"].waitForExistence(timeout: 15))
+        app.buttons["panel-Colors"].tap()
+        XCTAssertTrue(app.segmentedControls["colorMode"].waitForExistence(timeout: 5))
+        screenshot("15-Color-disc")
+        app.segmentedControls["colorMode"].buttons["Values"].tap()
+        let field = app.textFields["colorHex"]
+        if !field.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7) + "#327DD1\n")
+        app.buttons["closePanel"].tap()
+        XCTAssertEqual(app.buttons["panel-Colors"].value as? String, "#327DD1")
+        app.buttons["panel-Layers"].tap(); app.buttons["addLayer"].tap()
+        let opacity = app.sliders["layerOpacity"]
+        XCTAssertTrue(opacity.waitForExistence(timeout: 5)); opacity.adjust(toNormalizedSliderPosition: 0.4)
+        let percentage = app.staticTexts["layerOpacityValue"].label
+        XCTAssertNotEqual(percentage, "100%")
+        app.buttons["visibility-Layer 2"].tap()
+        XCTAssertEqual(app.buttons["visibility-Layer 2"].value as? String, "Hidden")
+        screenshot("16-Layer-opacity-hidden")
+        app.buttons["closePanel"].tap(); app.buttons["gallery"].tap()
+        XCTAssertTrue(app.buttons["drawing-Untitled Drawing"].waitForExistence(timeout: 15))
+        app.buttons["drawing-Untitled Drawing"].tap()
+        XCTAssertTrue(app.buttons["panel-Colors"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.buttons["panel-Colors"].value as? String, "#327DD1")
+        app.buttons["panel-Layers"].tap()
+        XCTAssertEqual(app.staticTexts["layerOpacityValue"].label, percentage)
+        XCTAssertEqual(app.buttons["visibility-Layer 2"].value as? String, "Hidden")
+        app.buttons["visibility-Layer 2"].tap()
+        XCTAssertEqual(app.buttons["visibility-Layer 2"].value as? String, "Visible")
+        XCTAssertEqual(app.staticTexts["layerOpacityValue"].label, percentage)
+    }
+
     func testBrushLibrarySelectionAndSettingsSurviveReopening() {
         app.buttons["newDrawing"].firstMatch.tap()
         XCTAssertTrue(app.buttons["createDrawing"].waitForExistence(timeout: 5))

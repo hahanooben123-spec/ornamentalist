@@ -2,7 +2,7 @@ import SwiftUI
 import Darwin
 
 enum StudioPanel: String, Identifiable {
-    case brush = "Brushes", symmetry = "Symmetry", layers = "Layers", canvas = "Canvas"
+    case brush = "Brushes", symmetry = "Symmetry", layers = "Layers", canvas = "Canvas", colors = "Colors"
     var id: String { rawValue }
 }
 
@@ -30,6 +30,7 @@ struct StudioPanelView: View {
                         case .symmetry: symmetry(document)
                         case .canvas: canvas
                         case .layers: StudioLayersView(model: model)
+                        case .colors: StudioColorsView(model: model)
                         }
                     }.padding(24)
                 }

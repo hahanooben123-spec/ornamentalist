@@ -19,13 +19,28 @@ struct StudioLayersView: View {
                         .disabled(document.layers.count >= LayerManager.maximumLayers)
                         .accessibilityIdentifier("addLayer")
                 }
+                if let layer = document.activeLayer {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Layer opacity"); Spacer()
+                            Text("\(Int((layer.opacity * 100).rounded()))%").monospacedDigit()
+                                .accessibilityIdentifier("layerOpacityValue")
+                        }.font(.subheadline)
+                        Slider(value: Binding(get: { layer.opacity }, set: { model.setLayerOpacity(layer.id, value: $0) }),
+                               in: 0...1, onEditingChanged: { editing in
+                            if editing { model.beginLayerOpacityEdit() } else { model.finishLayerOpacityEdit() }
+                        }).accessibilityLabel("Layer opacity").accessibilityIdentifier("layerOpacity")
+                        Text(layer.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }.padding(14).background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
+                }
                 ForEach(Array(document.layers.reversed())) { layer in
                     row(layer, in: document)
                 }
-                Text("Top layers sit above the ones below. Hidden or locked layers cannot be drawn on. Layer changes can be undone.")
+                Text("Tap a layer to adjust its opacity. The eye switches it on or off. Top layers sit above the ones below. Hidden or locked layers cannot be drawn on.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+        .onDisappear { model.finishLayerOpacityEdit() }
         .alert("Name layer", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Layer name", text: $layerName).accessibilityIdentifier("layerName")
             Button("Cancel", role: .cancel) { renaming = nil }
@@ -51,7 +66,7 @@ struct StudioLayersView: View {
                         .foregroundStyle(layer.id == document.activeLayerID ? StudioStyle.copper : .secondary)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(layer.name).font(.subheadline.weight(.medium)).lineLimit(1)
-                        Text("\(document.strokes.filter { $0.layerID == layer.id }.count) strokes")
+                        Text("\(layer.isVisible ? "\(Int((layer.opacity * 100).rounded()))%" : "Hidden") · \(document.strokes.filter { $0.layerID == layer.id }.count) strokes")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)

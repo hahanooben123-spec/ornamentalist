@@ -3,6 +3,28 @@ import XCTest
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testLayerOpacityDragIsOneUndoAndColorChangesRespectActiveStroke() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder)); await model.create()
+        let id = try XCTUnwrap(model.document?.activeLayerID)
+        model.beginLayerOpacityEdit()
+        model.setLayerOpacity(id, value: 0.8); model.setLayerOpacity(id, value: 0.6); model.setLayerOpacity(id, value: 0.4)
+        model.finishLayerOpacityEdit()
+        XCTAssertEqual(model.document?.activeLayer?.opacity, 0.4)
+        model.undo(); XCTAssertEqual(model.document?.activeLayer?.opacity, 1); XCTAssertFalse(model.canUndo)
+        model.redo(); XCTAssertEqual(model.document?.activeLayer?.opacity, 0.4)
+        let red = InkColor(red: 1)
+        model.setColor(red); model.setBrush(.softShader)
+        XCTAssertEqual(model.document?.color, red)
+        model.setDrawing(true); model.setColor(InkColor(blue: 1)); model.setLayerOpacity(id, value: 0.9)
+        XCTAssertEqual(model.document?.color, red); XCTAssertEqual(model.document?.activeLayer?.opacity, 0.4)
+        model.setDrawing(false)
+        for i in 0..<20 { model.setColor(InkColor(red: Double(i) / 20)) }
+        XCTAssertEqual(model.document?.recentColors.count, 12)
+        let saved = await model.saveNow(); XCTAssertTrue(saved)
+    }
+
     func testBrushChangesFreezeDuringInputAndSaveWithoutChangingOldInk() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

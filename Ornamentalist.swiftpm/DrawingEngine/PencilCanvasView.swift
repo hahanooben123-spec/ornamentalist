@@ -136,7 +136,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         drawingTouch = touch
         session = StrokeSession(brush: document.brush, symmetry: document.symmetry,
                                 existingSamples: model.usedSamples, existingVertices: model.usedVertices,
-                                layerID: document.activeLayerID)
+                                layerID: document.activeLayerID, color: document.color)
         renderer?.begin(); model.setDrawing(true)
         // Navigation is frozen for the duration of a Pencil stroke: palms cannot move the canvas.
         if touch.type == .pencil { navigationGestures.forEach { $0.isEnabled = false } }

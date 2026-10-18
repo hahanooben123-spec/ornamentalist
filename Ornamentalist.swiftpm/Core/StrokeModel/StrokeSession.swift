@@ -11,8 +11,8 @@ struct StrokeSession {
     private let remainingVertices: Int
 
     init(brush: InkBrush, symmetry: SymmetryConfiguration, existingSamples: Int, existingVertices: Int,
-         layerID: UUID = DrawingLayer.legacyID) {
-        stroke = InkStroke(brush: brush, symmetry: symmetry, layerID: layerID)
+         layerID: UUID = DrawingLayer.legacyID, color: InkColor = .black) {
+        stroke = InkStroke(brush: brush, symmetry: symmetry, layerID: layerID, color: color)
         stamps = BrushStampState(id: stroke.id)
         remainingSamples = min(DrawingLimits.strokeSamples, DrawingLimits.sampleCount - existingSamples)
         remainingVertices = min(DrawingLimits.strokeVertices, DrawingLimits.vertexCount - existingVertices)
