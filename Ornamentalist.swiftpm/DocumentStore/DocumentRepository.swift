@@ -56,7 +56,7 @@ actor DocumentRepository {
         return d
     }
     private func encoded(_ document: DrawingDocument, generation: Int) throws -> Data {
-        var d = document; d.version = 12; d.storageRevision = generation
+        var d = document; d.version = 13; d.storageRevision = generation
         try d.validate()
         let data = try JSONEncoder().encode(d)
         guard data.count <= DrawingLimits.encodedBytes else { throw DocumentError.oversized }
@@ -163,7 +163,7 @@ actor DocumentRepository {
         #endif
         var d = try decode(url)
         d.id = UUID() // Import is a new project, never an overwrite.
-        d.version = 12; d.storageRevision = 0; d.modified = Date()
+        d.version = 13; d.storageRevision = 0; d.modified = Date()
         return d
     }
     func exportProject(_ document: DrawingDocument) throws -> URL {

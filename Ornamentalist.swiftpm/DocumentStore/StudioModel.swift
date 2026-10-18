@@ -311,7 +311,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 12
+            after.layers[index].raster = raster; after.version = 13
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -359,7 +359,7 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.layers[index].raster?.placement = p; after.version = 12
+            after.layers[index].raster?.placement = p; after.version = 13
             do {
                 try after.validate()
                 if before.layers != after.layers {
@@ -496,7 +496,8 @@ final class StudioModel: ObservableObject {
         editInputBrush { $0.stabilizationEnabled = enabled }
     }
     func setPenResponse(adaptive: Bool? = nil, curve: Double? = nil, minimum: Double? = nil,
-                        start: Double? = nil, end: Double? = nil, tilt: Double? = nil) {
+                        start: Double? = nil, end: Double? = nil, tilt: Double? = nil,
+                        softness: Double? = nil, falloff: Double? = nil) {
         guard canEdit, !isDrawing, document != nil else { return }
         var brush = inputBrush
         if let adaptive { brush.adaptiveStabilization = adaptive }
@@ -505,11 +506,13 @@ final class StudioModel: ObservableObject {
         if let start, start.isFinite { brush.taperStart = max(0, min(2, start)) }
         if let end, end.isFinite { brush.taperEnd = max(0, min(2, end)) }
         if let tilt, tilt.isFinite { brush.tiltShading = max(0, min(1, tilt)) }
+        if let softness, softness.isFinite { brush.edgeSoftness = max(0, min(1, softness)) }
+        if let falloff, falloff.isFinite { brush.falloff = max(0, min(1, falloff)) }
         if tool == .eraser { eraserBrush = brush; rememberEraser() }
         else { document?.brush = brush; changed() }
     }
     private func changed() {
-        document?.version = 12; document?.modified = Date()
+        document?.version = 13; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"

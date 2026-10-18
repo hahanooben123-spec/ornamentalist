@@ -2,6 +2,32 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class BrushTests: XCTestCase {
+    func testFalloffFollowsDistanceAcrossInputBatchesAndStopsEmittingDabs() throws {
+        var brush = BrushPreset.dots.makeBrush(); brush.width = 4; brush.spacing = 2; brush.falloff = 0.5
+        let id = UUID()
+        let sparse = InkStroke(id: id, brush: brush, samples: [sample(0), sample(120, time: 2)])
+        let dense = InkStroke(id: id, brush: brush, samples: (0...120).map { sample(Double($0), time: Double($0) + 1) })
+        let a = BrushGeometry.dabs(sparse), b = BrushGeometry.dabs(dense)
+        XCTAssertEqual(a, b); XCTAssertEqual(a.count, 5)
+        XCTAssertEqual(a.first!.opacity, 1); XCTAssertEqual(a.last!.opacity, 0)
+        XCTAssertEqual(a[2].opacity, 0.5)
+        XCTAssertEqual(a.last!.center.x, 32)
+        let restored = try JSONDecoder().decode(InkStroke.self, from: JSONEncoder().encode(dense))
+        XCTAssertEqual(BrushGeometry.mesh(restored), BrushGeometry.mesh(dense))
+        XCTAssertEqual(BrushGeometry.mesh(dense).count, 30)
+    }
+    func testEdgeSoftnessAndFalloffValidateAndPreserveLegacyDefaults() throws {
+        XCTAssertEqual(BrushGeometry.coverage(radius: 0.5, softness: 0.25), 1)
+        XCTAssertEqual(BrushGeometry.coverage(radius: 0.875, softness: 0.25), 0.5)
+        XCTAssertEqual(BrushGeometry.coverage(radius: 1, softness: 0.25), 0)
+        var brush = BrushPreset.softShader.makeBrush()
+        XCTAssertEqual(brush.effectiveSoftness, 1); XCTAssertEqual(brush.falloff, 0)
+        brush.edgeSoftness = 0.3; brush.falloff = 0.8
+        let restored = try JSONDecoder().decode(InkBrush.self, from: JSONEncoder().encode(brush))
+        XCTAssertEqual(restored, brush)
+        brush.falloff = .nan; XCTAssertFalse(brush.isValid)
+        brush.falloff = 0; brush.edgeSoftness = .nan; XCTAssertFalse(brush.isValid)
+    }
     func testSoftOpacityBuildsGraduallyAndLegacyDabsKeepTheirOpacity() throws {
         for preset in [BrushPreset.softShader, .airbrush] {
             var brush = preset.makeBrush(), last = -1.0
@@ -300,7 +326,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 12); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 13); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }

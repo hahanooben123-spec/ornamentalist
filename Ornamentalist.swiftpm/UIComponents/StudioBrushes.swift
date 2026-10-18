@@ -67,6 +67,16 @@ struct StudioBrushesView: View {
             }
             if brush.usesStamps {
                 VStack(alignment: .leading, spacing: 8) {
+                    valueLabel("Edge softness", value: "\(Int(brush.effectiveSoftness * 100))%")
+                    Slider(value: Binding(get: { brush.effectiveSoftness }, set: { model.setPenResponse(softness: $0) }), in: 0...1)
+                        .accessibilityLabel("Brush edge softness")
+                    valueLabel("Stroke falloff", value: brush.falloff == 0 ? "Off" : "\(Int(brush.falloff * 100))%")
+                    Slider(value: Binding(get: { brush.falloff }, set: { model.setPenResponse(falloff: $0) }), in: 0...1)
+                        .accessibilityLabel("Brush stroke falloff")
+                    Text("Softness feathers each mark. Falloff fades a stroke as you draw; higher values fade sooner. Lift Pencil to start at full strength again.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 8) {
                     valueLabel("Spacing", value: "\(Int((brush.spacing * 100).rounded()))%")
                     Slider(value: Binding(get: { brush.spacing }, set: { model.setSpacing($0) }), in: 0.06...4)
                         .accessibilityLabel("Brush spacing")

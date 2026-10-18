@@ -128,7 +128,7 @@ final class EditingToolsTests: XCTestCase {
         let file = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: file) }
         let imported = try await repository.importProject(at: file)
-        XCTAssertEqual(imported.version, 12); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 13); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(imported.strokes, d.strokes)
     }
 }

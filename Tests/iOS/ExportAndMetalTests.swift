@@ -5,6 +5,36 @@ import UIKit
 
 final class ExportAndMetalTests: XCTestCase {
     @MainActor
+    func testDotFalloffAndSoftEdgesMatchPNGForInkAndEraser() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
+        for operation in [StrokeOperation.ink, .erase] {
+            var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+            document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+            var brush = BrushPreset.dots.makeBrush()
+            brush.width = 16; brush.spacing = 2; brush.falloff = 0.5; brush.edgeSoftness = 0.5; brush.tiltShading = 0
+            let samples = [20.0, 116].enumerated().map { i, x in
+                StrokeSample(point: Point(x: x, y: 64), pressure: 1, altitude: .pi / 2, azimuth: 0, time: Double(i))
+            }
+            let stroke = InkStroke(brush: brush, symmetry: document.symmetry, samples: samples, operation: operation)
+            if operation == .erase {
+                var p = samples[0]; p.point = Point(x: 64, y: 64)
+                document.strokes.append(InkStroke(brush: InkBrush(width: 160), symmetry: document.symmetry, samples: [p]))
+            }
+            document.strokes.append(stroke)
+            let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+            try await renderer.synchronize(document.strokes)
+            let pixels = try await renderer.renderOffscreen(document: document, viewport: Viewport(), width: 256, height: 256)
+            let image = try XCTUnwrap(UIImage(data: PNGExporter.data(document: document, transparent: false))?.cgImage)
+            for dab in BrushGeometry.dabs(stroke) {
+                let png = try pixel(image, x: Int(dab.center.x), y: 64)
+                let expected = 255 * (operation == .ink ? 1 - dab.opacity : dab.opacity)
+                XCTAssertEqual(Double(png[0]), expected, accuracy: 3)
+                let x = Int((dab.center.x - 64) * 1.84 + 128)
+                XCTAssertEqual(Double(pixels[(128 * 256 + x) * 4 + 2]), Double(png[0]), accuracy: 4)
+            }
+        }
+    }
+    @MainActor
     func testSoftOpacityHasGradualToneInMetalAndPNG() async throws {
         guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
         for preset in [BrushPreset.softShader, .airbrush] {

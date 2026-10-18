@@ -5,7 +5,10 @@ import Foundation
 struct BrushVertex: Equatable, Sendable {
     var point: Point
     var local = Point.zero
-    init(_ point: Point, local: Point = .zero) { self.point = point; self.local = local }
+    var opacity = 1.0
+    init(_ point: Point, local: Point = .zero, opacity: Double = 1) {
+        self.point = point; self.local = local; self.opacity = opacity
+    }
 }
 
 struct BrushDab: Equatable, Sendable {
@@ -13,13 +16,14 @@ struct BrushDab: Equatable, Sendable {
     var radius: Double
     var aspect = 1.0
     var angle = 0.0
+    var opacity = 1.0
     func point(_ local: Point) -> Point {
         center + Matrix.rotation(angle).apply(Point(x: local.x * radius, y: local.y * radius * aspect))
     }
     var vertices: [BrushVertex] {
         let a = Point(x: -1, y: -1), b = Point(x: 1, y: -1)
         let c = Point(x: 1, y: 1), d = Point(x: -1, y: 1)
-        return [a, b, c, a, c, d].map { BrushVertex(point($0), local: $0) }
+        return [a, b, c, a, c, d].map { BrushVertex(point($0), local: $0, opacity: opacity) }
     }
 }
 
@@ -29,6 +33,7 @@ struct BrushStampState: Sendable {
     private var previous: StrokeSample?
     private var distanceToNext = 0.0
     private var index: UInt64 = 0
+    private var traveled = 0.0
     private let seed: UInt64
     init(id: UUID) {
         seed = id.uuidString.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
@@ -42,7 +47,7 @@ struct BrushStampState: Sendable {
     static func dabsPerStamp(_ brush: InkBrush) -> Int {
         brush.preset.scattered ? max(1, Int((brush.density * 20).rounded())) : 1
     }
-    private func dabs(_ sample: StrokeSample, brush: InkBrush, ordinal: UInt64) -> [BrushDab] {
+    private func dabs(_ sample: StrokeSample, brush: InkBrush, ordinal: UInt64, distance: Double) -> [BrushDab] {
         let radius = brush.radius(pressure: sample.pressure)
         let tilt = brush.tiltShading * max(0, min(1, 1 - sample.altitude / (.pi / 2)))
         let spreadScale = 1 + tilt * 0.8
@@ -50,7 +55,8 @@ struct BrushStampState: Sendable {
         if !brush.preset.scattered {
             return [BrushDab(center: sample.point, radius: radius * spreadScale,
                              aspect: (brush.preset == .flatMarker ? 0.28 : 1) / (spreadScale * spreadScale),
-                             angle: tilt > 0 ? tiltAngle : (brush.preset == .flatMarker ? -.pi / 4 : 0))]
+                             angle: tilt > 0 ? tiltAngle : (brush.preset == .flatMarker ? -.pi / 4 : 0),
+                             opacity: brush.falloffOpacity(distance: distance))]
         }
         return (0..<Self.dabsPerStamp(brush)).map { dot in
             let key = ordinal &* 32 &+ UInt64(dot)
@@ -69,14 +75,16 @@ struct BrushStampState: Sendable {
             }
             return BrushDab(center: center, radius: max(0.28, radius * base * (0.65 + random(key, 3) * 0.7)),
                             aspect: brush.preset == .hatching ? 0.12 : 1,
-                            angle: brush.preset == .hatching ? -.pi / 4 : 0)
+                            angle: brush.preset == .hatching ? -.pi / 4 : 0,
+                            opacity: brush.falloffOpacity(distance: distance))
         }
     }
     /// Price before allocating. A malformed long jump cannot allocate an
     /// unbounded mesh on the touch thread or during document validation.
     func stampCount(to sample: StrokeSample, brush: InkBrush) -> Int {
         guard let previous else { return 1 }
-        let length = (sample.point - previous.point).length
+        guard traveled < brush.falloffLength else { return 0 }
+        let length = min((sample.point - previous.point).length, brush.falloffLength - traveled)
         guard length > 0.000001, length + 0.000001 >= distanceToNext else { return 0 }
         let count = floor((length + 0.000001 - distanceToNext) / max(0.25, brush.width * brush.spacing)) + 1
         return Int(min(Double(DrawingLimits.strokeVertices), max(0, count)))
@@ -96,13 +104,15 @@ struct BrushStampState: Sendable {
                     at.altitude = previous.altitude + (sample.altitude - previous.altitude) * t
                     let turn = atan2(sin(sample.azimuth - previous.azimuth), cos(sample.azimuth - previous.azimuth))
                     at.azimuth = previous.azimuth + turn * t
-                    if emit { result += dabs(at, brush: brush, ordinal: index) }
+                    if emit { result += dabs(at, brush: brush, ordinal: index,
+                                            distance: traveled + distanceToNext + Double(i) * step) }
                     index &+= 1
                 }
                 distanceToNext = max(0, distanceToNext + Double(count) * step - length)
+                traveled += length
             }
         } else {
-            if emit { result = dabs(sample, brush: brush, ordinal: index) }
+            if emit { result = dabs(sample, brush: brush, ordinal: index, distance: 0) }
             index &+= 1; distanceToNext = step
         }
         self.previous = sample
@@ -142,7 +152,7 @@ enum BrushGeometry {
     static func coverage(radius: Double, softness: Double) -> Double {
         guard radius <= 1 else { return 0 }
         guard softness > 0 else { return 1 }
-        let t = max(0, min(1, radius))
+        let t = max(0, min(1, (radius - (1 - softness)) / softness))
         return 1 - t * t * (3 - 2 * t)
     }
 }

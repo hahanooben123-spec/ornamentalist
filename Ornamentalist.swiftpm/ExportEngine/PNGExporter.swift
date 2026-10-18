@@ -90,7 +90,7 @@ enum PNGExporter {
             let locations: [CGFloat] = (0...32).map { CGFloat($0) / 32 }
             let colors = locations.map { radius in
                 UIColor(red: ink.red, green: ink.green, blue: ink.blue,
-                        alpha: stroke.brush.dabOpacity * BrushGeometry.coverage(radius: Double(radius), softness: 1)).cgColor
+                        alpha: stroke.brush.dabOpacity * BrushGeometry.coverage(radius: Double(radius), softness: stroke.brush.effectiveSoftness)).cgColor
             }
             let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations)
             let dabs = BrushGeometry.dabs(stroke)
@@ -100,10 +100,11 @@ enum PNGExporter {
                                                       tx: matrix.tx, ty: matrix.ty))
                 for dab in dabs where dab.radius > 0 {
                     context.saveGState()
+                    if dab.opacity < 1 { context.setAlpha(CGFloat(dab.opacity)) }
                     context.translateBy(x: dab.center.x, y: dab.center.y)
                     context.rotate(by: dab.angle)
                     context.scaleBy(x: dab.radius, y: dab.radius * dab.aspect)
-                    if stroke.brush.preset.softness > 0 {
+                    if stroke.brush.effectiveSoftness > 0 {
                         if let gradient {
                             context.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0,
                                                        endCenter: .zero, endRadius: 1, options: [])

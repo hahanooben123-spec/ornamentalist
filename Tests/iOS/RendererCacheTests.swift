@@ -10,6 +10,7 @@ final class RendererCacheTests: XCTestCase {
         document.symmetry = SymmetryConfiguration(repetitions: 2, center: Point(x: 64, y: 64), mirror: true)
         var brush = BrushPreset.dotShader.makeBrush()
         brush.width = 20; brush.density = 1; brush.spacing = 0.06; brush.stabilization = 0
+        brush.edgeSoftness = 0.65; brush.falloff = 0.6
         let compact = try MetalCanvasRenderer(view: MTKView(frame: .zero))
         let expanded = try MetalCanvasRenderer(view: MTKView(frame: .zero), compactStamps: false)
         var session = StrokeSession(brush: brush, symmetry: document.symmetry, existingSamples: 0, existingVertices: 0)

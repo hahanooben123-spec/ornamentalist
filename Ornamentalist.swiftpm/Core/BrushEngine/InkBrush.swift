@@ -17,9 +17,19 @@ struct InkBrush: Codable, Equatable, Sendable {
     var taperStart = 0.0
     var taperEnd = 0.0
     var tiltShading = 0.0
+    var edgeSoftness: Double?
+    var falloff = 0.0
+    var effectiveSoftness: Double { edgeSoftness ?? preset.softness }
+    var falloffLength: Double { falloff > 0 ? width * 2 / (falloff * falloff) : .infinity }
+    func falloffOpacity(distance: Double) -> Double {
+        guard falloff > 0 else { return 1 }
+        let t = max(0, min(1, distance / falloffLength))
+        return 1 - t * t * (3 - 2 * t)
+    }
     var usesStamps: Bool { preset != .fineliner && preset != .brushPen }
     var isValid: Bool {
-        [pressureCurve, minimumSize, taperStart, taperEnd, tiltShading].allSatisfy { $0.isFinite } &&
+        [pressureCurve, minimumSize, taperStart, taperEnd, tiltShading, falloff, effectiveSoftness].allSatisfy { $0.isFinite } &&
+        (0...1).contains(falloff) && (0...1).contains(effectiveSoftness) &&
         (0.2...3).contains(pressureCurve) && (0...1).contains(minimumSize) &&
         (0...2).contains(taperStart) && (0...2).contains(taperEnd) && (0...1).contains(tiltShading) &&
         width.isFinite && (0.5...160).contains(width) && stabilization.isFinite &&
@@ -64,6 +74,8 @@ extension InkBrush {
         taperStart = try c.decodeIfPresent(Double.self, forKey: .taperStart) ?? 0
         taperEnd = try c.decodeIfPresent(Double.self, forKey: .taperEnd) ?? 0
         tiltShading = try c.decodeIfPresent(Double.self, forKey: .tiltShading) ?? 0
+        edgeSoftness = try c.decodeIfPresent(Double.self, forKey: .edgeSoftness)
+        falloff = try c.decodeIfPresent(Double.self, forKey: .falloff) ?? 0
     }
 }
 

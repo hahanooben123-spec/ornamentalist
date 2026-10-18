@@ -1,4 +1,4 @@
-# Pen response — 0.9.4
+# Pen response — 0.9.7
 
 Brush settings now include adaptive stabilization, pressure curve and minimum size.
 Solid ink supports start/end taper. Stamped brushes support Pencil tilt shading.
@@ -65,7 +65,23 @@ a square response for finer low-end adjustment, display tenths of a percent, and
 allow 0%. All eraser brush presets are available, with independent remembered
 size, opacity, pressure, stabilization, taper, tilt, density and spacing settings.
 
-Document format 12 stores the soft-opacity behavior. Older formats
+Version 0.9.7 adds Edge softness (0–100%) and Stroke falloff (0–100%) for
+stamped brushes, including shading, dots and eraser brushes. Softness controls
+the feathered part of each dab. Falloff starts at full strength and fades with
+stroke distance; higher settings finish sooner. At zero it is disabled. Lifting
+Pencil resets the fade. Geometry stops emitting after the fade length, so an
+invisible tail does not keep filling the geometry budget. Mirror duplicates the
+same faded geometry. Settings persist per brush. Existing strokes retain their
+previous softness and have no distance fade.
+
+Faded compact dabs still use 32 bytes: three parallelogram corners and an opacity
+value; Metal reconstructs the fourth corner. Non-faded dabs retain four corners.
+Reconstruction may differ by floating-point rounding from expanded corners.
+Core tests cover input batching, distance-based opacity, validation and reopening;
+native tests compare expanded/compact live and committed drawing plus PNG for
+both ink and erasing. These checks require Apple CI, not Windows grammar checks.
+
+Document format 13 stores softness and distance falloff. Older formats
 remain readable; older app builds cannot read drawings saved by this version.
 
 Local checks: Swift grammar, build YAML and byte-for-byte source packaging.
