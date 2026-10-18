@@ -5,6 +5,31 @@ import MetalKit
 
 final class EditingToolsNativeTests: XCTestCase {
     @MainActor
+    func testImagePlacementMatchesMetalAndPNGAndInvalidatesRasterCache() async throws {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 32), format: format).image { output in
+            UIColor.red.setFill(); output.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+            UIColor.blue.setFill(); output.fill(CGRect(x: 32, y: 0, width: 32, height: 32))
+        }
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        d.layers[0].raster = LayerRaster(png: try XCTUnwrap(image.pngData()), width: 64, height: 32,
+            placement: RasterPlacement(center: Point(x: 64, y: 64), rotation: .pi / 2))
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(d.strokes, layers: d.layers)
+        for flipped in [false, true] {
+            d.layers[0].raster?.placement?.flipHorizontal = flipped
+            let pixels = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+            let i = screenIndex(64, 44)
+            let png = try pixel(d, x: 64, y: 44)
+            XCTAssertEqual(Double(pixels[i + 2]), flipped ? 0 : 255, accuracy: 3)
+            XCTAssertEqual(Double(pixels[i]), flipped ? 255 : 0, accuracy: 3)
+            XCTAssertEqual(Double(png[0]), flipped ? 0 : 255, accuracy: 3)
+            XCTAssertEqual(Double(png[2]), flipped ? 255 : 0, accuracy: 3)
+        }
+    }
+
+    @MainActor
     func testTranslucentFinelinerMatchesPNGAndLiveCommit() async throws {
         var d = fixture()
         d.strokes[1].brush.opacity = 0.35

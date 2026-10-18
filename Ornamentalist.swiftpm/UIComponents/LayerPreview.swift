@@ -3,6 +3,7 @@ import SwiftUI
 private struct LayerPreviewKey: Hashable {
     let layerID: UUID
     let rasterID: UUID?
+    let placement: RasterPlacement?
     let strokes: [UUID]
 }
 
@@ -22,7 +23,7 @@ struct LayerPreview: View {
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(.secondary.opacity(0.25)))
             .accessibilityHidden(true)
-            .task(id: LayerPreviewKey(layerID: layer.id, rasterID: layer.raster?.id,
+            .task(id: LayerPreviewKey(layerID: layer.id, rasterID: layer.raster?.id, placement: layer.raster?.placement,
                                       strokes: strokeIDs)) {
                 image = nil
                 do {

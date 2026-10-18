@@ -2,6 +2,31 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class EditingToolsTests: XCTestCase {
+    func testImagePlacementRoundTripSharedImageAndLegacyMigration() throws {
+        var d = DrawingDocument()
+        var image = raster()
+        image.placement = RasterPlacement(center: Point(x: 900, y: 700), scale: 0.5, rotation: .pi / 2, flipHorizontal: true)
+        d.layers[0].raster = image
+        let corners = image.corners(canvas: d.size)
+        XCTAssertEqual((corners[1] - corners[0]).length, 1024, accuracy: 0.000001)
+        XCTAssertEqual((corners[2] - corners[1]).length, 1024, accuracy: 0.000001)
+        let center = image.matrix(canvas: d.size).apply(Point(x: 1024, y: 1024))
+        XCTAssertEqual(center.x, 900, accuracy: 0.000001)
+        XCTAssertEqual(center.y, 700, accuracy: 0.000001)
+        _ = try LayerManager.duplicate(d.activeLayerID, in: &d)
+        d.layers[1].raster?.placement?.center.x += 100
+        try d.validate()
+        let decoded = try JSONDecoder().decode(DrawingDocument.self, from: JSONEncoder().encode(d))
+        XCTAssertEqual(d, decoded)
+        var old = DrawingDocument(); old.version = 7; old.layers[0].raster = raster()
+        try old.validate()
+        XCTAssertEqual(old.layers[0].raster?.corners(canvas: old.size), [.zero, Point(x: 2048, y: 0), Point(x: 2048, y: 2048), Point(x: 0, y: 2048)])
+        old.layers[0].raster?.placement = image.placement
+        XCTAssertThrowsError(try old.validate())
+        d.layers[0].raster?.placement?.scale = .nan
+        XCTAssertThrowsError(try d.validate())
+    }
+
     func testIncrementalStrokeBudgetMatchesFullReplayForEveryBrush() throws {
         for preset in BrushPreset.allCases {
             var brush = preset.makeBrush(); brush.width = 10; brush.pressureEnabled = true
@@ -103,7 +128,7 @@ final class EditingToolsTests: XCTestCase {
         let file = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: file) }
         let imported = try await repository.importProject(at: file)
-        XCTAssertEqual(imported.version, 7); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 8); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(imported.strokes, d.strokes)
     }
 }

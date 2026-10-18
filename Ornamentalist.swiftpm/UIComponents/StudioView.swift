@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import PhotosUI
 
 private struct ShareFile: Identifiable {
     let id = UUID()
@@ -15,6 +16,9 @@ struct StudioView: View {
     @State private var shareFile: ShareFile?
     @State private var exporting = false
     @State private var importing = false
+    @State private var importingImage = false
+    @State private var photoPicker = false
+    @State private var photoItem: PhotosPickerItem?
     @State private var creating = false
     @State private var renameTarget: ProjectSummary?
     @State private var projectName = ""
@@ -39,7 +43,7 @@ struct StudioView: View {
         ZStack {
             if let document = model.document { editor(document) }
             else {
-                StudioGallery(model: model, create: { creating = true }, importProject: { importing = true }) { project in
+                StudioGallery(model: model, create: { creating = true }, importProject: { importingImage = false; importing = true }) { project in
                     projectName = project.title; renameTarget = project
                 }
             }
@@ -50,10 +54,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.8.8: studio visible; loading gallery")
+            print("Ornamentalist 0.8.9: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.8.8: gallery loading finished")
+            print("Ornamentalist 0.8.9: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -70,10 +74,25 @@ struct StudioView: View {
         .sheet(isPresented: $creating) {
             NewDrawingSheet { title in Task { await model.create(title: title) } }
         }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+        .fileImporter(isPresented: $importing, allowedContentTypes: importingImage ? [.png, .jpeg] : [.json]) { result in
             switch result {
-            case .success(let url): Task { await model.importProject(url) }
+            case .success(let url):
+                let image = importingImage
+                Task { if image { await model.insertImageFile(url) } else { await model.importProject(url) } }
             case .failure(let error): model.error = error.localizedDescription
+            }
+        }
+        .photosPicker(isPresented: $photoPicker, selection: $photoItem, matching: .images)
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            let targetID = model.document?.id
+            Task {
+                defer { photoItem = nil }
+                do {
+                    if let data = try await item.loadTransferable(type: Data.self), model.document?.id == targetID {
+                        await model.insertImage(data)
+                    }
+                } catch { model.error = error.localizedDescription }
             }
         }
         .alert("Drawing performance", isPresented: Binding(get: { performanceText != nil }, set: { if !$0 { performanceText = nil } })) {
@@ -127,6 +146,25 @@ struct StudioView: View {
                         .accessibilityIdentifier("leaveZen")
                 }
             }
+            .overlay(alignment: .bottom) {
+                if model.isTransforming {
+                    HStack(spacing: 8) {
+                        Button("Cancel") { model.finishImageTransform(apply: false) }
+                            .accessibilityIdentifier("cancelImageTransform")
+                        Spacer(minLength: 4)
+                        Button { model.flipImage(horizontal: true) } label: { StudioIcon(symbol: "arrow.left.and.right") }
+                            .accessibilityLabel("Flip image horizontally")
+                        Button { model.flipImage(horizontal: false) } label: { StudioIcon(symbol: "arrow.up.and.down") }
+                            .accessibilityLabel("Flip image vertically")
+                        Button { model.rotateImage(by: .pi / 2) } label: { StudioIcon(symbol: "rotate.right") }
+                            .accessibilityLabel("Rotate image 90 degrees")
+                        Spacer(minLength: 4)
+                        Button("Apply") { model.finishImageTransform(apply: true) }.fontWeight(.semibold)
+                            .accessibilityIdentifier("applyImageTransform")
+                    }.padding(12).studioSurface().padding(16)
+                        .disabled(model.busy || model.isPreparing)
+                }
+            }
             .overlay {
                 if model.tool == .eyedropper {
                     Label("Tap artwork to pick a color", systemImage: "eyedropper")
@@ -150,7 +188,7 @@ struct StudioView: View {
 
     private var editorRails: some View {
         GeometryReader { geometry in
-            if !zen {
+            if !zen && !model.isTransforming {
                 HStack(spacing: 0) {
                     VStack(spacing: 6) {
                         StudioBrushRail(model: model, sliderHeight: min(180, max(60, (geometry.size.height - 350) / 2)))
@@ -229,6 +267,11 @@ struct StudioView: View {
                     StudioPanelView(panel: .colors, model: model, appearance: $appearance) {}.tint(StudioStyle.copper)
                 }
             Menu {
+                Button("Insert photo", systemImage: "photo.on.rectangle") { panel = nil; photoPicker = true }
+                Button("Insert image file", systemImage: "doc.badge.plus") { panel = nil; importingImage = true; importing = true }
+                Button("Transform image", systemImage: "arrow.up.left.and.arrow.down.right") { panel = nil; model.beginImageTransform() }
+                    .disabled(document.activeLayer?.raster == nil || !document.canDrawOnActiveLayer)
+                Divider()
                 Button("Save drawing", systemImage: "externaldrive") { Task { await model.saveNow() } }
                 Divider()
                 Button("PNG · White paper", systemImage: "photo") { exportPNG(transparent: false) }

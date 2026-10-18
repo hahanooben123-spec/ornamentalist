@@ -5,6 +5,37 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testImportedImageTransformCancelApplyUndoAndReopen() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 160, height: 80), format: format).image { output in
+            UIColor.red.setFill(); output.fill(CGRect(x: 0, y: 0, width: 160, height: 80))
+        }
+        let repository = DocumentRepository(directory: folder)
+        let model = StudioModel(repository: repository)
+        await model.create(); await model.insertImage(try XCTUnwrap(image.pngData()))
+        XCTAssertTrue(model.isTransforming); XCTAssertFalse(model.canDraw)
+        XCTAssertEqual(model.document?.layers.count, 2)
+        let original = try XCTUnwrap(model.document?.activeLayer?.raster)
+        model.moveImage(by: Point(x: 100, y: 30)); model.scaleImage(by: 0.5); model.rotateImage(by: .pi / 2)
+        XCTAssertEqual(model.document?.activeLayer?.raster, original)
+        XCTAssertNotEqual(model.displayDocument?.activeLayer?.raster?.placement, original.placement)
+        model.finishImageTransform(apply: false)
+        XCTAssertEqual(model.document?.activeLayer?.raster, original)
+        model.beginImageTransform(); model.moveImage(by: Point(x: 100, y: 30))
+        model.scaleImage(by: 0.5); model.rotateImage(by: .pi / 2); model.flipImage(horizontal: true)
+        model.finishImageTransform(apply: true)
+        let transformed = try XCTUnwrap(model.document?.activeLayer?.raster)
+        XCTAssertEqual(transformed.png, original.png)
+        XCTAssertNotEqual(transformed.placement, original.placement)
+        model.undo(); XCTAssertEqual(model.document?.activeLayer?.raster, original)
+        model.redo(); XCTAssertEqual(model.document?.activeLayer?.raster, transformed)
+        let saved = await model.saveNow(); XCTAssertTrue(saved)
+        let (reopened, _) = try await repository.open(try XCTUnwrap(model.document?.id))
+        XCTAssertEqual(reopened.activeLayer?.raster, transformed)
+    }
+
     func testLogoLookupWithoutResourcesReturnsNilInsteadOfCrashing() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".bundle")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

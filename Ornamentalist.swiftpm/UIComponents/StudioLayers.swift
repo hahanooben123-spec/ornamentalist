@@ -85,6 +85,11 @@ struct StudioLayersView: View {
                 .accessibilityValue(layer.isLocked ? "Locked" : "Unlocked")
                 .accessibilityIdentifier("lock-\(layer.name)")
             Menu {
+                Button("Transform image", systemImage: "arrow.up.left.and.arrow.down.right") {
+                    model.selectLayer(layer.id)
+                    if let onMerge { onMerge() } else { dismiss() }
+                    model.beginImageTransform()
+                }.disabled(layer.raster == nil || !layer.isVisible || layer.isLocked)
                 Button("Duplicate layer", systemImage: "square.on.square") { model.duplicateLayer(layer.id) }
                     .disabled(document.layers.count >= LayerManager.maximumLayers)
                 Button("Merge down", systemImage: "arrow.down.square") {

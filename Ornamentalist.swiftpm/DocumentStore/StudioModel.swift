@@ -8,7 +8,16 @@ final class StudioModel: ObservableObject {
     var redoStack: [InkStroke] { history.redoStrokes }
     var canUndo: Bool { document.map { history.canUndo(in: $0) } ?? false }
     var canRedo: Bool { history.canRedo }
-    var canDraw: Bool { canEdit && (document?.canDrawOnActiveLayer ?? false) }
+    var canDraw: Bool { canEdit && !isTransforming && (document?.canDrawOnActiveLayer ?? false) }
+    @Published private(set) var imageTransform: RasterPlacement?
+    private var transformLayerID: UUID?
+    var isTransforming: Bool { imageTransform != nil }
+    var displayDocument: DrawingDocument? {
+        guard var d = document, let placement = imageTransform,
+              let index = d.layers.firstIndex(where: { $0.id == transformLayerID }) else { return document }
+        d.layers[index].raster?.placement = placement
+        return d
+    }
     @Published private(set) var saveStatus = "Saved on iPad"
     @Published private(set) var isDrawing = false
     @Published private(set) var busy = false
@@ -38,7 +47,7 @@ final class StudioModel: ObservableObject {
     @Published var resetViewToken = UUID()
     @Published private(set) var tool = StudioTool.brush
     @Published private(set) var eraserBrush = InkBrush(width: 32, stabilization: 0.15)
-    var canEdit: Bool { !busy && !isPreparing }
+    var canEdit: Bool { !busy && !isPreparing && !isTransforming }
     let repository: DocumentRepository
     private let exportService = ExportService()
     // Canvas exposes confirmed ink only; no predicted points enter a checkpoint.
@@ -112,6 +121,7 @@ final class StudioModel: ObservableObject {
         catch { self.error = error.localizedDescription }
     }
     private func adopt(_ d: DrawingDocument, recovered: Bool) {
+        imageTransform = nil; transformLayerID = nil
         thumbnailTask?.cancel(); thumbnailTask = nil; thumbnailRequest = UUID()
         opacityEditBefore = nil
         tool = .brush
@@ -253,6 +263,76 @@ final class StudioModel: ObservableObject {
     func layerThumbnail(_ snapshot: DrawingDocument, id: UUID) async throws -> Data {
         try await exportService.layerThumbnail(snapshot, id: id)
     }
+    func insertImage(_ data: Data) async {
+        guard canEdit, !isDrawing, !isTransforming, let before = document else { return }
+        busy = true
+        do {
+            let raster = try await exportService.importedImage(data, canvas: before.size)
+            guard document?.id == before.id else { busy = false; return }
+            var after = before
+            guard LayerManager.add(in: &after), let index = after.layers.firstIndex(where: { $0.id == after.activeLayerID }) else {
+                throw DocumentError.memoryLimit
+            }
+            after.layers[index].name = "Image \(after.layers.count)"
+            after.layers[index].raster = raster; after.version = 8
+            try after.validate()
+            history.recordLayerChange(from: before, to: after)
+            document = after; changed(); busy = false
+            beginImageTransform()
+        } catch { busy = false; self.error = error.localizedDescription }
+    }
+    func insertImageFile(_ url: URL) async {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard ((attributes[.size] as? NSNumber)?.intValue ?? Int.max) <= DrawingLimits.encodedBytes else { throw DocumentError.oversized }
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            await insertImage(data)
+        } catch { self.error = error.localizedDescription }
+    }
+    func beginImageTransform() {
+        guard canEdit, !isDrawing, let d = document, let layer = d.activeLayer,
+              layer.isVisible, !layer.isLocked, let raster = layer.raster else { return }
+        finishLayerOpacityEdit()
+        transformLayerID = layer.id
+        imageTransform = raster.placement ?? RasterPlacement(center: d.size * 0.5)
+        generation += 1
+    }
+    func moveImage(by delta: Point) {
+        guard var p = imageTransform, delta.isFinite else { return }
+        p.center = p.center + delta
+        if p.isValid { imageTransform = p; generation += 1 }
+    }
+    func scaleImage(by factor: Double) {
+        guard var p = imageTransform, factor.isFinite, factor > 0 else { return }
+        p.scale = min(64, max(0.01, p.scale * factor))
+        imageTransform = p; generation += 1
+    }
+    func rotateImage(by angle: Double) {
+        guard var p = imageTransform, angle.isFinite else { return }
+        p.rotation = (p.rotation + angle).truncatingRemainder(dividingBy: .pi * 2)
+        imageTransform = p; generation += 1
+    }
+    func flipImage(horizontal: Bool) {
+        guard var p = imageTransform else { return }
+        if horizontal { p.flipHorizontal.toggle() } else { p.flipVertical.toggle() }
+        imageTransform = p; generation += 1
+    }
+    func finishImageTransform(apply: Bool) {
+        guard let p = imageTransform, let id = transformLayerID else { return }
+        if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
+            after.layers[index].raster?.placement = p; after.version = 8
+            do {
+                try after.validate()
+                if before.layers != after.layers {
+                    history.recordLayerChange(from: before, to: after)
+                    document = after; changed()
+                }
+            } catch { error = error.localizedDescription }
+        }
+        imageTransform = nil; transformLayerID = nil; generation += 1
+    }
     func selectTool(_ tool: StudioTool) {
         guard canEdit, !isDrawing, document != nil else { return }
         self.tool = tool
@@ -356,7 +436,7 @@ final class StudioModel: ObservableObject {
         document?.brush.stabilization = max(0, min(0.85, amount)); changed()
     }
     private func changed() {
-        document?.version = 7; document?.modified = Date()
+        document?.version = 8; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"
@@ -417,7 +497,7 @@ final class StudioModel: ObservableObject {
     }
     func close() async {
         finishLayerOpacityEdit()
-        guard !busy, !isDrawing, !isPreparing else { return }
+        guard !busy, !isDrawing, !isPreparing, !isTransforming else { return }
         busy = true; defer { busy = false }
         // An autosave may already be in flight. Wait for it without permitting edits.
         while saveRunning { try? await Task.sleep(nanoseconds: 10_000_000) }

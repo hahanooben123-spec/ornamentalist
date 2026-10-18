@@ -44,7 +44,7 @@ extension InkStroke {
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 7
+    var version = 8
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -66,7 +66,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard (1...7).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...8).contains(version) else { throw DocumentError.unsupportedVersion }
         let layerIDs = Set(layers.map(\.id))
         guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
               layerIDs.contains(activeLayerID), layers.allSatisfy({
@@ -78,7 +78,11 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
         var rasters: [UUID: LayerRaster] = [:], rasterPixels = 0, rasterBytes = 0
         for raster in layers.compactMap(\.raster) {
             try raster.validate(canvas: size)
-            if let existing = rasters[raster.id], existing != raster { throw DocumentError.invalidData }
+            guard version >= 8 || raster.placement == nil else { throw DocumentError.invalidData }
+            if let existing = rasters[raster.id],
+               existing.png != raster.png || existing.width != raster.width || existing.height != raster.height {
+                throw DocumentError.invalidData
+            }
             rasters[raster.id] = raster
             rasterPixels += raster.width * raster.height; rasterBytes += raster.png.count
             guard rasterPixels <= LayerRaster.documentPixels, rasterBytes <= LayerRaster.documentBytes else { throw DocumentError.memoryLimit }

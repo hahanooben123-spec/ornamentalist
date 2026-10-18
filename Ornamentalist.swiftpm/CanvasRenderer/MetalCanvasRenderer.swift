@@ -10,6 +10,14 @@ private struct LayerPaintKey: Equatable {
     let id: UUID
     let raster: UUID?
     let strokes: [UUID]
+    var placement: RasterPlacement? = nil
+}
+
+private struct RasterQuad {
+    let raster: UUID
+    let placement: RasterPlacement?
+    let canvas: Point
+    let buffers: [GPUChunk]
 }
 
 private struct LayerCompositeKey: Equatable {
@@ -36,6 +44,7 @@ final class MetalCanvasRenderer {
     private let erasePipeline: MTLRenderPipelineState
     private let rasterPipeline: MTLRenderPipelineState
     private var rasterTextures: [UUID: MTLTexture] = [:]
+    private var rasterQuads: [UUID: RasterQuad] = [:]
     private let singlePipeline: MTLRenderPipelineState
     private let compositePipeline: MTLRenderPipelineState
     private let restoreSamplesPipeline: MTLRenderPipelineState
@@ -100,7 +109,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = (allocatedVertexCount + sealedVertexCount + scratch.count) * MemoryLayout<SIMD4<Float>>.stride
-        return "Ornamentalist 0.8.8\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.8.9\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -206,6 +215,8 @@ final class MetalCanvasRenderer {
         strokes.allSatisfy { cache[$0.id] != nil } && layers.compactMap(\.raster).allSatisfy { rasterTextures[$0.id] != nil }
     }
     func prune(_ strokes: [InkStroke], layers: [DrawingLayer] = []) {
+        let layerIDs = Set(layers.map(\.id))
+        rasterQuads = rasterQuads.filter { layerIDs.contains($0.key) }
         let rasters = Set(layers.compactMap { $0.raster?.id })
         rasterTextures = rasterTextures.filter { rasters.contains($0.key) }
         let ids = Set(strokes.map(\.id))
@@ -372,7 +383,8 @@ final class MetalCanvasRenderer {
                 guard let texture = rasterTextures[raster.id] else { throw DocumentError.graphics }
                 encoder.setRenderPipelineState(rasterPipeline)
                 encoder.setFragmentTexture(texture, index: 0)
-                try encode(paper, symmetry: identity, transform: transform, size: viewSize, canvas: document.size,
+                let quad = try rasterQuad(raster, layerID: layer.id, canvas: document.size)
+                try encode(quad, symmetry: identity, transform: transform, size: viewSize, canvas: document.size,
                            color: SIMD4(1, 1, 1, 1), encoder: encoder)
             }
             for stroke in sceneLayerStrokes[layer.id] ?? [] {
@@ -390,6 +402,16 @@ final class MetalCanvasRenderer {
 
     private func inkColor(_ stroke: InkStroke) -> SIMD4<Float> {
         SIMD4(Float(stroke.color.red), Float(stroke.color.green), Float(stroke.color.blue), Float(stroke.brush.opacity))
+    }
+    private func rasterQuad(_ raster: LayerRaster, layerID: UUID, canvas: Point) throws -> [GPUChunk] {
+        if let existing = rasterQuads[layerID], existing.raster == raster.id,
+           existing.placement == raster.placement, existing.canvas == canvas { return existing.buffers }
+        let p = raster.corners(canvas: canvas)
+        let a = BrushVertex(p[0], local: .zero), b = BrushVertex(p[1], local: Point(x: 1, y: 0))
+        let c = BrushVertex(p[2], local: Point(x: 1, y: 1)), d = BrushVertex(p[3], local: Point(x: 0, y: 1))
+        let buffers = try chunks([a, b, c, a, c, d])
+        rasterQuads[layerID] = RasterQuad(raster: raster.id, placement: raster.placement, canvas: canvas, buffers: buffers)
+        return buffers
     }
 
     private func usesUniformOpacity(_ stroke: InkStroke) -> Bool {
@@ -539,7 +561,7 @@ final class MetalCanvasRenderer {
         sceneLayerStrokes = Dictionary(grouping: document.strokes, by: \.layerID)
         scenePaintKeys = Dictionary(uniqueKeysWithValues: document.layers.map { layer in
             (layer.id, LayerPaintKey(id: layer.id, raster: layer.raster?.id,
-                                    strokes: (sceneLayerStrokes[layer.id] ?? []).map(\.id)))
+                                    strokes: (sceneLayerStrokes[layer.id] ?? []).map(\.id), placement: layer.raster?.placement))
         })
     }
 
@@ -573,7 +595,7 @@ final class MetalCanvasRenderer {
         let target = try activeTexture ?? texture(width: work.width, height: work.height, samples: sampleCount)
         let incremental: Bool
         if let old = activeKey {
-            incremental = old.id == key.id && old.raster == key.raster && old.strokes.count < key.strokes.count &&
+            incremental = old.id == key.id && old.raster == key.raster && old.placement == key.placement && old.strokes.count < key.strokes.count &&
                 Array(key.strokes.prefix(old.strokes.count)) == old.strokes
         } else { incremental = false }
         let pass = try geometryPass(target, load: incremental ? .load : .clear)

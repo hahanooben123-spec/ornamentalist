@@ -45,8 +45,11 @@ enum PNGExporter {
                 do {
                     let image = try rasterImage(raster)
                     context.saveGState()
-                    context.translateBy(x: 0, y: document.size.y); context.scaleBy(x: 1, y: -1)
-                    context.draw(image, in: CGRect(x: 0, y: 0, width: document.size.x, height: document.size.y))
+                    let m = raster.matrix(canvas: document.size)
+                    context.concatenate(CGAffineTransform(a: m.a, b: m.b, c: m.c, d: m.d, tx: m.tx, ty: m.ty))
+                    context.translateBy(x: 0, y: Double(raster.height)); context.scaleBy(x: 1, y: -1)
+                    context.interpolationQuality = .high
+                    context.draw(image, in: CGRect(x: 0, y: 0, width: Double(raster.width), height: Double(raster.height)))
                     context.restoreGState()
                 } catch {
                     context.endTransparencyLayer(); context.restoreGState(); throw error
@@ -149,6 +152,7 @@ actor ExportService {
     }
     private struct Preview {
         let raster: UUID?
+        let placement: RasterPlacement?
         let strokes: [UUID]
         let png: Data
     }
@@ -165,7 +169,8 @@ actor ExportService {
         let identity = PreviewIdentity(document: document.id, layer: id)
         let strokes = document.strokes.filter { $0.layerID == id }
         let ids = strokes.map(\.id)
-        if let preview = layerPreviews[identity], preview.raster == layer.raster?.id, preview.strokes == ids {
+        if let preview = layerPreviews[identity], preview.raster == layer.raster?.id,
+           preview.placement == layer.raster?.placement, preview.strokes == ids {
             return preview.png
         }
         layer.isVisible = true; layer.opacity = 1
@@ -174,7 +179,7 @@ actor ExportService {
         try Task.checkCancellation()
         layerPreviewRenders += 1
         previewOrder.removeAll { $0 == identity }; previewOrder.append(identity)
-        layerPreviews[identity] = Preview(raster: layer.raster?.id, strokes: ids, png: data)
+        layerPreviews[identity] = Preview(raster: layer.raster?.id, placement: layer.raster?.placement, strokes: ids, png: data)
         while previewOrder.count > 32 { layerPreviews.removeValue(forKey: previewOrder.removeFirst()) }
         return data
     }
@@ -198,6 +203,26 @@ actor ExportService {
         let data = try PNGExporter.data(document: document, transparent: false, maximumSide: 512)
         try Task.checkCancellation()
         return data
+    }
+    func importedImage(_ data: Data, canvas: Point) throws -> LayerRaster {
+        guard data.count <= DrawingLimits.encodedBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 2048,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) else { throw DocumentError.invalidData }
+        try Task.checkCancellation()
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { throw DocumentError.graphics }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw DocumentError.graphics }
+        let scale = min(canvas.x / Double(image.width), canvas.y / Double(image.height)) * 0.8
+        let raster = LayerRaster(png: output as Data, width: image.width, height: image.height,
+                                 placement: RasterPlacement(center: canvas * 0.5, scale: min(64, max(0.01, scale))))
+        try raster.validate(canvas: canvas)
+        return raster
     }
     func png(_ document: DrawingDocument, transparent: Bool) throws -> URL {
         let data = try PNGExporter.data(document: document, transparent: transparent)

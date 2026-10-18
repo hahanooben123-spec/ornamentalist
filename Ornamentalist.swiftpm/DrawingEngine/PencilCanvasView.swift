@@ -29,6 +29,11 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private let cursorHalo = CAShapeLayer()
     private var hoverPoint: CGPoint?
     private var cursorCanvasPoint: Point?
+    private let transformOutline = CAShapeLayer()
+    private let transformHandles = CAShapeLayer()
+    private var transformTouch: UITouch?
+    private var transformLastPoint: Point?
+    private var scalingHandle = false
 
     init(model: StudioModel) {
         self.model = model
@@ -50,6 +55,14 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         }
         cursorHalo.strokeColor = UIColor.white.cgColor; cursorHalo.lineWidth = 3
         brushCursor.strokeColor = UIColor.black.withAlphaComponent(0.85).cgColor; brushCursor.lineWidth = 1
+        transformOutline.strokeColor = UIColor.systemBlue.cgColor; transformOutline.fillColor = UIColor.clear.cgColor
+        transformOutline.lineWidth = 1.5
+        transformHandles.strokeColor = UIColor.systemBlue.cgColor; transformHandles.fillColor = UIColor.white.cgColor
+        transformHandles.lineWidth = 2
+        for overlay in [transformOutline, transformHandles] {
+            overlay.actions = ["path": NSNull(), "hidden": NSNull()]
+            layer.addSublayer(overlay)
+        }
         updateBrushCursor()
         do {
             renderer = try MetalCanvasRenderer(view: self)
@@ -88,13 +101,15 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     override func layoutSubviews() {
         super.layoutSubviews()
         updateBrushCursor()
+        updateTransformOutline()
     }
     func synchronize() {
         if resetToken != model.resetViewToken {
             resetToken = model.resetViewToken; viewport = Viewport()
         }
         updateBrushCursor()
-        guard let document = model.document, let renderer else { return }
+        updateTransformOutline()
+        guard let document = model.displayDocument, let renderer else { return }
         let ids = document.strokes.map(\.id)
         let rasters = document.layers.compactMap { $0.raster?.id }
         if ids != synchronizedIDs || rasters != synchronizedRasters {
@@ -137,7 +152,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     func draw(in view: MTKView) {
         // Never warm a layer cache with missing source buffers while uploads run.
-        guard !pendingPreparation, !model.isPreparing, let document = model.document,
+        guard !pendingPreparation, !model.isPreparing, let document = model.displayDocument,
               bounds.width > 0, bounds.height > 0 else { return }
         do {
             try renderer?.draw(view: self, document: document, viewport: viewport,
@@ -161,6 +176,13 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         let fingers = event?.allTouches?.filter { $0.type == .direct && $0.phase != .ended && $0.phase != .cancelled }.count ?? 0
+        if model.isTransforming {
+            guard fingers <= 1, let touch = touches.first else { transformTouch = nil; transformLastPoint = nil; return }
+            transformTouch = touch; transformLastPoint = point(touch)
+            let location = touch.preciseLocation(in: self)
+            scalingHandle = transformScreenCorners().contains { hypot($0.x - location.x, $0.y - location.y) < 28 }
+            return
+        }
         if fingers > 1 && !touches.contains(where: { $0.type == .pencil }) {
             colorTouch = nil
             discardFingerStroke()
@@ -202,10 +224,20 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         ingest(touch, event: event)
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if model.isTransforming, let touch = transformTouch, touches.contains(touch), let previous = transformLastPoint {
+            let current = point(touch)
+            if scalingHandle, let placement = model.imageTransform {
+                let oldDistance = (previous - placement.center).length
+                if oldDistance > 0.1 { model.scaleImage(by: (current - placement.center).length / oldDistance) }
+            } else { model.moveImage(by: current - previous) }
+            transformLastPoint = current; updateTransformOutline(); setNeedsDisplay()
+            return
+        }
         guard let touch = drawingTouch, touches.contains(touch) else { return }
         ingest(touch, event: event)
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if model.isTransforming { transformTouch = nil; transformLastPoint = nil; return }
         if let touch = colorTouch, touches.contains(touch) {
             colorTouch = nil
             let picked = point(touch)
@@ -216,6 +248,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         ingest(touch, event: event); finishStroke()
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if model.isTransforming { transformTouch = nil; transformLastPoint = nil; return }
         if let touch = colorTouch, touches.contains(touch) { colorTouch = nil }
         guard let touch = drawingTouch, touches.contains(touch) else { return }
         // System cancellation preserves confirmed ink; predictions are always discarded.
@@ -265,6 +298,9 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         Task { @MainActor [weak self] in self?.model.error = error.localizedDescription }
     }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if model.isTransforming {
+            return !(gestureRecognizer is UITapGestureRecognizer) && !model.busy && !model.isPreparing
+        }
         // In optional finger mode, a second finger abandons the tentative finger stroke.
         if navigationGestures.contains(where: { $0 === gestureRecognizer }) {
             colorTouch = nil; discardFingerStroke()
@@ -320,6 +356,11 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         brushCursor.path = circle; cursorHalo.path = circle
     }
     @objc private func panCanvas(_ gesture: UIPanGestureRecognizer) {
+        if model.isTransforming {
+            let delta = gesture.translation(in: self), inverse = canvasMatrix.inverse
+            model.moveImage(by: inverse.apply(Point(x: Double(delta.x), y: Double(delta.y))) - inverse.apply(.zero))
+            gesture.setTranslation(.zero, in: self); updateTransformOutline(); setNeedsDisplay(); return
+        }
         guard active == nil else { return }
         let p = gesture.translation(in: self)
         viewport.pan = viewport.pan + Point(x: Double(p.x), y: Double(p.y))
@@ -331,6 +372,10 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         return Point(x: Double(p.x), y: Double(p.y))
     }
     @objc private func pinchCanvas(_ gesture: UIPinchGestureRecognizer) {
+        if model.isTransforming {
+            model.scaleImage(by: Double(gesture.scale)); gesture.scale = 1
+            updateTransformOutline(); setNeedsDisplay(); return
+        }
         guard active == nil else { return }
         let screen = anchor(gesture), canvas = canvasMatrix.inverse.apply(screen)
         viewport.zoom = max(0.25, min(12, viewport.zoom * Double(gesture.scale)))
@@ -339,11 +384,33 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         updateBrushCursor()
     }
     @objc private func rotateCanvas(_ gesture: UIRotationGestureRecognizer) {
+        if model.isTransforming {
+            model.rotateImage(by: Double(gesture.rotation)); gesture.rotation = 0
+            updateTransformOutline(); setNeedsDisplay(); return
+        }
         guard active == nil else { return }
         let screen = anchor(gesture), canvas = canvasMatrix.inverse.apply(screen)
         viewport.rotation += Double(gesture.rotation)
         viewport.pan = viewport.pan + screen - canvasMatrix.apply(canvas)
         gesture.rotation = 0; setNeedsDisplay()
         updateBrushCursor()
+    }
+    private func transformScreenCorners() -> [CGPoint] {
+        guard model.isTransforming, let d = model.displayDocument, let raster = d.activeLayer?.raster else { return [] }
+        return raster.corners(canvas: d.size).map {
+            let p = canvasMatrix.apply($0)
+            return CGPoint(x: p.x, y: p.y)
+        }
+    }
+    private func updateTransformOutline() {
+        let corners = transformScreenCorners()
+        transformOutline.isHidden = corners.isEmpty; transformHandles.isHidden = corners.isEmpty
+        guard let first = corners.first else { transformTouch = nil; transformLastPoint = nil; return }
+        let outline = UIBezierPath(); outline.move(to: first)
+        for point in corners.dropFirst() { outline.addLine(to: point) }
+        outline.close(); transformOutline.path = outline.cgPath
+        let handles = UIBezierPath()
+        for point in corners { handles.append(UIBezierPath(ovalIn: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))) }
+        transformHandles.path = handles.cgPath
     }
 }
