@@ -80,6 +80,7 @@ struct StudioGallery: View {
         Button(action: importProject) {
             Label("Import", systemImage: "square.and.arrow.down").font(.subheadline.weight(.medium))
                 .padding(.horizontal, 16).frame(minHeight: 48)
+                .contentShape(Rectangle())
         }.buttonStyle(StudioPressStyle()).accessibilityLabel("Import project")
     }
 
@@ -92,7 +93,7 @@ struct StudioGallery: View {
             if projects.isEmpty {
                 ContentUnavailableView.search(text: query).frame(minHeight: 260)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 380), spacing: 24)],
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 380), spacing: 24)],
                           alignment: .leading, spacing: 28) {
                     ForEach(projects) { project in projectCard(project) }
                 }
@@ -106,7 +107,7 @@ struct StudioGallery: View {
             TextField("Find a drawing", text: $query).accessibilityIdentifier("gallerySearch")
                 .autocorrectionDisabled()
             if !query.isEmpty {
-                Button { query = "" } label: { Image(systemName: "xmark.circle.fill").frame(width: 32, height: 44) }
+                Button { query = "" } label: { Image(systemName: "xmark.circle.fill").frame(width: 44, height: 44).contentShape(Rectangle()) }
                     .accessibilityLabel("Clear search")
             }
         }
@@ -122,7 +123,7 @@ struct StudioGallery: View {
             }
         } label: {
             Label(sortByName ? "Name" : "Last edited", systemImage: "arrow.up.arrow.down")
-                .font(.subheadline).frame(minHeight: 44)
+                .font(.subheadline).frame(minHeight: 44).contentShape(Rectangle())
         }.accessibilityLabel("Sort drawings")
     }
 
@@ -155,7 +156,7 @@ struct StudioGallery: View {
                 Spacer(minLength: 4)
                 Menu {
                     Button("Rename", systemImage: "pencil") { rename(project) }
-                } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44).contentShape(Rectangle()) }
                     .accessibilityLabel("Options for \(project.title)")
             }
         }

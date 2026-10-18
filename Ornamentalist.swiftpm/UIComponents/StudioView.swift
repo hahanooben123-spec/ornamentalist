@@ -10,6 +10,7 @@ private struct ShareFile: Identifiable {
 struct StudioView: View {
     @StateObject private var model: StudioModel
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @AppStorage("studioAppearance") private var appearance = "system"
     @State private var shareFile: ShareFile?
     @State private var exporting = false
@@ -20,15 +21,13 @@ struct StudioView: View {
     @State private var performanceText: String?
     @State private var panel: StudioPanel?
     @State private var zen = false
-    @State private var prepared = false
     private let exportService = ExportService()
 
     init() {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--ui-showcase") {
+        if StudioShowcase.enabled {
             // UI tests always use a new isolated repository, never the user's drawings.
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            _model = StateObject(wrappedValue: StudioModel(repository: DocumentRepository(directory: directory)))
+            _model = StateObject(wrappedValue: StudioShowcase.makeModel())
             return
         }
         #endif
@@ -45,18 +44,10 @@ struct StudioView: View {
             }
         }
         .tint(StudioStyle.copper)
+        .accessibilityIdentifier(rootIdentifier)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
             model.startMaintenance()
-            guard !prepared else { return }
-            prepared = true
-            #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--ui-showcase"),
-               !ProcessInfo.processInfo.arguments.contains("--ui-empty") {
-                do { try await StudioShowcase.seed(repository: model.repository) }
-                catch { model.error = error.localizedDescription }
-            }
-            #endif
             await model.refresh()
         }
         .onDisappear { model.stopMaintenance() }
@@ -95,10 +86,21 @@ struct StudioView: View {
 
     private var controlsDisabled: Bool { model.isDrawing || !model.canEdit || exporting }
 
+    private var rootIdentifier: String {
+        #if DEBUG
+        return StudioShowcase.enabled ? "studio-test" : "studio"
+        #else
+        return "studio"
+        #endif
+    }
+
     private func editor(_ document: DrawingDocument) -> some View {
         // Chrome overlays preserve the canvas bounds and document transform.
         PencilCanvas(model: model)
             .id(document.id)
+            // Reserve room for the floating bars, including in focus mode.
+            // Toggling chrome must not change the Pencil coordinate frame.
+            .padding(.top, 84).padding(.bottom, 116)
             .ignoresSafeArea()
             .allowsHitTesting(!exporting && !model.busy && !model.isPreparing)
             .overlay(alignment: .top) {
@@ -108,7 +110,8 @@ struct StudioView: View {
                 if !zen {
                     VStack(spacing: 12) {
                         dock(document)
-                        Text(model.fingerDrawing ? "Finger drawing on · Two fingers to navigate" : "Apple Pencil to draw · Two fingers to navigate")
+                        Text(horizontalSizeClass == .compact ? document.title :
+                                model.fingerDrawing ? "Finger drawing on · Two fingers to navigate" : "Apple Pencil to draw · Two fingers to navigate")
                             .font(.caption).foregroundStyle(.white.opacity(0.65))
                             .padding(.horizontal, 12).padding(.vertical, 6)
                             .background(StudioStyle.workspace.opacity(0.85), in: Capsule())
@@ -133,17 +136,19 @@ struct StudioView: View {
     }
 
     private func editorHeader(_ document: DrawingDocument) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: horizontalSizeClass == .compact ? 4 : 12) {
             Button {
                 panel = nil; Task { await model.close() }
             } label: { StudioIcon(symbol: "square.grid.2x2") }
                 .disabled(controlsDisabled).accessibilityLabel("Gallery").accessibilityIdentifier("gallery")
-            Rectangle().fill(.secondary.opacity(0.2)).frame(width: 1, height: 26)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(document.title).font(.system(.headline, design: .serif)).lineLimit(1)
-                Text(model.saveStatus).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    .accessibilityIdentifier("saveStatus")
-            }.frame(maxWidth: 260, alignment: .leading)
+            if horizontalSizeClass != .compact {
+                Rectangle().fill(.secondary.opacity(0.2)).frame(width: 1, height: 26)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(document.title).font(.system(.headline, design: .serif)).lineLimit(1)
+                    Text(model.saveStatus).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        .accessibilityIdentifier("saveStatus")
+                }.frame(maxWidth: 260, alignment: .leading)
+            }
             Spacer(minLength: 0)
             HStack(spacing: 0) {
                 Button { model.undo() } label: { StudioIcon(symbol: "arrow.uturn.backward") }
@@ -182,18 +187,28 @@ struct StudioView: View {
 
     private func dockButton(_ item: StudioPanel, symbol: String, detail: String?) -> some View {
         Button { panel = panel == item ? nil : item } label: {
-            HStack(spacing: 10) {
-                Image(systemName: symbol).font(.system(size: 22, weight: .light))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.rawValue).font(.subheadline.weight(.medium))
-                    if let detail { Text(detail).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
+            Group {
+                if horizontalSizeClass == .compact {
+                    VStack(spacing: 4) {
+                        Image(systemName: symbol).font(.system(size: 18, weight: .light))
+                        Text(detail ?? item.rawValue).font(.caption.monospacedDigit())
+                    }.frame(minWidth: 48).padding(.horizontal, 8)
+                } else {
+                    HStack(spacing: 10) {
+                        Image(systemName: symbol).font(.system(size: 22, weight: .light))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.rawValue).font(.subheadline.weight(.medium))
+                            if let detail { Text(detail).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
+                        }
+                    }.padding(.horizontal, 16)
                 }
             }
-            .padding(.horizontal, 16).frame(minHeight: 48)
+            .frame(minHeight: 48)
             .background(panel == item ? StudioStyle.copper.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 15))
             .contentShape(Rectangle())
         }
-        .buttonStyle(StudioPressStyle()).accessibilityIdentifier("panel-\(item.id)")
+        .buttonStyle(StudioPressStyle()).accessibilityLabel(item.rawValue).accessibilityValue(detail ?? "")
+        .accessibilityIdentifier("panel-\(item.id)")
         .popover(isPresented: Binding(get: { panel == item }, set: { if !$0 && panel == item { panel = nil } }), arrowEdge: .bottom) {
             StudioPanelView(panel: item, model: model, appearance: $appearance) {
                 panel = nil; performanceText = model.rendererDiagnostics?()

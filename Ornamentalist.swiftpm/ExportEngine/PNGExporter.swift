@@ -44,7 +44,7 @@ enum PNGExporter {
 
 actor ExportService {
     func thumbnail(_ document: DrawingDocument) throws -> Data {
-        try PNGExporter.data(document: document, transparent: false, maximumSide: 256)
+        try PNGExporter.data(document: document, transparent: false, maximumSide: 512)
     }
     func png(_ document: DrawingDocument, transparent: Bool) throws -> URL {
         let data = try PNGExporter.data(document: document, transparent: transparent)

@@ -3,6 +3,27 @@ import Foundation
 
 /// Original procedural drawings for isolated simulator UI tests only.
 enum StudioShowcase {
+    static var enabled: Bool {
+        ProcessInfo.processInfo.environment["ORNAMENTALIST_UI_TEST"] != nil ||
+            ProcessInfo.processInfo.arguments.contains("--ui-showcase")
+    }
+
+    @MainActor
+    static func makeModel() -> StudioModel {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let model = StudioModel(repository: DocumentRepository(directory: directory))
+        let empty = ProcessInfo.processInfo.environment["ORNAMENTALIST_UI_TEST"] == "empty" ||
+            ProcessInfo.processInfo.arguments.contains("--ui-empty")
+        // This task belongs to this model, independent of SwiftUI view task cancellation.
+        Task {
+            do {
+                if !empty { try await seed(repository: model.repository) }
+                await model.refresh()
+            } catch { model.error = error.localizedDescription }
+        }
+        return model
+    }
+
     static func seed(repository: DocumentRepository) async throws {
         let exporter = ExportService()
         for variant in 0..<3 {

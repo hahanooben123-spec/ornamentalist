@@ -8,8 +8,10 @@ final class StudioUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         app = XCUIApplication()
         app.launchArguments = ["--ui-showcase"]
+        app.launchEnvironment["ORNAMENTALIST_UI_TEST"] = "showcase"
         app.launch()
-        XCTAssertTrue(app.buttons["drawing-Solstice"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.otherElements["studio-test"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.buttons["drawing-Solstice"].waitForExistence(timeout: 30), app.debugDescription)
     }
 
     private func screenshot(_ name: String) {
@@ -78,6 +80,7 @@ final class StudioUITests: XCTestCase {
     func testEmptyStudio() {
         app.terminate()
         app.launchArguments = ["--ui-showcase", "--ui-empty"]
+        app.launchEnvironment["ORNAMENTALIST_UI_TEST"] = "empty"
         app.launch()
         XCTAssertTrue(app.staticTexts["It starts with a single line."].waitForExistence(timeout: 10))
         screenshot("09-Empty-studio")
