@@ -9,6 +9,12 @@ struct StrokeSession {
     private var stamps: BrushStampState
     private let remainingSamples: Int
     private let remainingVertices: Int
+    private var sampleLimitError: DocumentError {
+        remainingSamples == DrawingLimits.strokeSamples ? .strokeLimit : .memoryLimit
+    }
+    private var vertexLimitError: DocumentError {
+        remainingVertices == DrawingLimits.strokeVertices ? .strokeLimit : .memoryLimit
+    }
 
     /// Same conservative price as a full replay, accumulated while ingesting
     /// confirmed input so lifting Pencil does not rescan the complete stroke.
@@ -35,12 +41,24 @@ struct StrokeSession {
     }
     mutating func append(_ raw: StrokeSample) throws -> [BrushVertex] {
         guard raw.point.isFinite, raw.time.isFinite, raw.pressure.isFinite else { throw DocumentError.invalidData }
-        if let last = stroke.samples.last, raw.time <= last.time { return [] }
-        guard stroke.samples.count < remainingSamples else { throw DocumentError.memoryLimit }
+        if let last = filtered, raw.time <= last.time { return [] }
         let sample = stabilized(raw, previous: filtered)
+        // Retain the first repeated endpoint for midpoint interpolation, but
+        // do not spend geometry/sample budgets on a stationary solid Pencil.
+        // Keep the filter clock current, so resuming movement has the same dt.
+        if !stroke.brush.usesStamps, stroke.samples.count >= 2 {
+            let last = stroke.samples[stroke.samples.count - 1]
+            let previous = stroke.samples[stroke.samples.count - 2]
+            if sample.point == last.point, last.point == previous.point,
+               !stroke.brush.pressureEnabled || (sample.pressure == last.pressure && last.pressure == previous.pressure) {
+                filtered = sample
+                return []
+            }
+        }
+        guard stroke.samples.count < remainingSamples else { throw sampleLimitError }
         if stroke.brush.usesStamps {
             let cost = stamps.stampCount(to: sample, brush: stroke.brush) * BrushStampState.dabsPerStamp(stroke.brush) * 6
-            guard stableVertices + cost <= remainingVertices else { throw DocumentError.memoryLimit }
+            guard stableVertices + cost <= remainingVertices else { throw vertexLimitError }
             let addition = stamps.advance(sample, brush: stroke.brush).flatMap(\.vertices)
             stroke.samples.append(sample); filtered = sample; stableVertices += cost
             return addition
@@ -50,7 +68,7 @@ struct StrokeSession {
         let addition = StrokeGeometry.stableAddition(samples: recent, brush: stroke.brush)
         let tailReserve = stroke.brush.diskSides * 3 + 6
         let cost = StrokeGeometry.estimatedAddition(samples: recent, brush: stroke.brush)
-        guard stableVertices + cost + tailReserve <= remainingVertices else { throw DocumentError.memoryLimit }
+        guard stableVertices + cost + tailReserve <= remainingVertices else { throw vertexLimitError }
         stroke.samples.append(sample); filtered = sample; stableVertices += cost
         return addition.map { BrushVertex($0) }
     }

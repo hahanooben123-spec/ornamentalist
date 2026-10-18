@@ -162,4 +162,46 @@ final class CoreTests: XCTestCase {
         var d = DrawingDocument(); d.strokes = [session.stroke]
         try d.validate()
     }
+
+    func testStationaryPencilDoesNotExhaustInputOrGeometryBudget() throws {
+        var session = StrokeSession(brush: InkBrush(stabilization: 0), symmetry: SymmetryConfiguration(),
+                                    existingSamples: 0, existingVertices: 0)
+        var live: [BrushVertex] = []
+        for i in 0...DrawingLimits.strokeSamples {
+            live += try session.append(sample(20, 20, time: Double(i)))
+        }
+        XCTAssertEqual(session.stroke.samples.count, 2)
+        // Out-of-order callbacks remain ignored after skipping idle samples.
+        XCTAssertTrue(try session.append(sample(90, 90, time: 10)).isEmpty)
+        live += try session.append(sample(50, 40, time: Double(DrawingLimits.strokeSamples + 1)))
+        live += BrushGeometry.tail(session.stroke)
+        XCTAssertEqual(live, BrushGeometry.mesh(session.stroke))
+        XCTAssertEqual(session.estimatedVertexCount, StrokeGeometry.estimatedVertexCount(session.stroke))
+        var d = DrawingDocument(); d.strokes = [session.stroke]
+        try d.validate()
+    }
+
+    func testStationaryPressureChangesArePreserved() throws {
+        var session = StrokeSession(brush: InkBrush(pressureEnabled: true, stabilization: 0),
+                                    symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
+        for i in 0..<4 {
+            var input = sample(20, 20, time: Double(i))
+            input.pressure = Double(i + 1) / 4
+            _ = try session.append(input)
+        }
+        XCTAssertEqual(session.stroke.samples.count, 4)
+    }
+
+    func testPerStrokeLimitDoesNotTellUserToAbandonCanvas() throws {
+        var session = StrokeSession(brush: InkBrush(stabilization: 0), symmetry: SymmetryConfiguration(),
+                                    existingSamples: 0, existingVertices: 0)
+        var stopped = false
+        for i in 0..<DrawingLimits.strokeSamples {
+            do { _ = try session.append(sample(Double(i % 2) * 500, 20, time: Double(i))) }
+            catch DocumentError.strokeLimit { stopped = true; break }
+        }
+        XCTAssertTrue(stopped)
+        var d = DrawingDocument(); d.strokes = [session.stroke]
+        try d.validate()
+    }
 }

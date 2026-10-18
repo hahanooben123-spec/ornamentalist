@@ -190,7 +190,7 @@ final class MetalCanvasRenderer {
         let buffer = points.withUnsafeBytes { bytes in
             device.makeBuffer(bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared)
         }
-        guard let buffer else { throw DocumentError.memoryLimit }
+        guard let buffer else { throw DocumentError.graphicsMemory }
         return GPUChunk(buffer: buffer, count: points.count)
     }
     private func chunks(_ points: [BrushVertex]) throws -> [GPUChunk] {
@@ -450,7 +450,14 @@ final class MetalCanvasRenderer {
         info.storageMode = transient && device.supportsFamily(.apple1) ? .memoryless : .private
         #endif
         info.usage = transient ? [.renderTarget] : [.renderTarget, .shaderRead]
-        guard let result = device.makeTexture(descriptor: info) else { throw DocumentError.memoryLimit }
+        // Keep the fast tile-memory path where available. Some device/format
+        // combinations can reject it despite reporting Apple-family support.
+        var allocated = device.makeTexture(descriptor: info)
+        if allocated == nil, info.storageMode == .memoryless {
+            info.storageMode = .private
+            allocated = device.makeTexture(descriptor: info)
+        }
+        guard let result = allocated else { throw DocumentError.graphicsMemory }
         workingTextureAllocations += 1
         return result
     }
@@ -490,7 +497,12 @@ final class MetalCanvasRenderer {
             info.storageMode = device.supportsFamily(.apple1) ? .memoryless : .private
             #endif
             info.usage = .renderTarget
-            guard let stencil = device.makeTexture(descriptor: info) else { throw DocumentError.memoryLimit }
+            var allocated = device.makeTexture(descriptor: info)
+            if allocated == nil, info.storageMode == .memoryless {
+                info.storageMode = .private
+                allocated = device.makeTexture(descriptor: info)
+            }
+            guard let stencil = allocated else { throw DocumentError.graphicsMemory }
             coverageStencil = stencil; workingTextureAllocations += 1
         }
         pass.depthAttachment.texture = coverageStencil
@@ -714,7 +726,7 @@ final class MetalCanvasRenderer {
             activeTexture = nil; activeKey = nil; activeLiveID = nil; activeLiveVertices = 0; pendingLiveCommit = nil
         }
         if let upperTexture { try composite(upperTexture, opacity: 1, output: output, command: command) }
-        } catch DocumentError.memoryLimit {
+        } catch DocumentError.graphicsMemory {
             clearLayerCaches(); cacheBudget = 0
             try encodeGroups(command: command, output: output, document: document, viewport: viewport,
                              viewSize: viewSize, active: active, preview: preview, guides: guides)
@@ -855,7 +867,7 @@ final class MetalCanvasRenderer {
             let buffer = values.withUnsafeBytes {
                 device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
             }
-            guard let buffer else { throw DocumentError.memoryLimit }
+            guard let buffer else { throw DocumentError.graphicsMemory }
             matrixCache[symmetry] = buffer
         }
         let matrices = matrixCache[symmetry]!

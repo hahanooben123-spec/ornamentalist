@@ -145,7 +145,7 @@ extension DrawingDocument {
 }
 
 enum DocumentError: LocalizedError {
-    case unsupportedVersion, invalidData, oversized, noMetal, graphics, memoryLimit, mergeSize
+    case unsupportedVersion, invalidData, oversized, noMetal, graphics, graphicsMemory, strokeLimit, memoryLimit, mergeSize
     var errorDescription: String? {
         switch self {
         case .mergeSize: return "Merging currently supports canvases up to 2048 × 2048 pixels with whole-pixel dimensions."
@@ -154,7 +154,9 @@ enum DocumentError: LocalizedError {
         case .oversized: return "This prototype supports drawing files up to 64 MB."
         case .noMetal: return "Metal is unavailable on this device."
         case .graphics: return "The drawing renderer or image export could not be created."
-        case .memoryLimit: return "This drawing has reached the prototype's geometry limit. Save your work and start another canvas."
+        case .graphicsMemory: return "The graphics device could not allocate a drawing buffer or texture. Your drawing has not reached the geometry limit. Save your work and reopen the drawing."
+        case .strokeLimit: return "This stroke has reached its detail limit. Your confirmed ink is kept. Lift the Pencil and continue with a new stroke on this canvas."
+        case .memoryLimit: return "This drawing has reached its geometry or storage limit. Save your work before starting another canvas."
         }
     }
 }
