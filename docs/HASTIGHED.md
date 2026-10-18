@@ -8,6 +8,8 @@ GPU-arbejdsteksturer genbruges ved uændret viewport-størrelse. På Apple-GPU'e
 
 Lagene under og over det aktive lag gemmes i to sammensatte, transparente billeder. Det aktive lags færdige indhold gemmes med sine enkelte MSAA-samples. Under en ny streg kopieres disse samples til arbejdsfladen, hvorefter kun den igangværende streg og dens forudsigelse tegnes. Det bevarer viskelæderets lagisolering og de bløde kanter. Forudsigelser kommer ikke ind i gemte caches eller projektdata.
 
+Bekræftede nye dele af det igangværende strøg opsamles også inkrementelt i MSAA-cachen. Lange, ubrudte streger bliver derfor ikke dyrere at gentegne for hvert nyt punkt. Kun den nye del og den midlertidige forudsigelse behandles. Annullering gendanner basen fra dokumentet; afslutning tilføjer den manglende slutgeometri uden at male de gamle dele igen.
+
 Et nyt færdigt strøg føjes inkrementelt til den aktive cache, når de gamle strøg fortsat er et præfiks. Undo, sletning, lagvalg, ombytning, rasterændringer, viewport og størrelse invaliderer berørte caches. Aktiv lag-opacity påføres ved sammensætning. Modelrevisionen styrer opdatering af lagindhold/cache-nøgler, så hele dokumentet ikke scannes hver frame.
 
 Midlertidige vertexbuffere genbruges, når det levende indhold/forudsigelsen er uændret. Punktbudgettet opsamles under input, så strøget ikke skal gennemregnes igen, når Pencil løftes. Lagminiaturer har en separat cache med højst 32 resultater, som invalideres af indhold frem for skjul/vis og opacity.

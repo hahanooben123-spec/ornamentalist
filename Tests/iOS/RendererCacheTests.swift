@@ -250,4 +250,34 @@ final class RendererCacheTests: XCTestCase {
             }
         }
     }
+
+    @MainActor
+    func testIncrementalStippleCrossesSealedGPUChunksWithoutRepaintingThePrefix() async throws {
+        let d = fixture()
+        var brush = BrushPreset.stippleDense.makeBrush(); brush.width = 12; brush.spacing = 0.06; brush.density = 1
+        var session = StrokeSession(brush: brush, symmetry: d.symmetry, existingSamples: 0,
+            existingVertices: 0, layerID: d.activeLayerID)
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(d.strokes, layers: d.layers); renderer.begin()
+        var expected = 0
+        var image: [UInt8] = []
+        for batch in 0..<2 {
+            for i in (batch * 30)..<((batch + 1) * 30) {
+                let angle = Double(i) * 0.2
+                let p = Point(x: 78 + cos(angle) * 12, y: 48 + sin(angle) * 12)
+                let added = try session.append(StrokeSample(point: p, pressure: 1, altitude: 1, azimuth: 0, time: Double(i)))
+                try renderer.append(added); expected += added.count
+            }
+            image = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, active: session.stroke)
+            XCTAssertEqual(renderer.liveConfirmedVertexDraws, expected)
+        }
+        XCTAssertGreaterThan(expected, 8190 * 2)
+        let reference = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256,
+            active: session.stroke, reference: true)
+        assertPixels(image, reference)
+        try renderer.commit(session.stroke)
+        var committedDocument = d; committedDocument.strokes.append(session.stroke)
+        let committed = try await renderer.renderOffscreen(document: committedDocument, viewport: Viewport(), width: 256, height: 256)
+        assertPixels(committed, reference)
+    }
 }

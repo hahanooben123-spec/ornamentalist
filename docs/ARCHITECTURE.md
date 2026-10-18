@@ -54,6 +54,8 @@ The renderer caches static groups below/above the active layer and retains that 
 
 The two-million-source-vertex budget, off-main missing-mesh reconstruction and paper/guide/symmetry caches remain. Immutable uploads avoid GPU races. Diagnostics include CPU/GPU timings, deferred frames, vertex/cache bytes, working texture allocations and cache replay/update counters; they do not establish Pencil-to-screen latency or total RAM.
 
+Confirmed live geometry temporarily augments the active MSAA base once per vertex prefix. A live stroke ID and processed vertex count track that state; predictions remain on a disposable work surface. Chunk suffix views use immutable buffer offsets, including when scratch vertices become sealed chunks. Cancel invalidates the augmented base. Commit promotes the cached prefix and encodes only the unpainted suffix/tail; Undo or navigation rebuilds from document sources. The reference test path replays the full live geometry independently.
+
 ## Later phases
 
 Extend layers with blend modes and optionally per-layer symmetry defaults; current symmetry is frozen per stroke. Movable symmetry centers, imported/custom brushes, additional eraser shapes and geometry tools follow. Tattoo dimensions, references, stencil previews, SVG/PDF, and high-resolution export follow after Pencil/device acceptance. No stub controls for those features are shipped.
