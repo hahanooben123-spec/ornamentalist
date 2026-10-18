@@ -25,6 +25,7 @@ final class StudioModel: ObservableObject {
     private var writeSequence = 0
     private var schedule = SaveSchedule()
     private var maintenance: Task<Void, Never>?
+    private var thumbnailTask: Task<Void, Never>?
     private var saveRunning = false
     private var journalRunning = false
     private var lastCheckpoint = Date.distantPast
@@ -208,13 +209,30 @@ final class StudioModel: ObservableObject {
         while saveRunning { try? await Task.sleep(nanoseconds: 10_000_000) }
         let closingGeneration = generation
         guard await saveNow(), generation == closingGeneration else { return }
-        if let d = document {
-            do {
-                let thumbnail = try await exportService.thumbnail(d)
-                try await repository.storeThumbnail(thumbnail, id: d.id, generation: d.storageRevision)
-            } catch { self.error = "Drawing saved, but its preview could not be generated: \(error.localizedDescription)" }
-        }
+        let savedDrawing = document
         document = nil; history = StrokeHistory(); captureActiveStroke = nil; rendererDiagnostics = nil
         await refresh()
+        if let savedDrawing { prepareThumbnail(savedDrawing) }
+    }
+
+    private func prepareThumbnail(_ snapshot: DrawingDocument) {
+        // Disk durability gates closing. Replaceable previews must not block the gallery.
+        // Keep only the newest pending request; an in-flight Core Graphics render may finish.
+        thumbnailTask?.cancel()
+        thumbnailTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let thumbnail = try await self.exportService.thumbnail(snapshot)
+                try Task.checkCancellation()
+                try await self.repository.storeThumbnail(thumbnail, id: snapshot.id, generation: snapshot.storageRevision)
+                if self.document == nil { await self.refresh() }
+            } catch is CancellationError {
+                // A newer preview superseded this request.
+            } catch {
+                if self.document == nil {
+                    self.error = "Drawing saved, but its preview could not be generated: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 }

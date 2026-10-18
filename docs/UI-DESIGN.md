@@ -18,6 +18,7 @@ The visual direction is a quiet drawing studio: warm ivory, copper accents, seri
 - Canvas contains navigation help, fit-to-screen, finger mode, appearance and the existing diagnostic report.
 - Focus hides chrome and retains one accessible restore button.
 - Active drawing, mesh preparation and export disable incompatible commands. The existing close/save lock and recovery alerts remain in use.
+- Returning to Gallery waits for the actual drawing save. Its replaceable thumbnail renders afterward, so complex previews do not hold the workspace open. A revision check rejects a late preview after a newer save or rename.
 
 Controls use native SwiftUI semantics, named icon actions, scalable system text for controls and 44-point or larger primary tap targets. Large panels scroll. Paper remains white in both appearances.
 

@@ -2,6 +2,25 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class DocumentRepositoryTests: XCTestCase {
+    func testLateThumbnailCannotReplaceANewerSavedRevision() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DocumentRepository(directory: directory)
+        var drawing = DrawingDocument()
+        try await store.save(drawing, generation: 1)
+        let oldPreview = Data([1, 2]), latestPreview = Data([3, 4])
+        try await store.storeThumbnail(oldPreview, id: drawing.id, generation: 1)
+        drawing.title = "Renamed while preview was rendering"
+        try await store.save(drawing, generation: 2)
+        try await store.storeThumbnail(Data([9]), id: drawing.id, generation: 1)
+        let afterStale = try await store.list()
+        XCTAssertEqual(afterStale.first?.thumbnail, oldPreview)
+        XCTAssertEqual(afterStale.first?.title, drawing.title)
+        try await store.storeThumbnail(latestPreview, id: drawing.id, generation: 2)
+        let afterLatest = try await store.list()
+        XCTAssertEqual(afterLatest.first?.thumbnail, latestPreview)
+    }
+
     func testSaveReopenStaleWriteAndBackupRecovery() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

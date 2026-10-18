@@ -32,11 +32,11 @@ def credential():
     return fields.get('password')
 
 
-def request(path):
+def request(path, method="GET"):
     headers = {'User-Agent': 'Ornamentalist-build-check', 'Accept': 'application/vnd.github+json'}
     opener = urllib.request.build_opener(SafeRedirect())
     try:
-        return opener.open(urllib.request.Request(BASE + path, headers=headers), timeout=30).read()
+        return opener.open(urllib.request.Request(BASE + path, headers=headers, method=method), timeout=30).read()
     except urllib.error.HTTPError as error:
         if error.code not in [401, 403, 404]:
             raise SystemExit(f'GitHub returned HTTP {error.code}') from None
@@ -45,7 +45,7 @@ def request(path):
         raise SystemExit('GitHub API authentication is unavailable. Open the Actions page in your browser.')
     headers['Authorization'] = 'Bearer ' + token
     try:
-        return opener.open(urllib.request.Request(BASE + path, headers=headers), timeout=30).read()
+        return opener.open(urllib.request.Request(BASE + path, headers=headers, method=method), timeout=30).read()
     except urllib.error.HTTPError as error:
         raise SystemExit(f'GitHub returned HTTP {error.code}; no credential was printed.') from None
 
