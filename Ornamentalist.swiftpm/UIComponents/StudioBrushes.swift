@@ -113,6 +113,7 @@ private struct VerticalBrushSlider: UIViewRepresentable {
         view.slider.minimumTrackTintColor = UIColor(StudioStyle.copper)
     }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+    @MainActor
     final class Coordinator: NSObject {
         var parent: VerticalBrushSlider
         init(_ parent: VerticalBrushSlider) { self.parent = parent }
