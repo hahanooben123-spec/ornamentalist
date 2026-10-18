@@ -127,6 +127,8 @@ final class BrushTests: XCTestCase {
     }
     func testPressureSmoothingReducesWidthNoiseWithoutChangingInputTime() throws {
         var brush = BrushPreset.brushPen.makeBrush(); brush.taperStart = 0; brush.taperEnd = 0
+        // Isolate smoothing below saturation; calibrated presets use gain 2.5.
+        brush.pressureGain = 1
         var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
         for i in 0..<120 {
             var p = sample(Double(i), time: Double(i) / 240)
@@ -349,7 +351,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 14); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 15); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }
