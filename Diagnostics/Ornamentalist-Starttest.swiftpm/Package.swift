@@ -10,13 +10,15 @@ let package = Package(
             name: "Ornamentalist",
             targets: ["Ornamentalist"],
             bundleIdentifier: "studio.mandala.prototype.starttest",
-            displayVersion: "0.3.0",
-            bundleVersion: "5",
+            displayVersion: "0.3.1",
+            bundleVersion: "6",
             appIcon: .placeholder(icon: .pencil),
             accentColor: .presetColor(.teal),
             supportedDeviceFamilies: [.pad],
             supportedInterfaceOrientations: [.portrait, .portraitUpsideDown(.when(deviceFamilies: [.pad])), .landscapeLeft, .landscapeRight]
         )
     ],
-    targets: [.executableTarget(name: "Ornamentalist", path: ".")]
+    targets: [
+        .executableTarget(name: "Ornamentalist", path: ".", sources: ["App/OrnamentalistApp.swift"])
+    ]
 )

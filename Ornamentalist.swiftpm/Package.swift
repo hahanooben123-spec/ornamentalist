@@ -10,13 +10,37 @@ let package = Package(
             name: "Ornamentalist",
             targets: ["Ornamentalist"],
             bundleIdentifier: "studio.mandala.prototype",
-            displayVersion: "0.3.0",
-            bundleVersion: "5",
+            displayVersion: "0.3.1",
+            bundleVersion: "6",
             appIcon: .placeholder(icon: .pencil),
             accentColor: .presetColor(.teal),
             supportedDeviceFamilies: [.pad],
             supportedInterfaceOrientations: [.portrait, .portraitUpsideDown(.when(deviceFamilies: [.pad])), .landscapeLeft, .landscapeRight]
         )
     ],
-    targets: [.executableTarget(name: "Ornamentalist", path: ".")]
+    targets: [
+        .executableTarget(name: "Ornamentalist", path: ".", sources: [
+            "App/OrnamentalistApp.swift",
+            "CanvasRenderer/MetalCanvasRenderer.swift",
+            "Core/BrushEngine/InkBrush.swift",
+            "Core/DrawingLimits.swift",
+            "Core/Geometry.swift",
+            "Core/LayerManager.swift",
+            "Core/StrokeGeometry.swift",
+            "Core/StrokeModel/StrokeHistory.swift",
+            "Core/StrokeModel/StrokeModel.swift",
+            "Core/StrokeModel/StrokeSession.swift",
+            "Core/SymmetryEngine/SymmetryEngine.swift",
+            "DocumentStore/DocumentRepository.swift",
+            "DocumentStore/StudioModel.swift",
+            "DrawingEngine/PencilCanvasView.swift",
+            "ExportEngine/PNGExporter.swift",
+            "UIComponents/StudioGallery.swift",
+            "UIComponents/StudioLayers.swift",
+            "UIComponents/StudioPanels.swift",
+            "UIComponents/StudioShowcase.swift",
+            "UIComponents/StudioTheme.swift",
+            "UIComponents/StudioView.swift"
+        ])
+    ]
 )

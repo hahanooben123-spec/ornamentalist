@@ -13,6 +13,12 @@ def verify_sources():
     assert len(SOURCES) == 21, f"Update source inventory: found {len(SOURCES)}"
     assert sum(len(re.findall(r"(?m)^@main\s*$", p.read_text(encoding="utf-8"))) for p in SOURCES) == 1
     assert (APP / "Package.swift").is_file()
+    manifest = (APP / "Package.swift").read_text(encoding="utf-8")
+    block = re.search(r'sources:\s*\[([^\]]*)\]', manifest)
+    assert block is not None, "App target must list its sources explicitly"
+    listed = re.findall(r'"([^"\n]+\.swift)"', block.group(1))
+    actual = {p.relative_to(APP).as_posix() for p in SOURCES}
+    assert len(listed) == len(set(listed)) and set(listed) == actual, "App target source list differs from delivered files"
     assert (ROOT / "Package.swift").is_file()
     source_text = "\n".join(p.read_text(encoding="utf-8") for p in SOURCES)
     assert "WKWebView" not in source_text and "<canvas" not in source_text

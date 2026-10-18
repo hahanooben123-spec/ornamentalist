@@ -20,6 +20,8 @@ jobs:
           path: dist/Ornamentalist-iPad.zip
       - name: Test actual Swift geometry, history and persistence
         run: swift test
+      - name: Verify SwiftPM app target source membership
+        run: python3 tools/check_playground_target.py
       - name: Generate cloud-only Xcode project
         run: |
           brew install xcodegen

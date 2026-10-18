@@ -4,7 +4,7 @@ Historisk diagnosepakke. Brug den fulde `Ornamentalist.swiftpm` til Mirror og la
 
 Apples nye standardprojekt kører på brugerens iPad. Ornamentalist fejler fortsat, også når `StudioView()` i startfilen erstattes med `Text(...)`. Den sidste ændring udelukker ikke kompileringsfejl i andre filer: alle appens kildefiler bygges stadig.
 
-`Diagnostics/Ornamentalist-Starttest.swiftpm` indeholder derfor kun to filer: projektmanifestet og en enkelt app-kildefil. Manifestet er identisk med hovedprojektets bortset fra et særskilt bundle-id (`studio.mandala.prototype.starttest`). Startfilen er den samme som i hovedprojektet, med `StudioView()` erstattet af `Text("Pakketest virker")`. Der indlæses ingen af tegneappens øvrige kildefiler.
+`Diagnostics/Ornamentalist-Starttest.swiftpm` indeholder derfor kun to filer: projektmanifestet og en enkelt app-kildefil. Manifestet bruger hovedprojektets opsætning med et særskilt bundle-id (`studio.mandala.prototype.starttest`) og en eksplicit filliste med kun diagnosepakkens ene kildefil. Startfilen er den samme som i hovedprojektet, med `StudioView()` erstattet af `Text("Pakketest virker")`. Der indlæses ingen af tegneappens øvrige kildefiler.
 
 1. Hent den opdaterede repository-ZIP, og pak den ud i Filer i en ny mappe.
 2. Åbn **Diagnostics → Ornamentalist-Starttest.swiftpm** i Swift Playground.

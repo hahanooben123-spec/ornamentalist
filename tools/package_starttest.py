@@ -1,6 +1,7 @@
 """Make a minimal iPad diagnostic package. Does not compile Swift or replace the app."""
 from pathlib import Path
 import zipfile
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "Ornamentalist.swiftpm"
@@ -11,8 +12,10 @@ def main():
     manifest = (APP / "Package.swift").read_text(encoding="utf-8")
     original_id = 'bundleIdentifier: "studio.mandala.prototype"'
     assert manifest.count(original_id) == 1
-    # Separate app storage; all other manifest settings stay identical.
+    # Separate app storage, with the diagnostic's single source listed below.
     manifest = manifest.replace(original_id, 'bundleIdentifier: "studio.mandala.prototype.starttest"')
+    manifest, count = re.subn(r'sources:\s*\[[^\]]*\]', 'sources: ["App/OrnamentalistApp.swift"]', manifest)
+    assert count == 1
     entry = (APP / "App" / "OrnamentalistApp.swift").read_text(encoding="utf-8")
     assert entry.count("StudioView()") == 1
     entry = entry.replace("StudioView()", 'Text("Pakketest virker")')

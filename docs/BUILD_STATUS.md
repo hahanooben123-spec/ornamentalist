@@ -1,6 +1,10 @@
 # Verified build status — 18 October 2026
 
-## Current: 0.3.0 Mirror and layers
+## Current: 0.3.1 explicit playground target sources
+
+The device reports `DrawingLimits.swift not in a target` while updating previews, with a File Provider URL. The file is present and was inside the recursively discovered app target in previous packaging. The screenshot does not establish why the installed Swift Playground loses its target association. Version 0.3.1 lists all 21 source paths explicitly in the app manifest and checks that this list exactly matches delivered files. A new cloud check uses actual SwiftPM target discovery with only the AppleProductTypes product replaced by a standard executable product; it preserves the app target path/source list. That check and the Apple tests are pending. The exact AppleProductTypes manifest and iPad provider/preview cache remain device-only acceptance steps.
+
+## Previous: 0.3.0 Mirror and layers
 
 Mirror reflection, ordered layers, layer visibility/locking/naming/reordering/deletion, layer-aware input and rendering/export, schema 1/2 migration and structural Undo/Redo are implemented. See [the feature guide](MIRROR-OG-LAG.md).
 
