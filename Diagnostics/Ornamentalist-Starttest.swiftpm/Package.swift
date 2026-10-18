@@ -10,8 +10,8 @@ let package = Package(
             name: "Ornamentalist",
             targets: ["Ornamentalist"],
             bundleIdentifier: "studio.mandala.prototype.starttest",
-            displayVersion: "0.6.0",
-            bundleVersion: "9",
+            displayVersion: "0.7.0",
+            bundleVersion: "10",
             appIcon: .placeholder(icon: .pencil),
             accentColor: .presetColor(.teal),
             supportedDeviceFamilies: [.pad],
@@ -19,6 +19,10 @@ let package = Package(
         )
     ],
     targets: [
-        .executableTarget(name: "Ornamentalist", path: ".", sources: ["App/OrnamentalistApp.swift"])
+        .executableTarget(
+            name: "Ornamentalist",
+            path: ".",
+            sources: ["App/OrnamentalistApp.swift"]
+        )
     ]
 )

@@ -5,6 +5,26 @@ private struct GPUChunk {
     let count: Int
 }
 
+private struct LayerPaintKey: Equatable {
+    let id: UUID
+    let raster: UUID?
+    let strokes: [UUID]
+}
+
+private struct LayerCompositeKey: Equatable {
+    let paint: LayerPaintKey
+    let opacity: Double
+}
+
+private struct SurfaceKey: Equatable {
+    let document: UUID
+    let canvas: Point
+    let view: Point
+    let transform: Matrix
+    let width: Int
+    let height: Int
+}
+
 /// All Metal resources are owned on the main thread. Immutable vertex buffers
 /// remain valid while the GPU consumes previous frames; no shared-buffer races.
 @MainActor
@@ -17,6 +37,28 @@ final class MetalCanvasRenderer {
     private var rasterTextures: [UUID: MTLTexture] = [:]
     private let singlePipeline: MTLRenderPipelineState
     private let compositePipeline: MTLRenderPipelineState
+    private let restoreSamplesPipeline: MTLRenderPipelineState
+    private var workTexture: MTLTexture?
+    private var workMultisample: MTLTexture?
+    private var surfaceKey: SurfaceKey?
+    private var lowerTexture: MTLTexture?
+    private var upperTexture: MTLTexture?
+    private var lowerKey: [LayerCompositeKey]?
+    private var upperKey: [LayerCompositeKey]?
+    private var activeTexture: MTLTexture?
+    private var activeKey: LayerPaintKey?
+    private var cacheBudget = 160 * 1024 * 1024
+    private(set) var workingTextureAllocations = 0
+    private(set) var committedStrokeDraws = 0
+    private(set) var cachedGroupBuilds = 0
+    private(set) var cachedLayerBuilds = 0
+    private(set) var incrementalLayerUpdates = 0
+    private(set) var renderCacheBytes = 0
+    private var liveRevision = 0
+    private var uploadedLiveRevision = -1
+    private var uploadedLive: [GPUChunk] = []
+    private var uploadedPrediction: [BrushVertex] = []
+    private var predictionBuffers: [GPUChunk] = []
     private let groupInFlight = DispatchSemaphore(value: 1)
     private var cache: [UUID: [GPUChunk]] = [:]
     private var sealed: [GPUChunk] = []
@@ -48,7 +90,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = (allocatedVertexCount + sealedVertexCount + scratch.count) * MemoryLayout<SIMD4<Float>>.stride
-        return "CPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.7.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -70,13 +112,15 @@ final class MetalCanvasRenderer {
         view.colorPixelFormat = .bgra8Unorm
         let preferredSampleCount = device.supportsTextureSampleCount(4) ? 4 : 1
         sampleCount = preferredSampleCount
-        view.sampleCount = preferredSampleCount
+        // MSAA lives in our reusable layer targets. Avoid allocating a second,
+        // unused full-screen multisample drawable in MTKView.
+        view.sampleCount = 1
         let library = try device.makeLibrary(source: Self.shader, options: nil)
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = library.makeFunction(name: "inkVertex")
         descriptor.fragmentFunction = library.makeFunction(name: "inkFragment")
         descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        descriptor.rasterSampleCount = view.sampleCount
+        descriptor.rasterSampleCount = sampleCount
         let attachment = descriptor.colorAttachments[0]!
         attachment.isBlendingEnabled = true
         attachment.sourceRGBBlendFactor = .sourceAlpha
@@ -99,6 +143,10 @@ final class MetalCanvasRenderer {
         descriptor.fragmentFunction = library.makeFunction(name: "compositeFragment")
         attachment.sourceRGBBlendFactor = .one // Layer textures are premultiplied.
         compositePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.rasterSampleCount = sampleCount
+        descriptor.fragmentFunction = library.makeFunction(name: "restoreSamplesFragment")
+        attachment.isBlendingEnabled = false
+        restoreSamplesPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         view.clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
         view.isPaused = true
         view.enableSetNeedsDisplay = true
@@ -168,8 +216,13 @@ final class MetalCanvasRenderer {
         for (id, buffers) in uploaded { cache[id] = buffers }
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
     }
-    func begin() { sealed.removeAll(); sealedVertexCount = 0; scratch.removeAll(keepingCapacity: true) }
+    func begin() {
+        sealed.removeAll(); sealedVertexCount = 0; scratch.removeAll(keepingCapacity: true)
+        liveRevision += 1; uploadedLive.removeAll(); uploadedLiveRevision = -1
+        uploadedPrediction.removeAll(); predictionBuffers.removeAll()
+    }
     func append(_ points: [BrushVertex]) throws {
+        if !points.isEmpty { liveRevision += 1 }
         guard allocatedVertexCount + sealedVertexCount + scratch.count + points.count <= DrawingLimits.vertexCount else {
             throw DocumentError.memoryLimit
         }
@@ -201,21 +254,18 @@ final class MetalCanvasRenderer {
             view.setNeedsDisplay()
             return
         }
-        guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-              let command = queue.makeCommandBuffer() else {
-            inFlight.signal()
-            return
-        }
-        let grouped = requiresGroups(document, active: active)
-        if grouped && groupInFlight.wait(timeout: .now()) != .success {
+        if groupInFlight.wait(timeout: .now()) != .success {
             inFlight.signal(); deferredFrames += 1; view.setNeedsDisplay(); return
+        }
+        guard let drawable = view.currentDrawable, let command = queue.makeCommandBuffer() else {
+            groupInFlight.signal(); inFlight.signal(); return
         }
         let groupGate = groupInFlight
         let gate = inFlight
         // Metal invokes this on its own queue, never on the renderer's main actor.
         command.addCompletedHandler { @Sendable [weak self] command in
             gate.signal()
-            if grouped { groupGate.signal() }
+            groupGate.signal()
             let gpu = (command.gpuEndTime - command.gpuStartTime) * 1000
             Task { @MainActor in self?.recordGPU(gpu) }
         }
@@ -225,15 +275,8 @@ final class MetalCanvasRenderer {
             recordCPU((ProcessInfo.processInfo.systemUptime - started) * 1000)
         }
         let size = Point(x: Double(view.bounds.width), y: Double(view.bounds.height))
-        if grouped {
-            try encodeGroups(command: command, output: drawable.texture, document: document,
-                             viewport: viewport, viewSize: size, active: active, preview: preview, guides: guides)
-        } else {
-            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
-            defer { encoder.endEncoding() }
-            try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: size,
-                            active: active, preview: preview, guides: guides)
-        }
+        try encodeCachedScene(command: command, output: drawable.texture, document: document,
+                              viewport: viewport, viewSize: size, active: active, preview: preview, guides: guides)
     }
 
     private func encodeScene(encoder: MTLRenderCommandEncoder, document: DrawingDocument, viewport: Viewport,
@@ -295,23 +338,229 @@ final class MetalCanvasRenderer {
                            color: SIMD4(1, 1, 1, 1), encoder: encoder)
             }
             for stroke in sceneLayerStrokes[layer.id] ?? [] {
+                committedStrokeDraws += 1
                 encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
                 try encode(cache[stroke.id] ?? [], symmetry: stroke.symmetry, transform: transform,
                            size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
             }
             if let active, active.layerID == layer.id {
-                encoder.setRenderPipelineState(active.operation == .erase ? erasePipeline : pipeline)
-                var live = sealed
-                if !scratch.isEmpty { live.append(try chunk(scratch)) }
-                live += try chunks(preview)
-                try encode(live, symmetry: active.symmetry, transform: transform, size: viewSize,
-                           canvas: document.size, color: inkColor(active), brush: active.brush, encoder: encoder)
+                try encodeLive(active, preview: preview, transform: transform, viewSize: viewSize,
+                               canvas: document.size, encoder: encoder)
             }
         }
     }
 
     private func inkColor(_ stroke: InkStroke) -> SIMD4<Float> {
         SIMD4(Float(stroke.color.red), Float(stroke.color.green), Float(stroke.color.blue), Float(stroke.brush.opacity))
+    }
+
+    private func encodeLive(_ stroke: InkStroke, preview: [BrushVertex], transform: Matrix,
+                            viewSize: Point, canvas: Point, encoder: MTLRenderCommandEncoder) throws {
+        if uploadedLiveRevision != liveRevision {
+            uploadedLive = sealed
+            if !scratch.isEmpty { uploadedLive.append(try chunk(scratch)) }
+            uploadedLiveRevision = liveRevision
+        }
+        if uploadedPrediction != preview {
+            predictionBuffers = try chunks(preview); uploadedPrediction = preview
+        }
+        encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
+        try encode(uploadedLive, symmetry: stroke.symmetry, transform: transform, size: viewSize,
+                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+        try encode(predictionBuffers, symmetry: stroke.symmetry, transform: transform, size: viewSize,
+                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+    }
+
+    private func texture(width: Int, height: Int, samples: Int = 1) throws -> MTLTexture {
+        let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+                            width: width, height: height, mipmapped: false)
+        if samples > 1 { info.textureType = .type2DMultisample; info.sampleCount = samples }
+        info.storageMode = .private; info.usage = [.renderTarget, .shaderRead]
+        guard let result = device.makeTexture(descriptor: info) else { throw DocumentError.memoryLimit }
+        workingTextureAllocations += 1
+        return result
+    }
+
+    private func ensureWorkTargets(width: Int, height: Int) throws {
+        if workTexture?.width == width && workTexture?.height == height { return }
+        let resolved = try texture(width: width, height: height)
+        let multisample: MTLTexture?
+        if sampleCount > 1 { multisample = try texture(width: width, height: height, samples: sampleCount) }
+        else { multisample = nil }
+        workTexture = resolved; workMultisample = multisample
+    }
+
+    private func targetPass(_ target: MTLTexture, load: MTLLoadAction = .clear,
+                            resolve: MTLTexture? = nil) -> MTLRenderPassDescriptor {
+        let pass = MTLRenderPassDescriptor()
+        let color = pass.colorAttachments[0]!
+        color.texture = target; color.loadAction = load
+        color.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        color.resolveTexture = resolve
+        color.storeAction = resolve == nil ? .store : .multisampleResolve
+        return pass
+    }
+
+    private func composite(_ source: MTLTexture, opacity: Double, output: MTLTexture,
+                           command: MTLCommandBuffer, load: MTLLoadAction = .load) throws {
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: targetPass(output, load: load)) else { throw DocumentError.graphics }
+        encoder.setRenderPipelineState(compositePipeline)
+        encoder.setFragmentTexture(source, index: 0)
+        var alpha = Float(opacity)
+        encoder.setFragmentBytes(&alpha, length: MemoryLayout<Float>.stride, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        encoder.endEncoding()
+    }
+
+    private func paintKey(_ layer: DrawingLayer) -> LayerPaintKey {
+        LayerPaintKey(id: layer.id, raster: layer.raster?.id, strokes: (sceneLayerStrokes[layer.id] ?? []).map(\.id))
+    }
+
+    private func renderStaticGroup(_ layers: [DrawingLayer], previous: [LayerCompositeKey]?,
+                                   target: MTLTexture?, command: MTLCommandBuffer,
+                                   document: DrawingDocument, viewport: Viewport, viewSize: Point) throws -> (MTLTexture?, [LayerCompositeKey]) {
+        let key = layers.map { LayerCompositeKey(paint: paintKey($0), opacity: $0.opacity) }
+        guard !layers.isEmpty else { return (nil, key) }
+        if previous == key, let target { return (target, key) }
+        guard let work = workTexture else { throw DocumentError.graphics }
+        let result = try target ?? texture(width: work.width, height: work.height)
+        for (index, layer) in layers.enumerated() {
+            let pass = targetPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
+            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+            do {
+                try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,
+                                active: nil, preview: [], guides: false, layerOnly: layer.id)
+            } catch { encoder.endEncoding(); throw error }
+            encoder.endEncoding()
+            try composite(work, opacity: layer.opacity, output: result, command: command, load: index == 0 ? .clear : .load)
+        }
+        cachedGroupBuilds += 1
+        return (result, key)
+    }
+
+    private func prepareActiveLayer(_ layer: DrawingLayer, command: MTLCommandBuffer,
+                                    document: DrawingDocument, viewport: Viewport, viewSize: Point) throws {
+        let key = paintKey(layer)
+        if activeKey == key, activeTexture != nil { return }
+        guard let work = workTexture else { throw DocumentError.graphics }
+        let target = try activeTexture ?? texture(width: work.width, height: work.height, samples: sampleCount)
+        let incremental: Bool
+        if let old = activeKey {
+            incremental = old.id == key.id && old.raster == key.raster && old.strokes.count < key.strokes.count &&
+                Array(key.strokes.prefix(old.strokes.count)) == old.strokes
+        } else { incremental = false }
+        let pass = targetPass(target, load: incremental ? .load : .clear)
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+        do {
+            if incremental, let old = activeKey {
+                let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
+                for stroke in (sceneLayerStrokes[layer.id] ?? []).dropFirst(old.strokes.count) {
+                    committedStrokeDraws += 1
+                    encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
+                    try encode(cache[stroke.id] ?? [], symmetry: stroke.symmetry, transform: transform,
+                               size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+                }
+                incrementalLayerUpdates += 1
+            } else {
+                try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,
+                                active: nil, preview: [], guides: false, layerOnly: layer.id)
+                cachedLayerBuilds += 1
+            }
+        } catch { encoder.endEncoding(); throw error }
+        encoder.endEncoding()
+        activeTexture = target; activeKey = key
+    }
+
+    /// Keep per-sample committed coverage: restoring a resolved bitmap here would
+    /// change soft ink/eraser edges when a new stroke overlaps older MSAA samples.
+    private func renderLiveLayer(_ active: InkStroke, preview: [BrushVertex], command: MTLCommandBuffer,
+                                 document: DrawingDocument, viewport: Viewport, viewSize: Point) throws -> MTLTexture {
+        guard let base = activeTexture, let work = workTexture else { throw DocumentError.graphics }
+        let pass = targetPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+        do {
+            encoder.setRenderPipelineState(sampleCount > 1 ? restoreSamplesPipeline : compositePipeline)
+            encoder.setFragmentTexture(base, index: 0)
+            var alpha: Float = 1
+            encoder.setFragmentBytes(&alpha, length: MemoryLayout<Float>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+            try encodeLive(active, preview: preview, transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size),
+                           viewSize: viewSize, canvas: document.size, encoder: encoder)
+        } catch { encoder.endEncoding(); throw error }
+        encoder.endEncoding()
+        return work
+    }
+
+    private func resolveActiveLayer(command: MTLCommandBuffer) throws -> MTLTexture {
+        guard let base = activeTexture, let work = workTexture else { throw DocumentError.graphics }
+        guard sampleCount > 1 else { return base }
+        let pass = targetPass(base, load: .load, resolve: work)
+        pass.colorAttachments[0].storeAction = .storeAndMultisampleResolve
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+        encoder.endEncoding()
+        return work
+    }
+
+    private func encodeCachedScene(command: MTLCommandBuffer, output: MTLTexture, document: DrawingDocument,
+                                   viewport: Viewport, viewSize: Point, active: InkStroke?,
+                                   preview: [BrushVertex], guides: Bool) throws {
+        try ensureWorkTargets(width: output.width, height: output.height)
+        let next = SurfaceKey(document: document.id, canvas: document.size, view: viewSize,
+            transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size), width: output.width, height: output.height)
+        if surfaceKey != next {
+            if surfaceKey?.width != next.width || surfaceKey?.height != next.height {
+                lowerTexture = nil; upperTexture = nil; activeTexture = nil
+            }
+            lowerKey = nil; upperKey = nil; activeKey = nil; surfaceKey = next
+        }
+        let backgroundPass = targetPass(output)
+        backgroundPass.colorAttachments[0].clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
+        guard let background = command.makeRenderCommandEncoder(descriptor: backgroundPass) else { throw DocumentError.graphics }
+        do {
+            try encodeScene(encoder: background, document: document, viewport: viewport, viewSize: viewSize,
+                            active: nil, preview: [], guides: guides, backgroundOnly: true, state: singlePipeline)
+        } catch { background.endEncoding(); throw error }
+        background.endEncoding()
+        let focus = active?.layerID ?? document.activeLayerID
+        let index = document.layers.firstIndex { $0.id == focus } ?? 0
+        let below = document.layers.prefix(index).filter { $0.isVisible && $0.opacity > 0 }
+        let above = document.layers.dropFirst(index + 1).filter { $0.isVisible && $0.opacity > 0 }
+        let selected = document.layers.first { $0.id == focus && $0.isVisible && $0.opacity > 0 }
+        let surfaces = (below.isEmpty ? 0 : 1) + (above.isEmpty ? 0 : 1) + (selected == nil ? 0 : sampleCount)
+        let bytes = output.width * output.height * 4 * surfaces
+        guard bytes <= cacheBudget else {
+            clearLayerCaches()
+            try encodeGroups(command: command, output: output, document: document, viewport: viewport,
+                             viewSize: viewSize, active: active, preview: preview, guides: guides)
+            return
+        }
+        let lower = try renderStaticGroup(Array(below), previous: lowerKey, target: lowerTexture,
+            command: command, document: document, viewport: viewport, viewSize: viewSize)
+        lowerTexture = lower.0; lowerKey = lower.1
+        let upper = try renderStaticGroup(Array(above), previous: upperKey, target: upperTexture,
+            command: command, document: document, viewport: viewport, viewSize: viewSize)
+        upperTexture = upper.0; upperKey = upper.1
+        renderCacheBytes = bytes
+        if let lowerTexture { try composite(lowerTexture, opacity: 1, output: output, command: command) }
+        if let selected {
+            try prepareActiveLayer(selected, command: command, document: document, viewport: viewport, viewSize: viewSize)
+            let image: MTLTexture
+            if let active, active.layerID == selected.id {
+                image = try renderLiveLayer(active, preview: preview, command: command, document: document, viewport: viewport, viewSize: viewSize)
+            } else { image = try resolveActiveLayer(command: command) }
+            try composite(image, opacity: selected.opacity, output: output, command: command)
+        } else { activeTexture = nil; activeKey = nil }
+        if let upperTexture { try composite(upperTexture, opacity: 1, output: output, command: command) }
+    }
+
+    private func clearLayerCaches() {
+        lowerTexture = nil; upperTexture = nil; activeTexture = nil
+        lowerKey = nil; upperKey = nil; activeKey = nil; renderCacheBytes = 0
+    }
+
+    func handleMemoryPressure() {
+        clearLayerCaches()
+        cacheBudget = 0 // Keep the bounded, uncached renderer available for this session.
     }
     private func requiresGroups(_ document: DrawingDocument, active: InkStroke? = nil) -> Bool {
         active?.operation == .erase || document.strokes.contains { $0.operation == .erase } ||
@@ -324,19 +573,9 @@ final class MetalCanvasRenderer {
     private func encodeGroups(command: MTLCommandBuffer, output: MTLTexture, document: DrawingDocument,
                               viewport: Viewport, viewSize: Point, active: InkStroke?,
                               preview: [BrushVertex], guides: Bool) throws {
-        let textureInfo = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
-                            width: output.width, height: output.height, mipmapped: false)
-        textureInfo.storageMode = .private; textureInfo.usage = [.renderTarget, .shaderRead]
-        guard let layerTexture = device.makeTexture(descriptor: textureInfo) else { throw DocumentError.memoryLimit }
-        var multisample: MTLTexture?
-        if sampleCount > 1 {
-            let info = MTLTextureDescriptor()
-            info.textureType = .type2DMultisample; info.pixelFormat = .bgra8Unorm
-            info.width = output.width; info.height = output.height; info.sampleCount = sampleCount
-            info.storageMode = .private; info.usage = .renderTarget
-            multisample = device.makeTexture(descriptor: info)
-            guard multisample != nil else { throw DocumentError.memoryLimit }
-        }
+        try ensureWorkTargets(width: output.width, height: output.height)
+        guard let layerTexture = workTexture else { throw DocumentError.graphics }
+        let multisample = workMultisample
         func outputPass(load: MTLLoadAction) -> MTLRenderPassDescriptor {
             let pass = MTLRenderPassDescriptor()
             pass.colorAttachments[0].texture = output
@@ -376,7 +615,8 @@ final class MetalCanvasRenderer {
     /// Test/readback path uses the SAME pipeline, geometry, clipping and transforms
     /// as the visible canvas. BGRA rows are returned in top-left screen order.
     func renderOffscreen(document: DrawingDocument, viewport: Viewport, width: Int, height: Int,
-                         active: InkStroke? = nil, preview: [BrushVertex] = [], guides: Bool = false) async throws -> [UInt8] {
+                         active: InkStroke? = nil, preview: [BrushVertex] = [], guides: Bool = false,
+                         reference: Bool = false) async throws -> [UInt8] {
         guard width > 0, height > 0, width <= 2048, height <= 2048 else { throw DocumentError.invalidData }
         let outputDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
                                       width: width, height: height, mipmapped: false)
@@ -388,7 +628,7 @@ final class MetalCanvasRenderer {
         let color = pass.colorAttachments[0]!
         color.clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
         color.loadAction = .clear
-        if sampleCount > 1 && !requiresGroups(document, active: active) {
+        if reference && sampleCount > 1 && !requiresGroups(document, active: active) {
             let msaa = MTLTextureDescriptor()
             msaa.textureType = .type2DMultisample; msaa.pixelFormat = .bgra8Unorm
             msaa.width = width; msaa.height = height; msaa.sampleCount = sampleCount
@@ -396,7 +636,10 @@ final class MetalCanvasRenderer {
             guard let texture = device.makeTexture(descriptor: msaa) else { throw DocumentError.graphics }
             color.texture = texture; color.resolveTexture = output; color.storeAction = .multisampleResolve
         } else { color.texture = output; color.storeAction = .store }
-        if requiresGroups(document, active: active) {
+        if !reference {
+            try encodeCachedScene(command: command, output: output, document: document, viewport: viewport,
+                                  viewSize: Point(x: Double(width), y: Double(height)), active: active, preview: preview, guides: guides)
+        } else if requiresGroups(document, active: active) {
             try encodeGroups(command: command, output: output, document: document, viewport: viewport,
                              viewSize: Point(x: Double(width), y: Double(height)), active: active, preview: preview, guides: guides)
         } else {
@@ -487,6 +730,11 @@ final class MetalCanvasRenderer {
                                        constant float &opacity [[buffer(0)]]) {
         constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::nearest);
         return layer.sample(s, in.uv) * opacity;
+    }
+    fragment float4 restoreSamplesFragment(CompositeOutput in [[stage_in]],
+                                           texture2d_ms<float, access::read> layer [[texture(0)]],
+                                           uint sample [[sample_id]]) {
+        return layer.read(uint2(in.position.xy), sample);
     }
     fragment float4 inkFragment(Output in [[stage_in]]) {
         if (any(in.canvas < float2(0)) || any(in.canvas > in.limit)) discard_fragment();

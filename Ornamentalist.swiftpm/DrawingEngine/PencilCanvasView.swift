@@ -32,6 +32,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         isMultipleTouchEnabled = true
         NotificationCenter.default.addObserver(self, selector: #selector(suspendDrawing),
                                                name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(releaseRenderCaches),
+                                               name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
         accessibilityLabel = "Ornamentalist drawing canvas"
         accessibilityIdentifier = "drawingCanvas"
         isAccessibilityElement = true
@@ -194,6 +196,10 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     @objc private func suspendDrawing() {
         finishStroke()
         Task { await model.saveNow() }
+    }
+    @objc private func releaseRenderCaches() {
+        renderer?.handleMemoryPressure()
+        setNeedsDisplay()
     }
     private func report(_ error: Error) {
         // UIViewRepresentable may be updating; publish after that update finishes.
