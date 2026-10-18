@@ -2,7 +2,13 @@
 
 ## Current: 0.2.2 device compiler compatibility
 
-The physical iPad has now exposed an explicit `Ambiguous use of 'cos'` build error in StudioPanels. Version 0.2.2 removes mixed Double/CGFloat overload inference in the symmetry preview and related ornament. It also changes the unmutated Metal uniforms array to a constant. Local Swift grammar and byte-for-byte package checks pass. Apple compilation/tests for this change are pending; the 32-test result below belongs to 0.2.1. Running the corrected full package in the user's installed Swift Playground remains necessary.
+The physical iPad exposed an explicit `Ambiguous use of 'cos'` build error in StudioPanels. Version 0.2.2 removes mixed Double/CGFloat overload inference in the symmetry preview and related ornament. It also changes the unmutated Metal uniforms array to a constant.
+
+[Apple validation run 39109017201](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39109017201) passed for app-source commit `7859c245457e6053c67da9690d3007a8e729ed4f`: **32 tests passed** (19 portable, 9 native unit, 4 UI), including normal launch without showcase data, saving/relaunching and opening the symmetry panel. Normal-launch UI flow passed in 26.950 seconds. No Swift source warnings or compilation errors were reported in this run; tool/metadata notices remain. Local grammar and byte-for-byte package checks also pass.
+
+The simulator is iPad Air 11-inch (M3), iOS 26.2, using Xcode 26.6/SDK 26.5. Earlier Xcode tests also accepted the ambiguous expression, so this green run is regression evidence, not reproduction of the device compiler diagnostic. Building the corrected full package in the user's installed Swift Playground is still required to confirm device compatibility. No success for 0.2.2 on the physical iPad has been reported yet.
+
+The [direct source download without GitHub login](https://github.com/hahanooben123-spec/ornamentalist/archive/7859c245457e6053c67da9690d3007a8e729ed4f.zip) was verified to contain the corrected source and 0.2.2 manifest. Open `Ornamentalist.swiftpm` in the archive's main folder, rather than the optional minimal package under `Diagnostics`. The local iPad ZIP is rebuilt with the same app source and updated delivery documentation.
 
 ## Previous: 0.2.1 startup audit
 

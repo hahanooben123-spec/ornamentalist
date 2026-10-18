@@ -49,4 +49,6 @@ Cloud-testene kontrollerer kode og grafik i simulatoren. Pencil-følelse, håndf
 
 Ændringer på Windows og GitHub opdaterer ikke automatisk det projekt, du allerede har åbent i Swift Playground. Hent pakken fra den nye buildkørsel, pak den ud i en ny mappe i Filer, og åbn den nye `Ornamentalist.swiftpm`. Behold den tidligere kopi, især hvis den indeholder tegninger. Åbn hele pakken frem for kun at udskifte `OrnamentalistApp.swift`.
 
-Version 0.2.1 skriver `Ornamentalist 0.2.1: app entry reached` ved opstart. Derefter følger markører for synligt studio og afsluttet galleriindlæsning, hvis konsollen er tilsluttet. En tom konsol beviser ikke, hvor nedbruddet sker. Se [gennemgangen af opstarten](CRASH-AUDIT.md).
+Version 0.2.2 skriver `Ornamentalist 0.2.2: app entry reached` ved opstart. Derefter følger markører for synligt studio og afsluttet galleriindlæsning, hvis konsollen er tilsluttet. En tom konsol beviser ikke, hvor nedbruddet sker. Se [gennemgangen af opstarten](CRASH-AUDIT.md).
+
+Viser en tidligere version fejlen **Ambiguous use of 'cos'** i `StudioPanels`, indeholder 0.2.2 en rettelse af taltyperne i symmetriens forhåndsvisning. Åbn den fulde, opdaterede `Ornamentalist.swiftpm` frem for diagnosepakken i `Diagnostics`. Du behøver ikke længere ændre startskærmen til `Text(...)` for denne fejl.
