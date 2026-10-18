@@ -13,6 +13,7 @@ struct StudioPanelView: View {
     @Binding var appearance: String
     let diagnostics: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var showingAbout = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,6 +41,7 @@ struct StudioPanelView: View {
         }
         .frame(idealWidth: 360, idealHeight: panel == .symmetry ? 560 : panel == .layers ? 520 : panel == .canvas ? 460 : 620)
         .presentationCompactAdaptation(.popover)
+        .sheet(isPresented: $showingAbout) { StudioAboutView() }
         .disabled(model.isDrawing || !model.canEdit)
     }
 
@@ -110,9 +112,59 @@ struct StudioPanelView: View {
             }
             Button("Drawing performance", systemImage: "speedometer", action: diagnostics)
                 .font(.subheadline).frame(minHeight: 44)
+            Button("About Ornamentalist", systemImage: "info.circle") { showingAbout = true }
+                .font(.subheadline).frame(minHeight: 44).accessibilityIdentifier("canvasAbout")
             Text("Ornamentalist 0.10.2").font(.caption).foregroundStyle(.secondary)
                 .accessibilityIdentifier("appVersion")
         }
+    }
+}
+
+@MainActor
+struct StudioAboutView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    private var version: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        guard let version = info["CFBundleShortVersionString"] as? String else { return "Development build" }
+        if let build = info["CFBundleVersion"] as? String { return "Version \(version) (\(build))" }
+        return "Version \(version)"
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Ornamentalist").font(.system(.title, design: .serif))
+                        Text(version).font(.subheadline).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("aboutVersion")
+                        Text("Created by Christian Mortensen").font(.subheadline)
+                    }.padding(.vertical, 12)
+                }
+                Section("Contact") {
+                    Link(destination: URL(string: "mailto:Chrismortensen1997@outlook.dk")!) {
+                        Label("Chrismortensen1997@outlook.dk", systemImage: "envelope")
+                    }.accessibilityIdentifier("aboutContact")
+                }
+                Section("Privacy") {
+                    Link(destination: URL(string: "https://hahanooben123-spec.github.io/ornamentalist-website/privacy.html")!) {
+                        Label("Privacy Policy", systemImage: "hand.raised")
+                    }.accessibilityIdentifier("aboutPrivacy")
+                    Text("Your drawings are stored on your device. Export important projects before deleting or reinstalling the app.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("About")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.accessibilityIdentifier("closeAbout")
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 

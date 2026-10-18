@@ -10,6 +10,7 @@ struct StudioGallery: View {
     @State private var query = ""
     @State private var sortByName = false
     @State private var deleting: ProjectSummary?
+    @State private var showingAbout = false
 
     private var projects: [ProjectSummary] {
         let filtered = model.projects.filter { query.isEmpty || $0.title.localizedStandardContains(query) }
@@ -40,6 +41,7 @@ struct StudioGallery: View {
             .background(colorScheme == .dark ? Color(uiColor: .systemBackground) : StudioStyle.paper)
         }
         .disabled(model.busy)
+        .sheet(isPresented: $showingAbout) { StudioAboutView() }
         .overlay { if model.busy { ProgressView().padding(24).studioSurface() } }
         .alert("Delete project?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("Cancel", role: .cancel) { deleting = nil }
@@ -61,6 +63,9 @@ struct StudioGallery: View {
                         .font(.system(size: 9, weight: .medium)).tracking(1.6).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
+                Button { showingAbout = true } label: {
+                    Image(systemName: "info.circle").frame(minWidth: 44, minHeight: 44)
+                }.accessibilityLabel("About Ornamentalist").accessibilityIdentifier("galleryAbout")
                 if !compact { importButton }
             }
             HStack(alignment: .bottom) {
