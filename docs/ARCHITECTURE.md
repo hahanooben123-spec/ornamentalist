@@ -1,6 +1,6 @@
-# Drawing architecture — 0.5.0
+# Drawing architecture — 0.6.0
 
-The document stores confirmed, stabilized samples in a fixed 2048 × 2048 coordinate system, with pressure, altitude, azimuth, timestamp, brush settings, sRGB color, layer membership and frozen radial/mirror symmetry per stroke. It stores no rendered bitmap or navigation transform. Existing version 1 brush geometry is retained; version 2 adds pressure choice, stabilization, adaptive tips and storage revisions. Version 3 adds ordered layers and reflection, version 4 procedural brushes and version 5 sRGB colors and layer group opacity. Legacy drawings decode to one visible, unlocked layer with Mirror off.
+The document stores confirmed, stabilized samples in a fixed 2048 × 2048 coordinate system, with pressure, altitude, azimuth, timestamp, brush settings, sRGB color, operation, layer membership and frozen radial/mirror symmetry per stroke. Merged layers can additionally store a bounded transparent PNG base; navigation transforms remain transient. Existing version 1 brush geometry is retained; version 2 adds pressure choice, stabilization, adaptive tips and storage revisions. Version 3 adds ordered layers and reflection, version 4 procedural brushes and version 5 sRGB colors and layer group opacity. Legacy drawings decode to one visible, unlocked layer with Mirror off.
 
 ```mermaid
 flowchart LR
@@ -54,7 +54,7 @@ The renderer redraws committed chunks for each requested frame and has no tile c
 
 ## Later phases
 
-Extend layers with blending, duplication/merging and optionally per-layer symmetry defaults; current symmetry is frozen per stroke. Movable symmetry centers, imported/custom brushes, erasing and geometry tools follow. Tattoo dimensions, references, stencil previews, SVG/PDF, and high-resolution export follow after Pencil/device acceptance. No stub controls for those features are shipped.
+Extend layers with blend modes and optionally per-layer symmetry defaults; current symmetry is frozen per stroke. Movable symmetry centers, imported/custom brushes, additional eraser shapes and geometry tools follow. Tattoo dimensions, references, stencil previews, SVG/PDF, and high-resolution export follow after Pencil/device acceptance. No stub controls for those features are shipped.
 
 ## Procedural brushes (0.4.0)
 
@@ -73,3 +73,15 @@ Opaque layers retain the direct MSAA drawing path. If any visible layer has opac
 Live and predicted ink is inserted with its layer, before higher layers, in both paths. Hidden/zero-opacity layers are omitted. Core Graphics wraps each visible layer in a transparency group with group alpha, preserving overlap behavior in white/transparent PNG and thumbnails. Native brush swatches use the selected stroke color and the same Core Graphics painter.
 
 The locally adapted ColorPickerRing hue ring is MIT-licensed with original attribution and license in ThirdParty/. The ring uses explicit Double/CGFloat trigonometric boundaries, no DynamicColor runtime dependency, a separate original saturation/value square, sliders, HEX and palettes. See FARVER-OG-OPACITY.md for the pinned upstream revision and alternative evaluation.
+
+## Editing and merged raster bases (0.6.0)
+
+InkStroke stores ink/erase and an optional geometry seed. A duplicate gets a fresh stroke UUID for identity/history/cache correctness while retaining its original pattern seed. Legacy strokes use their UUID as the seed. Both real-time and replay samplers use this effective seed.
+
+Erasers use the same bounded geometry/input/symmetry pipeline. Their Metal pipeline uses zero source and one-minus-source-alpha destination blending for RGB/alpha. Any committed/live eraser forces isolated layer rendering so it cannot clear paper or lower layers. Core Graphics uses destination-out inside the same layer transparency group. Ink after an eraser paints normally.
+
+Merge down requires two adjacent visible/unlocked layers and bakes only their composite into a transparent document-sized PNG. The lower layer retains its identity/name and gets a new raster base at full opacity; source strokes from the pair are removed. One structural snapshot supports exact pre-merge Undo before closing. Hidden/locked merge is disabled. Raster validation bounds dimensions/pixels/encoded payload and rejects one raster UUID representing different bytes. Full image decoding is performed in the native layer. Repeated merge/history can retain prior encoded bases until closing, in addition to the active-document budgets; physical memory profiling is required.
+
+Metal uploads premultiplied raster bases with explicit top-left origin and draws a document-sized textured quad before that layer's source strokes. Raster identity participates in canvas preparation, so a merge with zero remaining source strokes still uploads before input resumes. Hidden bases stay cached; pruning removes bases not referenced by the active document. Core Graphics paints the same PNG with an explicit orientation transform.
+
+The pipette runs a one-pixel Core Graphics render at the mapped document pixel with white paper, visible layers/opacity, bases and erasers, excluding guides/navigation/UI. It does not allocate a full-canvas image and returns to brush mode after selecting a color. Layer previews use the export actor, isolated layer content at full opacity and 80-pixel maximum side. SwiftUI tasks are keyed by layer/raster/stroke identity, cancel stale updates and draw checkerboard transparency.
