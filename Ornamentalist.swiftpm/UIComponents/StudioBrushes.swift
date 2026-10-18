@@ -11,7 +11,7 @@ struct StudioBrushesView: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(brush.preset.name).font(.headline).accessibilityIdentifier("selectedBrush")
-                BrushSwatch(brush: brush, color: model.document?.color ?? .black).frame(height: 72)
+                BrushSwatch(brush: brush).frame(height: 72)
                     .background(.white, in: RoundedRectangle(cornerRadius: 14))
                 Text(brush.preset.hint).font(.caption).foregroundStyle(.secondary)
             }
@@ -28,7 +28,7 @@ struct StudioBrushesView: View {
                                 Text(preset.name).font(.subheadline.weight(.medium))
                                 Text(preset.family.rawValue).font(.caption2).foregroundStyle(.secondary)
                             }.frame(maxWidth: .infinity, alignment: .leading)
-                            BrushSwatch(brush: preset.makeBrush(), color: model.document?.color ?? .black).frame(width: 106, height: 38)
+                            BrushSwatch(brush: preset.makeBrush()).frame(width: 106, height: 38)
                                 .background(.white, in: RoundedRectangle(cornerRadius: 8))
                             Image(systemName: brush.preset == preset ? "checkmark.circle.fill" : "circle")
                                 .foregroundStyle(brush.preset == preset ? StudioStyle.copper : Color.secondary)
