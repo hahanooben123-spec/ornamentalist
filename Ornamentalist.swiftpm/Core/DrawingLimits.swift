@@ -4,7 +4,9 @@ enum DrawingLimits {
     static let encodedBytes = 64 * 1024 * 1024
     static let sampleCount = 100_000
     static let strokeSamples = 20_000
-    static let vertexCount = 2_000_000 // 32 MB of GPU float4 vertices, excluding MSAA targets.
+    // Storage units of 16 bytes, not expanded triangle vertices. A compact
+    // stamped dab uses two units, versus six for its expanded triangles.
+    static let vertexCount = 2_000_000 // 32 MB, excluding render targets.
     static let strokeVertices = 250_000
 }
 

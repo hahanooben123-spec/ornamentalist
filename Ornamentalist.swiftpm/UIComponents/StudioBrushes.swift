@@ -117,7 +117,7 @@ struct StudioBrushesView: View {
                 .font(.subheadline)
             VStack(alignment: .leading, spacing: 8) {
                 valueLabel("Steady line", value: "\(Int(brush.stabilization * 100))%")
-                Slider(value: Binding(get: { brush.stabilization }, set: { model.setStabilization($0) }), in: 0...0.85)
+                Slider(value: Binding(get: { brush.stabilization }, set: { model.setStabilization($0) }), in: 0...1)
                     .accessibilityLabel("Line stabilization")
             }
         }.onAppear { family = brush.preset.family }

@@ -123,10 +123,18 @@ enum BrushGeometry {
         var state = BrushStampState(id: stroke.seedID), count = 0
         for sample in stroke.samples {
             count += state.stampCount(to: sample, brush: stroke.brush) * BrushStampState.dabsPerStamp(stroke.brush) * 6
-            if count > DrawingLimits.strokeVertices { return count }
+            if count / 3 > DrawingLimits.strokeVertices { return count }
             _ = state.advance(sample, brush: stroke.brush, emit: false)
         }
         return count
+    }
+    /// Budget units are 16 bytes. Six expanded stamp vertices (96 bytes)
+    /// become four Float2 corners (32 bytes); shape coordinates are implicit.
+    static func storageCost(vertexCount: Int, stamped: Bool) -> Int {
+        stamped ? vertexCount / 3 : vertexCount
+    }
+    static func estimatedStorageCost(_ stroke: InkStroke) -> Int {
+        storageCost(vertexCount: StrokeGeometry.estimatedVertexCount(stroke), stamped: stroke.brush.usesStamps)
     }
     static func tail(_ stroke: InkStroke) -> [BrushVertex] {
         stroke.brush.usesStamps ? [] : StrokeGeometry.tail(samples: stroke.samples, brush: stroke.brush).map { BrushVertex($0) }

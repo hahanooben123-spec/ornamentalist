@@ -4,6 +4,9 @@ private struct GPUChunk {
     let buffer: MTLBuffer
     let count: Int
     var offset = 0
+    var compactStamp = false
+    var storageUnits: Int { compactStamp ? count / 3 : count }
+    var byteOffset: Int { compactStamp ? offset / 6 * 32 : offset * 16 }
 }
 
 private struct LayerPaintKey: Equatable {
@@ -85,6 +88,7 @@ final class MetalCanvasRenderer {
     private let chunkSize = 8190 // Multiple of three.
     private let inFlight = DispatchSemaphore(value: 3)
     private let sampleCount: Int
+    private let compactStamps: Bool
     private var paperSize = Point.zero
     private var paper: [GPUChunk] = []
     private var guideKey: [Double] = []
@@ -95,7 +99,10 @@ final class MetalCanvasRenderer {
     private var sceneDocumentID: UUID?
     private var sceneRevision: Int?
     private(set) var allocatedVertexCount = 0
+    private var allocatedStorageUnits = 0
+    var allocatedGeometryBytes: Int { cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.buffer.length } } }
     private var sealedVertexCount = 0
+    private var sealedStorageUnits = 0
     private var cpuFrameMilliseconds: [Double] = []
     private var gpuFrameMilliseconds: [Double] = []
     private var deferredFrames = 0
@@ -108,8 +115,8 @@ final class MetalCanvasRenderer {
             let p95 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
-        let bytes = (allocatedVertexCount + sealedVertexCount + scratch.count) * MemoryLayout<SIMD4<Float>>.stride
-        return "Ornamentalist 0.9.1\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        let bytes = allocatedGeometryBytes + sealed.reduce(0) { $0 + $1.buffer.length } + scratch.count * 16
+        return "Ornamentalist 0.9.2\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -121,11 +128,12 @@ final class MetalCanvasRenderer {
         if gpuFrameMilliseconds.count > 240 { gpuFrameMilliseconds.removeFirst() }
     }
 
-    init(view: MTKView) throws {
+    init(view: MTKView, compactStamps: Bool = true) throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
             throw DocumentError.noMetal
         }
         self.device = device
+        self.compactStamps = compactStamps
         self.queue = queue
         view.device = device
         view.colorPixelFormat = .bgra8Unorm
@@ -196,6 +204,22 @@ final class MetalCanvasRenderer {
 
     private func chunk(_ points: [SIMD4<Float>]) throws -> GPUChunk {
         guard !points.isEmpty else { throw DocumentError.graphics }
+        if compactStamps, points.count.isMultiple(of: 6), points[0].z == -1, points[0].w == -1 {
+            let local: [SIMD2<Float>] = [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, -1), SIMD2(1, 1), SIMD2(-1, 1)]
+            let stamps = points.indices.allSatisfy { SIMD2(points[$0].z, points[$0].w) == local[$0 % 6] }
+            if stamps {
+                var corners: [SIMD2<Float>] = []
+                corners.reserveCapacity(points.count / 6 * 4)
+                for start in stride(from: 0, to: points.count, by: 6) {
+                    for i in [0, 1, 2, 5] { corners.append(SIMD2(points[start + i].x, points[start + i].y)) }
+                }
+                let buffer = corners.withUnsafeBytes {
+                    device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+                }
+                guard let buffer else { throw DocumentError.graphicsMemory }
+                return GPUChunk(buffer: buffer, count: points.count, compactStamp: true)
+            }
+        }
         let buffer = points.withUnsafeBytes { bytes in
             device.makeBuffer(bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared)
         }
@@ -222,31 +246,38 @@ final class MetalCanvasRenderer {
         let ids = Set(strokes.map(\.id))
         cache = cache.filter { ids.contains($0.key) }
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
+        allocatedStorageUnits = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
     }
     func synchronize(_ strokes: [InkStroke], layers: [DrawingLayer] = []) async throws {
         let missing = strokes.filter { cache[$0.id] == nil }
-        let prepared = try await Task.detached(priority: .userInitiated) {
+        try await Task.detached(priority: .userInitiated) {
             var total = 0
             for stroke in strokes {
-                total += StrokeGeometry.estimatedVertexCount(stroke)
+                total += BrushGeometry.estimatedStorageCost(stroke)
                 guard total <= DrawingLimits.vertexCount else { throw DocumentError.memoryLimit }
             }
-            return try missing.map { stroke -> (UUID, [BrushVertex]) in
-                try Task.checkCancellation()
-                guard StrokeGeometry.estimatedVertexCount(stroke) <= DrawingLimits.strokeVertices else {
+            for stroke in missing {
+                guard BrushGeometry.estimatedStorageCost(stroke) <= DrawingLimits.strokeVertices else {
                     throw DocumentError.memoryLimit
                 }
-                return (stroke.id, BrushGeometry.mesh(stroke))
             }
         }.value
         try Task.checkCancellation()
-        let incoming = prepared.reduce(0) { $0 + $1.1.count }
+        let incoming = missing.reduce(0) { $0 + BrushGeometry.estimatedStorageCost($1) }
         let kept = strokes.filter { cache[$0.id] != nil }.reduce(0) { n, s in
-            n + (cache[s.id]?.reduce(0) { $0 + $1.count } ?? 0)
+            n + (cache[s.id]?.reduce(0) { $0 + $1.storageUnits } ?? 0)
         }
         guard incoming + kept <= DrawingLimits.vertexCount else { throw DocumentError.memoryLimit }
         var uploaded: [UUID: [GPUChunk]] = [:]
-        for (id, points) in prepared { uploaded[id] = try chunks(points) }
+        // Expand and upload one stroke at a time. More compact GPU storage must
+        // not create a document-sized expanded CPU mesh during reopening.
+        for stroke in missing {
+            let points = await Task.detached(priority: .userInitiated) { BrushGeometry.mesh(stroke) }.value
+            try Task.checkCancellation()
+            uploaded[stroke.id] = try chunks(points)
+        }
+        let uploadedCost = uploaded.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
+        guard uploadedCost + kept <= DrawingLimits.vertexCount else { throw DocumentError.memoryLimit }
         let loader = MTKTextureLoader(device: device)
         for raster in layers.compactMap(\.raster) where rasterTextures[raster.id] == nil {
             let image = try PNGExporter.rasterImage(raster)
@@ -257,25 +288,30 @@ final class MetalCanvasRenderer {
         prune(strokes, layers: layers)
         for (id, buffers) in uploaded { cache[id] = buffers }
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
+        allocatedStorageUnits = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
     }
     func begin() {
         discardUncommittedLiveCache()
         resetInputBuffers()
     }
     private func resetInputBuffers() {
-        sealed.removeAll(); sealedVertexCount = 0; scratch.removeAll(keepingCapacity: true)
+        sealed.removeAll(); sealedVertexCount = 0; sealedStorageUnits = 0; scratch.removeAll(keepingCapacity: true)
         liveRevision += 1; uploadedLive.removeAll(); uploadedLiveRevision = -1
         uploadedPrediction.removeAll(); predictionBuffers.removeAll()
     }
     func append(_ points: [BrushVertex]) throws {
         if !points.isEmpty { liveRevision += 1 }
-        guard allocatedVertexCount + sealedVertexCount + scratch.count + points.count <= DrawingLimits.vertexCount else {
+        let stamped = points.first.map { $0.local == Point(x: -1, y: -1) }
+            ?? scratch.first.map { $0.z == -1 && $0.w == -1 } ?? false
+        let liveCost = BrushGeometry.storageCost(vertexCount: scratch.count + points.count, stamped: compactStamps && stamped)
+        guard allocatedStorageUnits + sealedStorageUnits + liveCost <= DrawingLimits.vertexCount else {
             throw DocumentError.memoryLimit
         }
         for p in points {
             scratch.append(SIMD4(Float(p.point.x), Float(p.point.y), Float(p.local.x), Float(p.local.y)))
             if scratch.count == chunkSize {
-                sealed.append(try chunk(scratch))
+                let next = try chunk(scratch)
+                sealed.append(next); sealedStorageUnits += next.storageUnits
                 sealedVertexCount += scratch.count
                 scratch.removeAll(keepingCapacity: true)
             }
@@ -296,6 +332,7 @@ final class MetalCanvasRenderer {
         if !scratch.isEmpty { sealed.append(try chunk(scratch)) }
         cache[stroke.id] = sealed
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
+        allocatedStorageUnits = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
         if activeLiveID == stroke.id { pendingLiveCommit = stroke.id }
         resetInputBuffers()
     }
@@ -465,7 +502,8 @@ final class MetalCanvasRenderer {
         var skip = count, result: [GPUChunk] = []
         for chunk in chunks {
             if skip >= chunk.count { skip -= chunk.count; continue }
-            result.append(GPUChunk(buffer: chunk.buffer, count: chunk.count - skip, offset: chunk.offset + skip))
+            result.append(GPUChunk(buffer: chunk.buffer, count: chunk.count - skip, offset: chunk.offset + skip,
+                                   compactStamp: chunk.compactStamp))
             skip = 0
         }
         return result
@@ -907,7 +945,9 @@ final class MetalCanvasRenderer {
         // rather than the small inline setVertexBytes argument limit.
         encoder.setVertexBuffer(matrices, offset: 0, index: 2)
         for chunk in chunks {
-            encoder.setVertexBuffer(chunk.buffer, offset: chunk.offset * MemoryLayout<SIMD4<Float>>.stride, index: 0)
+            var compact: UInt32 = chunk.compactStamp ? 1 : 0
+            encoder.setVertexBytes(&compact, length: MemoryLayout<UInt32>.stride, index: 3)
+            encoder.setVertexBuffer(chunk.buffer, offset: chunk.byteOffset, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: chunk.count,
                                    instanceCount: symmetry.instanceCount)
         }
@@ -919,17 +959,21 @@ final class MetalCanvasRenderer {
     struct Uniforms { float4 matrix; float4 offsetSize; float4 canvas; float4 color; };
     struct Output { float4 position [[position]]; float2 canvas; float2 limit; float4 color; float2 local; float2 stamp; };
     vertex Output inkVertex(uint v [[vertex_id]], uint instance [[instance_id]],
-                           const device float4 *vertices [[buffer(0)]],
-                           constant Uniforms &u [[buffer(1)]], constant float4 *symmetry [[buffer(2)]]) {
+                           const device float2 *vertices [[buffer(0)]],
+                           constant Uniforms &u [[buffer(1)]], constant float4 *symmetry [[buffer(2)]],
+                           constant uint &compact [[buffer(3)]]) {
         float4 m = symmetry[instance * 2];
-        float2 p = vertices[v].xy;
+        const uint corner[6] = {0, 1, 2, 0, 2, 3};
+        const float2 local[4] = {float2(-1,-1), float2(1,-1), float2(1,1), float2(-1,1)};
+        float2 p = compact != 0 ? vertices[(v / 6) * 4 + corner[v % 6]] : vertices[v * 2];
+        float2 shape = compact != 0 ? local[corner[v % 6]] : vertices[v * 2 + 1];
         p = float2(m.x*p.x + m.z*p.y, m.y*p.x + m.w*p.y) + symmetry[instance*2+1].xy;
         float4 t = u.matrix;
         float2 screen = float2(t.x*p.x + t.z*p.y, t.y*p.x + t.w*p.y) + u.offsetSize.xy;
         Output out;
         out.position = float4(screen.x/u.offsetSize.z*2-1, 1-screen.y/u.offsetSize.w*2, 0, 1);
         out.canvas = p; out.limit = u.canvas.xy; out.color = u.color;
-        out.local = vertices[v].zw; out.stamp = u.canvas.zw;
+        out.local = shape; out.stamp = u.canvas.zw;
         return out;
     }
     fragment float4 rasterFragment(Output in [[stage_in]], texture2d<float> image [[texture(0)]]) {

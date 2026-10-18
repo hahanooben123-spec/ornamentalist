@@ -1,4 +1,4 @@
-# Pen response — 0.9.1
+# Pen response — 0.9.2
 
 Brush settings now include adaptive stabilization, pressure curve and minimum size.
 Solid ink supports start/end taper. Stamped brushes support Pencil tilt shading.
@@ -30,7 +30,23 @@ and thumbnails share the same geometry. Predictions use temporary filter state
 and never alter stored ink. This is geometric shading, not a simulated paper or
 wet-paint model.
 
-Document format 9 stores the additional settings and taper samples. Older formats
+Steady line now supports 0–100%. Version 0.9.2 uses a third smoothing stage to
+compensate curve-radius error at high stabilization, with light pressure filtering
+to reduce abrupt width changes. This still follows freehand input; it does not
+snap a stroke to a mathematically perfect circle or recreate Procreate's engine.
+
+Stamped geometry now stores four Float2 corners (32 bytes) per dab, instead of
+six Float4 triangle vertices (96 bytes). Metal derives the repeated corners and
+local shape coordinates. Coordinates, density, opacity, randomness and stroke
+files are unchanged. Budget accounting uses actual storage units, allowing up
+to three times as many stamped dabs at the previous 32 MB source-buffer budget.
+The per-stroke storage budget stays bounded too. Reopening expands only one
+stroke at a time rather than materializing the whole document's expanded mesh.
+Input-sample, file-size, raster and render-target limits still exist. More dabs
+can still increase GPU fill cost, export time and total memory; this change does
+not promise unlimited drawing or a measured device speedup.
+
+Document format 10 stores the expanded stabilization range and storage budget. Older formats
 remain readable; older app builds cannot read drawings saved by this version.
 
 Local checks: Swift grammar, build YAML and byte-for-byte source packaging.

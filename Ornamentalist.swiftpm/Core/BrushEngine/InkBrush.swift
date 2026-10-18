@@ -21,7 +21,7 @@ struct InkBrush: Codable, Equatable, Sendable {
         (0.2...3).contains(pressureCurve) && (0...1).contains(minimumSize) &&
         (0...2).contains(taperStart) && (0...2).contains(taperEnd) && (0...1).contains(tiltShading) &&
         width.isFinite && (0.5...160).contains(width) && stabilization.isFinite &&
-        (0...0.85).contains(stabilization) && (1...2).contains(geometryVersion) &&
+        (0...1).contains(stabilization) && (1...2).contains(geometryVersion) &&
         opacity.isFinite && (0.01...1).contains(opacity) &&
         spacing.isFinite && (0.06...4).contains(spacing) && density.isFinite && (0.05...1).contains(density)
     }

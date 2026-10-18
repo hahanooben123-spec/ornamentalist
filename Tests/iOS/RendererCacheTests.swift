@@ -3,6 +3,39 @@ import MetalKit
 @testable import Ornamentalist
 
 final class RendererCacheTests: XCTestCase {
+    @MainActor
+    func testCompactShadingMatchesExpandedLiveCommitAndReopenAcrossChunks() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
+        var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+        document.symmetry = SymmetryConfiguration(repetitions: 2, center: Point(x: 64, y: 64), mirror: true)
+        var brush = BrushPreset.dotShader.makeBrush()
+        brush.width = 20; brush.density = 1; brush.spacing = 0.06; brush.stabilization = 0
+        let compact = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        let expanded = try MetalCanvasRenderer(view: MTKView(frame: .zero), compactStamps: false)
+        var session = StrokeSession(brush: brush, symmetry: document.symmetry, existingSamples: 0, existingVertices: 0)
+        compact.begin(); expanded.begin()
+        for i in 0..<3 {
+            let addition = try session.append(StrokeSample(point: Point(x: 10 + Double(i) * 50, y: 55), pressure: 0.7,
+                altitude: 0.4, azimuth: 0.8, time: Double(i)))
+            try compact.append(addition); try expanded.append(addition)
+            let a = try await compact.renderOffscreen(document: document, viewport: Viewport(), width: 256, height: 256, active: session.stroke)
+            let b = try await expanded.renderOffscreen(document: document, viewport: Viewport(), width: 256, height: 256, active: session.stroke)
+            assertPixels(a, b)
+        }
+        XCTAssertGreaterThan(session.estimatedVertexCount, 8190)
+        try compact.commit(session.stroke); try expanded.commit(session.stroke)
+        document.strokes.append(session.stroke)
+        XCTAssertEqual(compact.allocatedGeometryBytes * 3, expanded.allocatedGeometryBytes)
+        let a = try await compact.renderOffscreen(document: document, viewport: Viewport(), width: 256, height: 256)
+        let b = try await expanded.renderOffscreen(document: document, viewport: Viewport(), width: 256, height: 256)
+        assertPixels(a, b)
+        let reopened = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await reopened.synchronize(document.strokes)
+        let c = try await reopened.renderOffscreen(document: document, viewport: Viewport(), width: 256, height: 256)
+        assertPixels(a, c)
+        XCTAssertEqual(reopened.allocatedGeometryBytes, compact.allocatedGeometryBytes)
+        compact.prune([]); XCTAssertEqual(compact.allocatedGeometryBytes, 0)
+    }
     func testLayerPreviewCacheTracksContentRatherThanVisibilityOrOpacity() async throws {
         var d = fixture(); let id = d.activeLayerID
         let service = ExportService()

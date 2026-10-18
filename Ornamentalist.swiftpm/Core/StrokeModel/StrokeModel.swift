@@ -59,7 +59,7 @@ extension InkStroke {
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 9
+    var version = 10
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -81,7 +81,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard (1...9).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...10).contains(version) else { throw DocumentError.unsupportedVersion }
         let layerIDs = Set(layers.map(\.id))
         guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
               layerIDs.contains(activeLayerID), layers.allSatisfy({
@@ -130,7 +130,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
                       sample.time.isFinite, sample.time >= lastTime else { throw DocumentError.invalidData }
                 lastTime = sample.time
             }
-            let cost = StrokeGeometry.estimatedVertexCount(stroke)
+            let cost = BrushGeometry.estimatedStorageCost(stroke)
             vertices += cost
             guard cost <= DrawingLimits.strokeVertices, vertices <= DrawingLimits.vertexCount else {
                 throw DocumentError.memoryLimit

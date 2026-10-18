@@ -2,6 +2,41 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class BrushTests: XCTestCase {
+    func testSteadyLineSupportsFullRangeAndPersists() throws {
+        var brush = InkBrush(); brush.stabilization = 1
+        XCTAssertTrue(brush.isValid)
+        let decoded = try JSONDecoder().decode(InkBrush.self, from: JSONEncoder().encode(brush))
+        XCTAssertEqual(decoded.stabilization, 1)
+        brush.stabilization = 1.01; XCTAssertFalse(brush.isValid)
+    }
+    func testDenseShadingFitsBeyondOldGeometryLimitWithoutLosingDabs() throws {
+        var brush = BrushPreset.stippleDense.makeBrush()
+        brush.width = 4; brush.spacing = 0.1; brush.stabilization = 0
+        var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
+        for i in 0..<220 { _ = try session.append(sample(Double(i) * 6, time: Double(i) / 240)) }
+        XCTAssertGreaterThan(session.estimatedVertexCount, DrawingLimits.strokeVertices)
+        XCTAssertLessThan(session.estimatedStorageCost, DrawingLimits.strokeVertices)
+        let mesh = BrushGeometry.mesh(session.stroke)
+        XCTAssertEqual(mesh.count, session.estimatedVertexCount)
+        XCTAssertEqual(mesh.count / 3, session.estimatedStorageCost)
+        var document = DrawingDocument(); document.strokes = [session.stroke]
+        try document.validate()
+        let decoded = try JSONDecoder().decode(DrawingDocument.self, from: JSONEncoder().encode(document))
+        try decoded.validate()
+        XCTAssertEqual(BrushGeometry.mesh(decoded.strokes[0]), mesh)
+    }
+    func testPressureSmoothingReducesWidthNoiseWithoutChangingInputTime() throws {
+        var brush = BrushPreset.brushPen.makeBrush(); brush.taperStart = 0; brush.taperEnd = 0
+        var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
+        for i in 0..<120 {
+            var p = sample(Double(i), time: Double(i) / 240)
+            p.pressure = i % 2 == 0 ? 0.4 : 0.8
+            _ = try session.append(p)
+        }
+        let widths = session.stroke.samples.suffix(60).map { brush.radius(pressure: $0.pressure) }
+        XCTAssertLessThan(widths.max()! - widths.min()!, brush.radius(pressure: 0.8) - brush.radius(pressure: 0.4))
+        XCTAssertEqual(session.stroke.samples.last!.time, 119.0 / 240)
+    }
     func testAdaptiveSmoothingCleansArcsWithoutShrinkingTheirRadius() throws {
         var brush = InkBrush(); brush.adaptiveStabilization = true; brush.stabilization = 0.75
         var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
@@ -212,7 +247,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 9); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 10); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }

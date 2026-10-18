@@ -9,6 +9,7 @@ struct StrokeSession {
     private var velocity = Point.zero
     private var smoothPosition: Point?
     private var smoothFollower: Point?
+    private var smoothCurveFollower: Point?
     private let inputScale: Double
     private var traveled = 0.0
     private var stableVertices = 0
@@ -28,6 +29,9 @@ struct StrokeSession {
         guard !stroke.samples.isEmpty else { return 0 }
         if stroke.brush.usesStamps { return stableVertices }
         return stableVertices + StrokeGeometry.estimatedTail(samples: stroke.samples, brush: stroke.brush)
+    }
+    var estimatedStorageCost: Int {
+        BrushGeometry.storageCost(vertexCount: estimatedVertexCount, stamped: stroke.brush.usesStamps)
     }
 
     init(brush: InkBrush, symmetry: SymmetryConfiguration, existingSamples: Int, existingVertices: Int,
@@ -50,23 +54,32 @@ struct StrokeSession {
             let measured = (sample.point - (rawPrevious?.point ?? previous.point)) * (inputScale / dt)
             let velocityAlpha = 1 - exp(-dt / 0.025)
             velocity = velocity + (measured - velocity) * velocityAlpha
-            response = 1 + min(2, velocity.length / 400)
+            // High Steady line settings must retain strong smoothing even
+            // during a fast curve, rather than mostly bypassing the control.
+            response = 1 + min(2, velocity.length / 400) * (1 - stroke.brush.stabilization * 0.65)
         }
         let duration = stroke.brush.adaptiveStabilization ? 0.065 : 0.045
         let alpha = 1 - exp(-dt * response / (stroke.brush.stabilization * duration))
         var result = sample
         if stroke.brush.adaptiveStabilization {
-            // Two exponential stages suppress fine wobble. Compensating the
-            // follower's delay retains the radius of a deliberate curve instead
-            // of pulling it inward like a plain moving position average.
+            // Three bounded stages compensate both line delay and the leading
+            // curvature error of two stages. Strong smoothing can therefore
+            // clean a deliberate arc without inflating or shrinking its radius.
             let first = smoothPosition ?? previous.point
             let next = first + (sample.point - first) * alpha
             let follower = smoothFollower ?? previous.point
             let nextFollower = follower + (next - follower) * alpha
+            let curveFollower = smoothCurveFollower ?? previous.point
+            let nextCurveFollower = curveFollower + (nextFollower - curveFollower) * alpha
             smoothPosition = next; smoothFollower = nextFollower
-            result.point = next * 2 - nextFollower
+            smoothCurveFollower = nextCurveFollower
+            result.point = next * 3 - nextFollower * 3 + nextCurveFollower
         } else {
             result.point = previous.point + (sample.point - previous.point) * alpha
+        }
+        if stroke.brush.pressureEnabled {
+            let pressureAlpha = 1 - exp(-dt / 0.01)
+            result.pressure = previous.pressure + (sample.pressure - previous.pressure) * pressureAlpha
         }
         return result
     }
@@ -95,7 +108,7 @@ struct StrokeSession {
         guard stroke.samples.count < remainingSamples else { throw sampleLimitError }
         if stroke.brush.usesStamps {
             let cost = stamps.stampCount(to: sample, brush: stroke.brush) * BrushStampState.dabsPerStamp(stroke.brush) * 6
-            guard stableVertices + cost <= remainingVertices else { throw vertexLimitError }
+            guard (stableVertices + cost) / 3 <= remainingVertices else { throw vertexLimitError }
             let addition = stamps.advance(sample, brush: stroke.brush).flatMap(\.vertices)
             stroke.samples.append(sample); filtered = sample; stableVertices += cost
             return addition
@@ -140,7 +153,7 @@ struct StrokeSession {
             let sample = copy.stabilized(raw, previous: copy.filtered)
             if stroke.brush.usesStamps {
                 let cost = copy.stamps.stampCount(to: sample, brush: stroke.brush) * BrushStampState.dabsPerStamp(stroke.brush) * 6
-                guard stableVertices + vertices.count + cost <= remainingVertices else { break }
+                guard (stableVertices + vertices.count + cost) / 3 <= remainingVertices else { break }
                 vertices += copy.stamps.advance(sample, brush: stroke.brush).flatMap(\.vertices)
             } else {
                 var at = sample

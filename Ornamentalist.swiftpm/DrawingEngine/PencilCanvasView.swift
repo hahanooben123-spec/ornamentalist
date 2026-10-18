@@ -281,7 +281,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             do { try renderer?.commit(stroke) } catch { renderer?.cancel(); report(error) }
         }
         model.setDrawing(false)
-        if !stroke.samples.isEmpty { model.append(stroke, estimatedVertices: completed.estimatedVertexCount) }
+        if !stroke.samples.isEmpty { model.append(stroke, estimatedVertices: completed.estimatedStorageCost) }
         navigationGestures.forEach { $0.isEnabled = true }
         updateBrushCursor()
         setNeedsDisplay()

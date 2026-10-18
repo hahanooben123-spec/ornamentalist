@@ -153,7 +153,7 @@ final class StudioModel: ObservableObject {
         schedule.saved(); lastCheckpointSampleCount = -1
         lastCheckpointStrokeID = nil
         usedSamples = d.strokes.reduce(0) { $0 + $1.samples.count }
-        usedVertices = d.strokes.reduce(0) { $0 + StrokeGeometry.estimatedVertexCount($1) }
+        usedVertices = d.strokes.reduce(0) { $0 + BrushGeometry.estimatedStorageCost($1) }
         recoveryNotice = recovered
         saveStatus = recovered ? "Recovered confirmed ink" : "Saved on iPad"
     }
@@ -220,7 +220,7 @@ final class StudioModel: ObservableObject {
               d.layers.contains(where: { $0.id == stroke.layerID && $0.isVisible && !$0.isLocked }) else { return }
         history.recordNewStroke(stroke, in: &d); document = d; changed()
         usedSamples += stroke.samples.count
-        usedVertices += estimatedVertices ?? StrokeGeometry.estimatedVertexCount(stroke)
+        usedVertices += estimatedVertices ?? BrushGeometry.estimatedStorageCost(stroke)
     }
     func undo() {
         finishLayerOpacityEdit()
@@ -234,7 +234,7 @@ final class StudioModel: ObservableObject {
     }
     private func recountInk() {
         usedSamples = document?.strokes.reduce(0) { $0 + $1.samples.count } ?? 0
-        usedVertices = document?.strokes.reduce(0) { $0 + StrokeGeometry.estimatedVertexCount($1) } ?? 0
+        usedVertices = document?.strokes.reduce(0) { $0 + BrushGeometry.estimatedStorageCost($1) } ?? 0
     }
     func setMirror(_ enabled: Bool) {
         guard canEdit, !isDrawing, document != nil else { return }
@@ -289,7 +289,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 9
+            after.layers[index].raster = raster; after.version = 10
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -337,7 +337,7 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.layers[index].raster?.placement = p; after.version = 9
+            after.layers[index].raster?.placement = p; after.version = 10
             do {
                 try after.validate()
                 if before.layers != after.layers {
@@ -448,7 +448,7 @@ final class StudioModel: ObservableObject {
     }
     func setStabilization(_ amount: Double) {
         guard canEdit, !isDrawing, amount.isFinite else { return }
-        document?.brush.stabilization = max(0, min(0.85, amount)); changed()
+        document?.brush.stabilization = max(0, min(1, amount)); changed()
     }
     func setPenResponse(adaptive: Bool? = nil, curve: Double? = nil, minimum: Double? = nil,
                         start: Double? = nil, end: Double? = nil, tilt: Double? = nil) {
@@ -462,7 +462,7 @@ final class StudioModel: ObservableObject {
         document?.brush = brush; changed()
     }
     private func changed() {
-        document?.version = 9; document?.modified = Date()
+        document?.version = 10; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"
