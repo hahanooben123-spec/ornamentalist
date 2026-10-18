@@ -289,7 +289,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 10
+            after.layers[index].raster = raster; after.version = 11
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -337,7 +337,7 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.layers[index].raster?.placement = p; after.version = 10
+            after.layers[index].raster?.placement = p; after.version = 11
             do {
                 try after.validate()
                 if before.layers != after.layers {
@@ -450,6 +450,10 @@ final class StudioModel: ObservableObject {
         guard canEdit, !isDrawing, amount.isFinite else { return }
         document?.brush.stabilization = max(0, min(1, amount)); changed()
     }
+    func setStabilizationEnabled(_ enabled: Bool) {
+        guard canEdit, !isDrawing else { return }
+        document?.brush.stabilizationEnabled = enabled; changed()
+    }
     func setPenResponse(adaptive: Bool? = nil, curve: Double? = nil, minimum: Double? = nil,
                         start: Double? = nil, end: Double? = nil, tilt: Double? = nil) {
         guard canEdit, !isDrawing, var brush = document?.brush else { return }
@@ -462,7 +466,7 @@ final class StudioModel: ObservableObject {
         document?.brush = brush; changed()
     }
     private func changed() {
-        document?.version = 10; document?.modified = Date()
+        document?.version = 11; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"

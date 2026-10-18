@@ -4,6 +4,7 @@ struct InkBrush: Codable, Equatable, Sendable {
     var width = 5.0
     var pressureEnabled = false
     var stabilization = 0.25
+    var stabilizationEnabled = true
     var geometryVersion = 2
     var preset = BrushPreset.fineliner
     var opacity = 1.0
@@ -43,6 +44,7 @@ extension InkBrush {
         width = try c.decode(Double.self, forKey: .width)
         pressureEnabled = try c.decodeIfPresent(Bool.self, forKey: .pressureEnabled) ?? true
         stabilization = try c.decodeIfPresent(Double.self, forKey: .stabilization) ?? 0
+        stabilizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .stabilizationEnabled) ?? true
         geometryVersion = try c.decodeIfPresent(Int.self, forKey: .geometryVersion) ?? 1
         preset = try c.decodeIfPresent(BrushPreset.self, forKey: .preset) ?? .fineliner
         opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 1

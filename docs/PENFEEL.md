@@ -1,4 +1,4 @@
-# Pen response — 0.9.2
+# Pen response — 0.9.3
 
 Brush settings now include adaptive stabilization, pressure curve and minimum size.
 Solid ink supports start/end taper. Stamped brushes support Pencil tilt shading.
@@ -46,7 +46,17 @@ Input-sample, file-size, raster and render-target limits still exist. More dabs
 can still increase GPU fill cost, export time and total memory; this change does
 not promise unlimited drawing or a measured device speedup.
 
-Document format 10 stores the expanded stabilization range and storage budget. Older formats
+Version 0.9.3 adds an explicit Stabilization on/off switch. Off bypasses input
+smoothing, while the remembered strength remains available when enabled again.
+The former Adaptive stabilization toggle only selected the speed adaptation;
+it did not disable the stabilizer. That control is now labeled Adapt to drawing
+speed. Higher strength now uses a longer smoothing interval, with partial delay
+compensation instead of triple compensation. This deliberately retains a visible
+tradeoff: smoother strokes follow the Pencil more slowly at high settings.
+Regression replay covers 4 Hz and 9 Hz hand wobble at 60/120/240 input samples
+per second, both speed modes, exact bypass, and clear strength differentiation.
+
+Document format 11 stores the explicit stabilization switch. Older formats
 remain readable; older app builds cannot read drawings saved by this version.
 
 Local checks: Swift grammar, build YAML and byte-for-byte source packaging.

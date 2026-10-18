@@ -2,6 +2,35 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class BrushTests: XCTestCase {
+    func testStabilizationOffIsExactAndFullStrengthVisiblyReducesHandWobble() throws {
+        for frequency in [60, 120, 240] {
+            for adaptive in [false, true] {
+                func replay(strength: Double, enabled: Bool) throws -> InkStroke {
+                    var brush = InkBrush(); brush.stabilization = strength
+                    brush.stabilizationEnabled = enabled; brush.adaptiveStabilization = adaptive
+                    var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(mirror: true), existingSamples: 0, existingVertices: 0)
+                    for i in 0..<(frequency * 2) {
+                        let t = Double(i) / Double(frequency)
+                        let wobble = 4 * sin(2 * Double.pi * 4 * t) + 0.6 * sin(2 * Double.pi * 9 * t)
+                        _ = try session.append(sample(t * 100, y: wobble, time: t))
+                    }
+                    return session.stroke
+                }
+                let off = try replay(strength: 1, enabled: false)
+                let zero = try replay(strength: 0, enabled: true)
+                XCTAssertEqual(off.samples, zero.samples)
+                let weak = try replay(strength: 0.25, enabled: true)
+                let strong = try replay(strength: 1, enabled: true)
+                func error(_ stroke: InkStroke) -> Double {
+                    let steady = stroke.samples.filter { $0.time > 0.5 }
+                    return steady.reduce(0) { $0 + abs($1.point.y) } / Double(steady.count)
+                }
+                XCTAssertLessThan(error(strong), error(off) * 0.65, "\(frequency) Hz, adaptive \(adaptive)")
+                XCTAssertLessThan(error(strong), error(weak) * 0.7)
+                XCTAssertNotEqual(BrushGeometry.mesh(off), BrushGeometry.mesh(strong))
+            }
+        }
+    }
     func testSteadyLineSupportsFullRangeAndPersists() throws {
         var brush = InkBrush(); brush.stabilization = 1
         XCTAssertTrue(brush.isValid)
@@ -65,7 +94,9 @@ final class BrushTests: XCTestCase {
         let stable = session.stroke.samples.dropFirst(30)
         let mean = stable.reduce(0) { $0 + abs($1.point.y) } / Double(stable.count)
         XCTAssertLessThan(mean, 0.8)
-        XCTAssertLessThan(239 - session.stroke.samples.last!.point.x, 5)
+        // High stabilization now deliberately trades some following delay for
+        // visible smoothing of ordinary hand wobble, rather than cancelling it.
+        XCTAssertLessThan(239 - session.stroke.samples.last!.point.x, 10)
     }
     func testAdaptiveStabilizationIsConsistentAtDifferentZooms() throws {
         var brush = InkBrush(); brush.adaptiveStabilization = true; brush.stabilization = 0.6
@@ -247,7 +278,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 10); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 11); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }

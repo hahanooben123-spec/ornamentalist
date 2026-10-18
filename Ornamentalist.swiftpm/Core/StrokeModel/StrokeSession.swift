@@ -9,7 +9,6 @@ struct StrokeSession {
     private var velocity = Point.zero
     private var smoothPosition: Point?
     private var smoothFollower: Point?
-    private var smoothCurveFollower: Point?
     private let inputScale: Double
     private var traveled = 0.0
     private var stableVertices = 0
@@ -44,7 +43,7 @@ struct StrokeSession {
         remainingVertices = min(DrawingLimits.strokeVertices, DrawingLimits.vertexCount - existingVertices)
     }
     private mutating func stabilized(_ sample: StrokeSample, previous: StrokeSample?) -> StrokeSample {
-        guard let previous, stroke.brush.stabilization > 0 else { return sample }
+        guard let previous, stroke.brush.stabilizationEnabled, stroke.brush.stabilization > 0 else { return sample }
         let dt = max(0.001, min(0.1, sample.time - previous.time))
         var response = 1.0
         if stroke.brush.adaptiveStabilization {
@@ -58,25 +57,20 @@ struct StrokeSession {
             // during a fast curve, rather than mostly bypassing the control.
             response = 1 + min(2, velocity.length / 400) * (1 - stroke.brush.stabilization * 0.65)
         }
-        let duration = stroke.brush.adaptiveStabilization ? 0.065 : 0.045
-        let alpha = 1 - exp(-dt * response / (stroke.brush.stabilization * duration))
+        // A quadratic strength scale makes high settings meaningfully stronger
+        // for ordinary hand wobble (a few Hz), not only sample-to-sample noise.
+        let duration = 0.012 + stroke.brush.stabilization * stroke.brush.stabilization * 0.12
+        let alpha = 1 - exp(-dt * response / duration)
         var result = sample
-        if stroke.brush.adaptiveStabilization {
-            // Three bounded stages compensate both line delay and the leading
-            // curvature error of two stages. Strong smoothing can therefore
-            // clean a deliberate arc without inflating or shrinking its radius.
-            let first = smoothPosition ?? previous.point
-            let next = first + (sample.point - first) * alpha
-            let follower = smoothFollower ?? previous.point
-            let nextFollower = follower + (next - follower) * alpha
-            let curveFollower = smoothCurveFollower ?? previous.point
-            let nextCurveFollower = curveFollower + (nextFollower - curveFollower) * alpha
-            smoothPosition = next; smoothFollower = nextFollower
-            smoothCurveFollower = nextCurveFollower
-            result.point = next * 3 - nextFollower * 3 + nextCurveFollower
-        } else {
-            result.point = previous.point + (sample.point - previous.point) * alpha
-        }
+        // Partial delay compensation preserves deliberate arcs while retaining
+        // low-frequency smoothing. Full triple compensation was too eager to
+        // follow the very hand wobble Steady line should remove.
+        let first = smoothPosition ?? previous.point
+        let next = first + (sample.point - first) * alpha
+        let follower = smoothFollower ?? previous.point
+        let nextFollower = follower + (next - follower) * alpha
+        smoothPosition = next; smoothFollower = nextFollower
+        result.point = next * 1.5 - nextFollower * 0.5
         if stroke.brush.pressureEnabled {
             let pressureAlpha = 1 - exp(-dt / 0.01)
             result.pressure = previous.pressure + (sample.pressure - previous.pressure) * pressureAlpha
@@ -145,7 +139,7 @@ struct StrokeSession {
         var copy = self, vertices: [BrushVertex] = []
         let horizon = (filtered?.time ?? 0) + 1.0 / 60
         for raw in predictions.prefix(12) {
-            if stroke.brush.stabilization > 0, raw.time > horizon { break }
+            if stroke.brush.stabilizationEnabled, stroke.brush.stabilization > 0, raw.time > horizon { break }
             guard raw.time.isFinite, raw.time > (copy.filtered?.time ?? -.infinity),
                   raw.point.isFinite, raw.pressure.isFinite,
                   raw.altitude.isFinite, raw.azimuth.isFinite else { continue }

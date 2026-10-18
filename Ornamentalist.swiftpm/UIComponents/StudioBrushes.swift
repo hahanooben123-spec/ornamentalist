@@ -113,13 +113,18 @@ struct StudioBrushesView: View {
                     Text("Tilt Pencil for a wider, flatter shading footprint.").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Toggle("Adaptive stabilization", isOn: Binding(get: { brush.adaptiveStabilization }, set: { model.setPenResponse(adaptive: $0) }))
-                .font(.subheadline)
+            Toggle("Stabilization", isOn: Binding(get: { brush.stabilizationEnabled }, set: { model.setStabilizationEnabled($0) }))
+                .font(.subheadline).accessibilityIdentifier("stabilizationEnabled")
             VStack(alignment: .leading, spacing: 8) {
                 valueLabel("Steady line", value: "\(Int(brush.stabilization * 100))%")
                 Slider(value: Binding(get: { brush.stabilization }, set: { model.setStabilization($0) }), in: 0...1)
                     .accessibilityLabel("Line stabilization")
-            }
+                    .accessibilityIdentifier("stabilizationStrength")
+                Toggle("Adapt to drawing speed", isOn: Binding(get: { brush.adaptiveStabilization }, set: { model.setPenResponse(adaptive: $0) }))
+                    .font(.subheadline)
+                Text("Higher strength smooths more and follows Pencil more slowly. Changes apply to the next stroke.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.disabled(!brush.stabilizationEnabled)
         }.onAppear { family = brush.preset.family }
         .onDisappear { model.brushPreviewRequested?(false) }
     }
