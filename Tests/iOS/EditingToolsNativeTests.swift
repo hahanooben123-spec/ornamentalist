@@ -74,6 +74,13 @@ final class EditingToolsNativeTests: XCTestCase {
         }
         let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero)); try await renderer.synchronize(d.strokes, layers: d.layers)
         let pixels = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        for (x, y) in [(80, 64), (30, 25), (30, 103)] {
+            let expected = try pixel(before, x: x, y: y)
+            let index = screenIndex(Double(x), Double(y))
+            XCTAssertEqual(Double(pixels[index]), Double(expected[2]), accuracy: 4)
+            XCTAssertEqual(Double(pixels[index + 1]), Double(expected[1]), accuracy: 4)
+            XCTAssertEqual(Double(pixels[index + 2]), Double(expected[0]), accuracy: 4)
+        }
         let green = screenIndex(30, 25), flipped = screenIndex(30, 103)
         XCTAssertGreaterThan(Int(pixels[green + 1]) - Int(pixels[green + 2]), 80)
         XCTAssertGreaterThan(pixels[flipped], 240); XCTAssertLessThan(pixels[flipped + 1], 200)
