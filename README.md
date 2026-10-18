@@ -12,13 +12,13 @@ A native iPad app playground in Swift and SwiftUI, with UIKit Pencil input and M
 2. Tap the ZIP in Files to extract it. Inside, find **Ornamentalist.swiftpm**. Open/share that app playground with **Swift Playground** (formerly Swift Playgrounds). Open the `.swiftpm` document, not the repository's root `Package.swift`.
 3. Let the app playground load, then tap **Run App**. No Swift packages, permissions, terminal, CocoaPods, or custom shader build phase are required.
 4. Tap **New drawing**, give it a name, then **Create drawing**. Draw on the white paper with Apple Pencil. The default is eight radial copies.
-5. Use the `−`/`+` Stepper to set 1–64 copies. One means symmetry off. Existing strokes keep their original symmetry.
-6. Use two fingers to pan, pinch to zoom, or rotate. Navigation pauses during a Pencil stroke so a palm cannot shift its coordinate frame. **Canvas → Reset canvas view** restores the fit.
+5. Open **Symmetry** and use a preset or the Stepper to set 1–64 copies. One means symmetry off. Existing strokes keep their original symmetry.
+6. Use two fingers to pan, pinch to zoom, or rotate. Navigation pauses during a Pencil stroke so a palm cannot shift its coordinate frame. **Canvas → Fit drawing to screen** restores the fit.
 7. Use Undo/Redo for complete symmetric strokes. Use **Save and export → Save drawing** to save immediately. Completed edits autosave after 0.5 seconds idle or two seconds of continuous editing, checked by a 0.25-second timer. Confirmed points of an active stroke are checkpointed separately. **Gallery** locks editing and saves before closing; tap a project to reopen and keep drawing.
-8. Use **Save and export → Export PNG** and choose **Save to Files** in the iPad share sheet. Export is 2048 × 2048 pixels, with either white or transparent background; guides are excluded.
-9. Use **Save and export → Export editable project** to save an `.ornamentalist.json` backup in Files. In Gallery, tap **Import project** to reopen it as a new editable project. Imports never overwrite the original.
+8. Use the export icon → **PNG · White paper** or **PNG · Transparent** and choose **Save to Files** in the iPad share sheet. Export is 2048 × 2048 pixels; guides are excluded.
+9. Use the export icon → **Editable project** to save an `.ornamentalist.json` backup in Files. In Gallery, tap **Import** to reopen it as a new editable project. Imports never overwrite the original.
 10. Use the ellipsis on a gallery card, or touch and hold its preview, to **Rename**. Search and sort your drawings above the cards. Thumbnails are created when you return to Gallery. The floating **Fineliner** panel controls width, pressure and stabilization; **Symmetry** provides presets and a precise 1–64 Stepper. Changes apply to the next stroke.
-11. After a drawing test, open **Canvas → Performance report** to inspect and copy CPU submission/GPU timing samples and source-buffer memory. This does not measure Pencil-to-display latency or total app RAM.
+11. After a drawing test, open **Canvas → Drawing performance** to inspect and copy CPU submission/GPU timing samples and source-buffer memory. This does not measure Pencil-to-display latency or total app RAM.
 
 The warm paper gallery and floating studio controls follow system light/dark appearance; **Canvas → Studio appearance** can override it. The drawing paper stays white. The upper-right focus button hides the controls; its replacement restores them. Panels overlay the canvas without changing its coordinate frame. Apple Pencil draws by default. Optional **Canvas → Draw with finger** is for basic testing. Starting a two-finger gesture cancels an unfinished finger stroke. Finger mode is not the palm-rejection mode.
 

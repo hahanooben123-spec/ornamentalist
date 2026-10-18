@@ -72,7 +72,7 @@ struct StudioGallery: View {
         Button(action: create) {
             Label("New drawing", systemImage: "plus").font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 20).frame(minHeight: 48)
-                .foregroundStyle(.white).background(StudioStyle.copper, in: Capsule())
+                .foregroundStyle(.white).background(StudioStyle.copperFill, in: Capsule())
         }.buttonStyle(StudioPressStyle()).accessibilityIdentifier("newDrawing")
     }
 
@@ -197,7 +197,7 @@ struct NewDrawingSheet: View {
                 Button(action: start) {
                     Text("Create drawing").fontWeight(.semibold).frame(maxWidth: .infinity).frame(height: 52)
                 }
-                .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+                .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(StudioStyle.copperFill)
                 .accessibilityIdentifier("createDrawing")
                 Spacer(minLength: 0)
             }

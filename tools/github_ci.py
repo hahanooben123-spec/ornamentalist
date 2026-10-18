@@ -3,6 +3,7 @@ import argparse
 import io
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import urllib.error
@@ -51,7 +52,7 @@ def request(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['status', 'logs'])
+    parser.add_argument('action', choices=['status', 'logs', 'screenshots'])
     parser.add_argument('--run', type=int)
     args = parser.parse_args()
     if args.action == 'status':
@@ -62,6 +63,28 @@ def main():
             return
         runs = json.loads(request('/actions/runs?per_page=5'))['workflow_runs']
         print(json.dumps([{key: run.get(key) for key in ['id', 'head_sha', 'status', 'conclusion', 'html_url', 'created_at']} for run in runs], indent=2))
+    elif args.action == 'screenshots':
+        if args.run is None:
+            parser.error('--run is required for screenshots')
+        artifacts = json.loads(request(f'/actions/runs/{args.run}/artifacts'))['artifacts']
+        artifact = next((a for a in artifacts if a['name'] == 'studio-ui-screenshots'), None)
+        if artifact is None:
+            raise SystemExit('Screenshot artifact is not available yet.')
+        output = Path(__file__).resolve().parents[1] / 'dist' / 'ui-preview' / str(args.run)
+        output.mkdir(parents=True, exist_ok=True)
+        archive = zipfile.ZipFile(io.BytesIO(request(f"/actions/artifacts/{artifact['id']}/zip")))
+        for entry in archive.infolist():
+            target = (output / entry.filename).resolve()
+            if not target.is_relative_to(output.resolve()):
+                raise SystemExit('Unsafe artifact path')
+            if entry.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(entry))
+        print(f'Screenshots extracted to {output}')
+        for path in sorted(output.rglob('*.png')):
+            print(path.relative_to(output))
     else:
         if args.run is None:
             parser.error('--run is required for logs')

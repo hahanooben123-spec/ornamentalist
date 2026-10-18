@@ -50,7 +50,7 @@ struct StudioPanelView: View {
                     Text("\(document.brush.width.formatted(.number.precision(.fractionLength(1)))) px")
                         .monospacedDigit().foregroundStyle(.secondary)
                 }.font(.subheadline)
-                Slider(value: Binding(get: { document.brush.width }, set: model.setWidth), in: 0.5...40)
+                Slider(value: Binding(get: { document.brush.width }, set: { model.setWidth($0) }), in: 0.5...40)
                     .accessibilityLabel("Line width")
                 HStack(spacing: 8) {
                     ForEach([2.0, 5, 10, 20], id: \.self) { width in
@@ -63,7 +63,7 @@ struct StudioPanelView: View {
                     }
                 }
             }
-            Toggle("Pressure sensitivity", isOn: Binding(get: { document.brush.pressureEnabled }, set: model.setPressure))
+            Toggle("Pressure sensitivity", isOn: Binding(get: { document.brush.pressureEnabled }, set: { model.setPressure($0) }))
                 .font(.subheadline)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -71,7 +71,7 @@ struct StudioPanelView: View {
                     Spacer()
                     Text("\(Int(document.brush.stabilization * 100))%").monospacedDigit().foregroundStyle(.secondary)
                 }.font(.subheadline)
-                Slider(value: Binding(get: { document.brush.stabilization }, set: model.setStabilization), in: 0...0.85)
+                Slider(value: Binding(get: { document.brush.stabilization }, set: { model.setStabilization($0) }), in: 0...0.85)
                     .accessibilityLabel("Line stabilization")
                 Text("Smooths small movements as you draw.").font(.caption).foregroundStyle(.secondary)
             }
@@ -91,12 +91,12 @@ struct StudioPanelView: View {
                         Text(count == 1 ? "Off" : "×\(count)").font(.subheadline.monospacedDigit())
                             .frame(maxWidth: .infinity).frame(height: 44)
                             .foregroundStyle(document.symmetry.repetitions == count ? Color.white : Color.primary)
-                            .background(document.symmetry.repetitions == count ? StudioStyle.copper : Color.secondary.opacity(0.08),
+                            .background(document.symmetry.repetitions == count ? StudioStyle.copperFill : Color.secondary.opacity(0.08),
                                         in: RoundedRectangle(cornerRadius: 12))
                     }.accessibilityLabel("Symmetry \(count)").accessibilityIdentifier("symmetry-\(count)")
                 }
             }
-            Stepper(value: Binding(get: { document.symmetry.repetitions }, set: model.setRepetitions), in: 1...64) {
+            Stepper(value: Binding(get: { document.symmetry.repetitions }, set: { model.setRepetitions($0) }), in: 1...64) {
                 Text("\(document.symmetry.repetitions) copies").monospacedDigit()
             }.font(.subheadline)
             Toggle("Show guides", isOn: $model.guides).font(.subheadline)

@@ -36,7 +36,7 @@ struct StudioView: View {
     }
 
     var body: some View {
-        Group {
+        ZStack {
             if let document = model.document { editor(document) }
             else {
                 StudioGallery(model: model, create: { creating = true }, importProject: { importing = true }) { project in
@@ -51,7 +51,8 @@ struct StudioView: View {
             guard !prepared else { return }
             prepared = true
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--ui-showcase") {
+            if ProcessInfo.processInfo.arguments.contains("--ui-showcase"),
+               !ProcessInfo.processInfo.arguments.contains("--ui-empty") {
                 do { try await StudioShowcase.seed(repository: model.repository) }
                 catch { model.error = error.localizedDescription }
             }

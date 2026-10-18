@@ -65,6 +65,7 @@ final class StudioUITests: XCTestCase {
     func testCreateNamedDrawing() {
         app.buttons["newDrawing"].firstMatch.tap()
         XCTAssertTrue(app.textFields["drawingName"].waitForExistence(timeout: 5))
+        screenshot("08-New-drawing")
         app.textFields["drawingName"].tap()
         app.textFields["drawingName"].typeText("My first ornament")
         app.buttons["createDrawing"].tap()
@@ -72,5 +73,14 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["My first ornament"].exists)
         app.buttons["gallery"].tap()
         XCTAssertTrue(app.buttons["drawing-My first ornament"].waitForExistence(timeout: 15))
+    }
+
+    func testEmptyStudio() {
+        app.terminate()
+        app.launchArguments = ["--ui-showcase", "--ui-empty"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["It starts with a single line."].waitForExistence(timeout: 10))
+        screenshot("09-Empty-studio")
+        XCTAssertTrue(app.buttons["newDrawing"].firstMatch.isEnabled)
     }
 }

@@ -1,7 +1,12 @@
 import SwiftUI
 
 enum StudioStyle {
-    static let copper = Color(red: 0.65, green: 0.36, blue: 0.23)
+    static let copperFill = Color(red: 0.65, green: 0.36, blue: 0.23)
+    static let copper = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.88, green: 0.65, blue: 0.49, alpha: 1)
+            : UIColor(red: 0.65, green: 0.36, blue: 0.23, alpha: 1)
+    })
     static let workspace = Color(red: 0.13, green: 0.14, blue: 0.16)
     static let paper = Color(red: 0.97, green: 0.95, blue: 0.91)
 }
