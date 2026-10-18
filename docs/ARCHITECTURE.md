@@ -1,6 +1,6 @@
-# Phase 1 architecture
+# Drawing architecture — 0.3.0
 
-The document stores confirmed, stabilized samples in a fixed 2048 × 2048 coordinate system, with pressure, altitude, azimuth, timestamp, brush settings, and frozen radial symmetry per stroke. It stores no rendered bitmap or navigation transform. Existing version 1 brush geometry is retained; version 2 adds pressure choice, stabilization, adaptive tips and storage revisions. Phase 2 can place these strokes inside layers.
+The document stores confirmed, stabilized samples in a fixed 2048 × 2048 coordinate system, with pressure, altitude, azimuth, timestamp, brush settings, layer membership and frozen radial/mirror symmetry per stroke. It stores no rendered bitmap or navigation transform. Existing version 1 brush geometry is retained; version 2 adds pressure choice, stabilization, adaptive tips and storage revisions. Version 3 adds ordered layers and reflection. Legacy drawings decode to one visible, unlocked layer with Mirror off.
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,13 @@ flowchart LR
 
 Only the Pencil touch is selected by default. Navigation recognizers ignore Pencil and pause during Pencil strokes. A testable StrokeSession deduplicates timestamps, stabilizes confirmed input with a time-based low-pass filter, reserves sample/geometry budgets and appends one source stroke. Prediction runs on a copy of filter state and cannot modify confirmed ink. The quadratic builder adds stable sections incrementally; only its last half-segment is replaceable. Finger gesture cancellation removes the tentative stroke and requests persistence of that cancellation.
 
-The CPU tessellates only one source stroke. GPU instancing applies up to 64 radial transforms while drawing. Stable live triangles are sealed into immutable GPU chunks. Only the bounded unsealed chunk and short prediction tail need new uploads each frame. Committed stroke buffers are cached by immutable stroke UUID. Undo removes their cache entries; redo reconstructs them from samples.
+The CPU tessellates only one source stroke. GPU instancing applies up to 64 rotations or 128 transforms with Mirror while drawing. Reflection is about the horizontal center axis, followed by each radial rotation; guide rays include every resulting reflection axis. Symmetry matrices use an MTLBuffer so the 128-transform case does not depend on the small inline vertex-argument limit. Stable live triangles are sealed into immutable GPU chunks. Only the bounded unsealed chunk and short prediction tail need new uploads each frame. Committed stroke buffers are cached by immutable stroke UUID. Undo removes their cache entries; redo reconstructs them from samples.
+
+## Layers and history
+
+Layer metadata is ordered bottom to top. Source strokes remain in chronological order and reference a layer UUID. The renderer and PNG exporter share the same visible-layer projection. The renderer caches this projection by immutable stroke IDs and visible layer order, so visibility/reorder changes invalidate it without re-tessellating ink. Hidden layers retain their editable data and GPU geometry; locked layers remain visible. Both hidden and locked active layers reject new input. Layer and symmetry changes are frozen during a live stroke.
+
+Stroke history commands retain the full original stroke, including layer and symmetry. Layer actions store copy-on-write snapshots of layers, selection and stroke membership, allowing deletion to restore exact ink and ordering. They do not roll back brush or viewport settings. Adding a stroke or making a structural layer edit clears the redo branch. Layer selection is persisted but is not a history action. Structural snapshots can retain deleted ink until the drawing closes; future memory profiling should account for session history as well as active geometry. Layers currently use opaque black ink and normal compositing; opacity and blending are deferred.
 
 At completion, the confirmed tail is added to the cache and the source stroke is committed as one history command. On system touch cancellation, confirmed ink is kept and predictions discarded. An allocation error also retains confirmed input in the document for saving. Identical opaque black overlaps do not darken the result, although rotationally invariant input can still produce redundant triangles. Boundary deduplication is deferred.
 
@@ -48,4 +54,4 @@ The renderer redraws committed chunks for each requested frame and has no tile c
 
 ## Later phases
 
-Introduce LayerManager with stroke ordering, visibility, locks, opacity, and independent symmetry settings in a versioned document migration. Then extend symmetry with reflections and movable centers, introduce modular brushes and stabilization, and add geometry tools. Tattoo dimensions, references, stencil previews, SVG/PDF, and high-resolution export follow after the core Pencil acceptance checklist passes. No stub controls for those features are shipped in this prototype.
+Extend layers with opacity, blending, duplication/merging and optionally per-layer symmetry defaults; current symmetry is frozen per stroke. Movable symmetry centers, modular brushes, erasing and geometry tools follow. Tattoo dimensions, references, stencil previews, SVG/PDF, and high-resolution export follow after Pencil/device acceptance. No stub controls for those features are shipped.

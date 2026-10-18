@@ -1,5 +1,7 @@
 # iPad startup audit — 18 October 2026
 
+The user subsequently confirmed that version 0.2.2 runs on the physical iPad after the concrete compiler fix below. Earlier investigation notes are retained as history. Version 0.3.0 adds Mirror/layers and requires its own device acceptance.
+
 ## Confirmed device compiler error: 0.2.2 correction
 
 The latest device screenshot exposes a red **“Ambiguous use of 'cos'” in StudioPanels**. This is a confirmed build blocker; the accompanying yellow `uniforms` message is only an unmutated-variable warning. A generic “Crashed / Build failed” screen did not previously reveal this compiler diagnostic.

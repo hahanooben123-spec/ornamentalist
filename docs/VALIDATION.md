@@ -19,12 +19,18 @@ Local checks: Swift grammar parsing, build YAML/source paths and byte-for-byte Z
 - Active-stroke journal recovery, primary/journal revision ordering and editable project round trips without overwrites.
 - A thumbnail finishing after a newer primary save must not replace the newer revision's preview.
 - An oversized gallery metadata index falls back to the actual saved drawing.
+- Reflections around an arbitrary center, 128-transform mirror capacity, immutable stroke layer/mirror settings and schema 2 migration.
+- Layer order, visibility/locks, limits/names, deletion with exact Undo/Redo and full layer/mirror project round trips.
 
 The app tests inject a slow repository to reproduce close/Undo races, verify active-stroke checkpoints and read actual offscreen pixels from the same Metal pipeline as the canvas. An asymmetric stroke is checked through zoom, pan and rotation; predicted pixels must disappear on commit. PNG tests check asymmetric orientation, radial copies, dimensions and backgrounds. Metal tests can skip when a simulator has no Metal; skips are not GPU passes. Touch-event routing and palm rejection still require device tests.
 
 Native UI tests exercise named creation, the empty studio, opening saved art, symmetry settings, Undo/Redo, focus, pen and canvas panels, appearance and search. A separate launch flow clears showcase arguments/environment, opens the normal gallery, creates a canvas, saves and relaunches to find the drawing. Debug builds enable actor data-race checks. Screenshot attachments are exported in the workflow's `studio-ui-screenshots` artifact. Procedural example drawings are confined to a temporary test repository and are validated by a separate save/reopen test.
 
 The cloud workflow uses the same app source as the iPad app playground. It does not validate the AppleProductTypes playground manifest itself; opening the supplied `.swiftpm` on iPad remains an explicit acceptance step.
+
+Version 0.3.0 adds native checks of live and committed mirrored Metal pixels, hidden-layer omission in transparent PNG, visibility invalidation and 64-sector/128-transform rendering. A model test freezes layer edits during a stroke and checks locked-layer input eligibility and deleted-ink restoration. The new UI flow toggles Mirror, creates/renames/hides/locks/reorders/deletes/undoes a layer, closes/reopens and verifies the layer selection and Mirror setting. See [the additional physical-iPad checklist](MIRROR-OG-LAG.md).
+
+Another model/view regression immediately undoes a stroke before asynchronous canvas preparation starts, synchronizes again and verifies that input is no longer blocked by a stale preparation flag.
 
 ## Real iPad checklist
 

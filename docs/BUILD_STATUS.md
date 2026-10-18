@@ -2,7 +2,16 @@
 
 ## Current: 0.3.0 Mirror and layers
 
-Mirror reflection, ordered layers, layer visibility/locking/naming/reordering/deletion, layer-aware input and rendering/export, schema 1/2 migration and structural Undo/Redo are implemented. Local grammar and package integrity checks pass. Apple compilation and the new regression tests are pending. See [the feature guide](MIRROR-OG-LAG.md). The user confirmed that 0.2.2 runs on the physical iPad; 0.3.0 still needs that confirmation.
+Mirror reflection, ordered layers, layer visibility/locking/naming/reordering/deletion, layer-aware input and rendering/export, schema 1/2 migration and structural Undo/Redo are implemented. See [the feature guide](MIRROR-OG-LAG.md).
+
+[Apple validation run 39110341009](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39110341009) passed for app-source commit `4810d3555b6de13f5080bd892f11468c4d913e36`: **45 tests passed**, comprising 27 portable Swift tests, 13 native unit tests and 5 native UI tests. There were no failed/skipped tests or Swift source compiler warnings. Tool/metadata notices remain. Debug actor data-race checks were enabled; simulator iPad Air 11-inch (M3), iOS 26.2, Xcode 26.6.
+
+- Portable checks cover reflection at an arbitrary center, 128 transforms, layer order/visibility/locks, limits/names, precise layer-deletion Undo/Redo, immutable input layer/mirror state, version 2 migration and editable repository/export/import round trips.
+- Native pixel checks verify live and committed reflection, hidden-layer omission from transparent PNG, unhiding without changing stroke IDs and 64-sector/128-transform Metal rendering. Model checks freeze edits during a stroke, block drawing on locked layers, restore deleted ink and clear canceled preparation after immediate Undo.
+- The new UI flow toggles Mirror; adds, names, hides, locks, reorders and deletes a layer; undoes deletion; closes/reopens the drawing and verifies both layer selection and Mirror. The four existing UI flows also pass.
+- Native Mirror/Layers panel screenshots were inspected from the earlier green [44-test feature run 39110028885](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39110028885); UI source is unchanged in the latest revision. Those local images are in `dist/ui-preview/39110028885`. The later revision adds cancellation safety and its regression test.
+
+Local Swift grammar, 21-source inventory and byte-for-byte source ZIP checks pass. The direct public repository download was verified without authentication and every Swift file matched the tested Git commit. Later delivery documentation changes do not change app source. The user confirmed 0.2.2 runs on the physical iPad; **0.3.0 still needs Pencil/device verification**, particularly live mirroring, layer switching and multitasking. The cloud Xcode target still does not exercise the AppleProductTypes manifest.
 
 ## Previous: 0.2.2 device compiler compatibility
 

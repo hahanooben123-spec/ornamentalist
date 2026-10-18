@@ -1,5 +1,7 @@
 # Isoleret starttest på iPad
 
+Historisk diagnosepakke. Brug den fulde `Ornamentalist.swiftpm` til Mirror og lag i 0.3.0. Den tidligere byggefejl blev identificeret som en tvetydig `cos`-beregning og rettet i 0.2.2, som brugeren har bekræftet virker på iPad.
+
 Apples nye standardprojekt kører på brugerens iPad. Ornamentalist fejler fortsat, også når `StudioView()` i startfilen erstattes med `Text(...)`. Den sidste ændring udelukker ikke kompileringsfejl i andre filer: alle appens kildefiler bygges stadig.
 
 `Diagnostics/Ornamentalist-Starttest.swiftpm` indeholder derfor kun to filer: projektmanifestet og en enkelt app-kildefil. Manifestet er identisk med hovedprojektets bortset fra et særskilt bundle-id (`studio.mandala.prototype.starttest`). Startfilen er den samme som i hovedprojektet, med `StudioView()` erstattet af `Text("Pakketest virker")`. Der indlæses ingen af tegneappens øvrige kildefiler.
