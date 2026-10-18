@@ -176,7 +176,7 @@ final class StudioModel: ObservableObject {
         document?.brush = preset.makeBrush(); changed()
     }
     func setOpacity(_ value: Double) {
-        guard canEdit, !isDrawing, value.isFinite else { return }
+        guard canEdit, !isDrawing, value.isFinite, document?.brush.usesStamps == true else { return }
         document?.brush.opacity = max(0.01, min(1, value)); changed()
     }
     func setSpacing(_ value: Double) {

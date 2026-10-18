@@ -69,7 +69,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
         func validBrush(_ b: InkBrush) -> Bool {
             b.width.isFinite && (0.5...160).contains(b.width) && b.stabilization.isFinite &&
                 (0...0.85).contains(b.stabilization) && (1...2).contains(b.geometryVersion) &&
-                b.opacity.isFinite && (0.01...1).contains(b.opacity) &&
+                b.opacity.isFinite && (0.01...1).contains(b.opacity) && (b.usesStamps || b.opacity == 1) &&
                 b.spacing.isFinite && (0.06...4).contains(b.spacing) &&
                 b.density.isFinite && (0.05...1).contains(b.density)
         }

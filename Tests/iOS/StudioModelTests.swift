@@ -3,6 +3,29 @@ import XCTest
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testBrushChangesFreezeDuringInputAndSaveWithoutChangingOldInk() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder), model = StudioModel(repository: DocumentRepository(directory: folder))
+        await model.create()
+        let id = try XCTUnwrap(model.document?.id)
+        model.setBrush(.dotShader); model.setOpacity(0.4); model.setSpacing(0.6); model.setDensity(0.8)
+        let brush = try XCTUnwrap(model.document?.brush)
+        model.setDrawing(true)
+        model.setBrush(.airbrush); model.setWidth(100); model.setOpacity(1); model.setSpacing(2); model.setDensity(0.2)
+        XCTAssertEqual(model.document?.brush, brush)
+        model.setDrawing(false)
+        let p = StrokeSample(point: Point(x: 100, y: 100), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        let ink = InkStroke(brush: brush, samples: [p])
+        model.append(ink); model.setBrush(.softShader)
+        XCTAssertEqual(model.document?.strokes, [ink])
+        let saved = await model.saveNow(); XCTAssertTrue(saved)
+        let (reopened, _) = try await repository.open(id)
+        XCTAssertEqual(reopened.brush.preset, .softShader); XCTAssertEqual(reopened.strokes, [ink])
+        model.setBrush(.fineliner); model.setOpacity(0.2)
+        XCTAssertEqual(model.document?.brush.opacity, 1)
+    }
+
     func testImmediateUndoCancelsPendingCanvasPreparationWithoutBlockingInput() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

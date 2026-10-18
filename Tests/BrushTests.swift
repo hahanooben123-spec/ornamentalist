@@ -79,6 +79,7 @@ final class BrushTests: XCTestCase {
         d.brush.opacity = .nan; XCTAssertThrowsError(try d.validate())
         d.brush = b; d.brush.density = 2; XCTAssertThrowsError(try d.validate())
         d.brush = b; d.brush.spacing = 0; XCTAssertThrowsError(try d.validate())
+        d.brush = InkBrush(); d.brush.opacity = 0.5; XCTAssertThrowsError(try d.validate())
     }
     func testBrushesAndHiddenLayerSurviveRepositoryAndEditableExport() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
