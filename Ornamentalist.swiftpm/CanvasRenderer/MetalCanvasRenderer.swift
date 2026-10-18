@@ -131,7 +131,8 @@ final class MetalCanvasRenderer {
         descriptor.fragmentFunction = library.makeFunction(name: "inkFragment")
         descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
         descriptor.rasterSampleCount = sampleCount
-        descriptor.stencilAttachmentPixelFormat = .stencil8
+        descriptor.depthAttachmentPixelFormat = .depth32Float_stencil8
+        descriptor.stencilAttachmentPixelFormat = .depth32Float_stencil8
         let attachment = descriptor.colorAttachments[0]!
         attachment.isBlendingEnabled = true
         attachment.sourceRGBBlendFactor = .sourceAlpha
@@ -150,13 +151,15 @@ final class MetalCanvasRenderer {
         attachment.sourceRGBBlendFactor = .sourceAlpha
         descriptor.rasterSampleCount = 1
         descriptor.stencilAttachmentPixelFormat = .invalid
+        descriptor.depthAttachmentPixelFormat = .invalid
         singlePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.vertexFunction = library.makeFunction(name: "compositeVertex")
         descriptor.fragmentFunction = library.makeFunction(name: "compositeFragment")
         attachment.sourceRGBBlendFactor = .one // Layer textures are premultiplied.
         compositePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.rasterSampleCount = sampleCount
-        descriptor.stencilAttachmentPixelFormat = .stencil8
+        descriptor.depthAttachmentPixelFormat = .depth32Float_stencil8
+        descriptor.stencilAttachmentPixelFormat = .depth32Float_stencil8
         attachment.isBlendingEnabled = false
         restoreColorPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.fragmentFunction = library.makeFunction(name: "restoreSamplesFragment")
@@ -474,7 +477,7 @@ final class MetalCanvasRenderer {
     private func attachCoverage(to pass: MTLRenderPassDescriptor, target: MTLTexture) throws {
         if coverageStencil?.width != target.width || coverageStencil?.height != target.height {
             coverageStencil = nil
-            let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .stencil8,
+            let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float_stencil8,
                 width: target.width, height: target.height, mipmapped: false)
             if sampleCount > 1 { info.textureType = .type2DMultisample; info.sampleCount = sampleCount }
             info.storageMode = device.supportsFamily(.apple1) ? .memoryless : .private
@@ -482,6 +485,9 @@ final class MetalCanvasRenderer {
             guard let stencil = device.makeTexture(descriptor: info) else { throw DocumentError.memoryLimit }
             coverageStencil = stencil; workingTextureAllocations += 1
         }
+        pass.depthAttachment.texture = coverageStencil
+        pass.depthAttachment.loadAction = .clear; pass.depthAttachment.storeAction = .dontCare
+        pass.depthAttachment.clearDepth = 1
         pass.stencilAttachment.texture = coverageStencil
         pass.stencilAttachment.loadAction = .clear; pass.stencilAttachment.storeAction = .dontCare
         pass.stencilAttachment.clearStencil = 0
