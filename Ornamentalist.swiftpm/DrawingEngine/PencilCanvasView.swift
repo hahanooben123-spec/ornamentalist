@@ -28,8 +28,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private let brushCursor = CAShapeLayer()
     private let cursorHalo = CAShapeLayer()
     private var hoverPoint: CGPoint?
-    private var sizePreview = false
-    private var hideCursorTask: Task<Void, Never>?
+    private var cursorCanvasPoint: Point?
 
     init(model: StudioModel) {
         self.model = model
@@ -85,7 +84,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         hover.delegate = self; addGestureRecognizer(hover)
     }
     required init(coder: NSCoder) { fatalError("Create PencilCanvasView programmatically") }
-    deinit { preparation?.cancel(); hideCursorTask?.cancel(); NotificationCenter.default.removeObserver(self) }
+    deinit { preparation?.cancel(); NotificationCenter.default.removeObserver(self) }
     override func layoutSubviews() {
         super.layoutSubviews()
         updateBrushCursor()
@@ -167,7 +166,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             discardFingerStroke()
             return
         }
-        sizePreview = false; hoverPoint = nil; updateBrushCursor()
+        hoverPoint = nil; updateBrushCursor()
         if model.tool == .eyedropper, model.canEdit, active == nil,
            let touch = touches.first(where: { $0.type == .pencil }) ?? touches.first(where: { $0.type == .direct }) {
             if touch.type == .pencil {
@@ -224,6 +223,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     private func ingest(_ touch: UITouch, event: UIEvent?) {
         guard session != nil else { return }
+        cursorCanvasPoint = point(touch)
+        updateBrushCursor()
         do {
             for t in event?.coalescedTouches(for: touch) ?? [touch] {
                 if let addition = try session?.append(sample(t)) { try renderer?.append(addition) }
@@ -247,6 +248,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         model.setDrawing(false)
         if !stroke.samples.isEmpty { model.append(stroke, estimatedVertices: completed.estimatedVertexCount) }
         navigationGestures.forEach { $0.isEnabled = true }
+        updateBrushCursor()
         setNeedsDisplay()
     }
     @objc private func suspendDrawing() {
@@ -287,32 +289,31 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         guard gesture.state == .ended, active == nil, model.canEdit else { return }
         model.redo()
     }
-    private func showSizePreview(_ editing: Bool) {
-        guard editing || sizePreview else { return }
-        hideCursorTask?.cancel(); sizePreview = true; updateBrushCursor()
-        if !editing {
-            hideCursorTask = Task { [weak self] in
-                do { try await Task.sleep(nanoseconds: 900_000_000) } catch { return }
-                self?.sizePreview = false; self?.updateBrushCursor()
-            }
-        }
+    private func showSizePreview(_: Bool) {
+        updateBrushCursor()
     }
     @objc private func hoverPencil(_ gesture: UIHoverGestureRecognizer) {
-        if gesture.state == .began || gesture.state == .changed { hoverPoint = gesture.location(in: self) }
+        if gesture.state == .began || gesture.state == .changed {
+            hoverPoint = gesture.location(in: self)
+            if let hoverPoint {
+                cursorCanvasPoint = canvasMatrix.inverse.apply(Point(x: Double(hoverPoint.x), y: Double(hoverPoint.y)))
+            }
+        }
         else { hoverPoint = nil }
         updateBrushCursor()
     }
     private func updateBrushCursor() {
-        let hidden = !(sizePreview || hoverPoint != nil) || active != nil || model.tool == .eyedropper || !model.canDraw
+        let hidden = model.tool == .eyedropper || !model.canDraw
         accessibilityValue = "Strokes: \(model.document?.strokes.count ?? 0)"
         brushCursor.isHidden = hidden; cursorHalo.isHidden = hidden
         guard !hidden, bounds.width > 0, bounds.height > 0 else { return }
-        let center = hoverPoint ?? CGPoint(x: bounds.midX, y: bounds.midY)
-        let canvasPoint = canvasMatrix.inverse.apply(Point(x: Double(center.x), y: Double(center.y)))
-        guard let size = model.document?.size,
-              sizePreview || ((0...size.x).contains(canvasPoint.x) && (0...size.y).contains(canvasPoint.y)) else {
-            brushCursor.isHidden = true; cursorHalo.isHidden = true; return
+        let fallback = CGPoint(x: bounds.midX, y: bounds.midY)
+        var center = hoverPoint ?? fallback
+        if hoverPoint == nil, let cursorCanvasPoint {
+            let position = canvasMatrix.apply(cursorCanvasPoint)
+            center = CGPoint(x: position.x, y: position.y)
         }
+        if !bounds.contains(center) { center = fallback }
         let diameter = CGFloat(model.inputBrush.width * hypot(canvasMatrix.a, canvasMatrix.b))
         let circle = CGPath(ellipseIn: CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2,
                                              width: diameter, height: diameter), transform: nil)
