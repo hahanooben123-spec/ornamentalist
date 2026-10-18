@@ -22,6 +22,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private var synchronizedIDs: [UUID] = []
     private var synchronizedRasters: [UUID] = []
     private var drawingTouch: UITouch?
+    private var colorTouch: UITouch?
     private var preview: [BrushVertex] = []
     private var navigationGestures: [UIGestureRecognizer] = []
     private let brushCursor = CAShapeLayer()
@@ -160,14 +161,21 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         let fingers = event?.allTouches?.filter { $0.type == .direct && $0.phase != .ended && $0.phase != .cancelled }.count ?? 0
         if fingers > 1 && !touches.contains(where: { $0.type == .pencil }) {
+            colorTouch = nil
             discardFingerStroke()
             return
         }
         sizePreview = false; hoverPoint = nil; updateBrushCursor()
         if model.tool == .eyedropper, model.canEdit, active == nil,
            let touch = touches.first(where: { $0.type == .pencil }) ?? touches.first(where: { $0.type == .direct }) {
-            let picked = point(touch)
-            Task { await model.pickColor(at: picked) }
+            if touch.type == .pencil {
+                let picked = point(touch)
+                Task { await model.pickColor(at: picked) }
+            } else {
+                // Wait for release: a second finger may turn this into history
+                // or navigation rather than a color selection.
+                colorTouch = touch
+            }
             return
         }
         guard active == nil, !pendingPreparation, let document = model.document, model.canDraw, renderer != nil,
@@ -197,10 +205,17 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         ingest(touch, event: event)
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if let touch = colorTouch, touches.contains(touch) {
+            colorTouch = nil
+            let picked = point(touch)
+            Task { await model.pickColor(at: picked) }
+            return
+        }
         guard let touch = drawingTouch, touches.contains(touch) else { return }
         ingest(touch, event: event); finishStroke()
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if let touch = colorTouch, touches.contains(touch) { colorTouch = nil }
         guard let touch = drawingTouch, touches.contains(touch) else { return }
         // System cancellation preserves confirmed ink; predictions are always discarded.
         finishStroke()
@@ -233,6 +248,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         setNeedsDisplay()
     }
     @objc private func suspendDrawing() {
+        colorTouch = nil
         finishStroke()
         Task { await model.saveNow() }
     }
@@ -246,7 +262,9 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         // In optional finger mode, a second finger abandons the tentative finger stroke.
-        if navigationGestures.contains(where: { $0 === gestureRecognizer }) { discardFingerStroke() }
+        if navigationGestures.contains(where: { $0 === gestureRecognizer }) {
+            colorTouch = nil; discardFingerStroke()
+        }
         return active == nil && model.canEdit
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,

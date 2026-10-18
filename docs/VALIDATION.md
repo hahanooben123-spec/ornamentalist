@@ -6,6 +6,8 @@ Version 0.3.1 adds explicit source-list equality checks and actual SwiftPM targe
 
 ## Included automated checks
 
+Version 0.8.0 adds preset-memory/relaunch checks, independent eraser settings, frozen quick controls during a stroke, size-cursor scaling without model revisions, translucent solid-brush persistence and Metal/PNG/live-commit pixel checks. Its UI flow adjusts the native vertical sliders, switches brushes and restores settings, exercises the right sidebar, checks unchanged canvas bounds, draws with a finger, performs actual two-/three-finger taps, pinches without history changes and inspects portrait controls. See [the controls guide](SIDEPANELER-OG-GESTUS.md). These checks do not simulate physical Pencil hover or palm contact.
+
 `swift test` at the repository root runs the actual portable Swift implementation, covering:
 
 - Eight-fold rotations about an arbitrary center and preservation of radius/center.

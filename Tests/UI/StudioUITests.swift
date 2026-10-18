@@ -92,6 +92,15 @@ final class StudioUITests: XCTestCase {
         // Pinching is navigation and must neither add ink nor trigger Undo.
         canvas.pinch(withScale: 1.3, velocity: 1)
         XCTAssertEqual(canvas.value as? String, "Strokes: 1")
+        app.buttons["tool-eyedropper"].tap()
+        canvas.tap(withNumberOfTaps: 1, numberOfTouches: 2)
+        expectation(for: NSPredicate(format: "value == 'Strokes: 0'"), evaluatedWith: canvas)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(app.buttons["tool-eyedropper"].isSelected)
+        canvas.tap(withNumberOfTaps: 1, numberOfTouches: 3)
+        expectation(for: NSPredicate(format: "value == 'Strokes: 1'"), evaluatedWith: canvas)
+        waitForExpectations(timeout: 10)
+        app.buttons["tool-eyedropper"].tap()
         XCUIDevice.shared.orientation = .portrait
         XCTAssertTrue(app.sliders["railSize"].waitForExistence(timeout: 5))
         openLayersPanel()
