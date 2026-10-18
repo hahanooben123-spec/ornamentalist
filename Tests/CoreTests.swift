@@ -192,6 +192,59 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(session.stroke.samples.count, 4)
     }
 
+    func testRibbonReducesLongStrokeGeometryAndPreservesReplay() throws {
+        let brush = InkBrush(stabilization: 0)
+        var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(),
+                                    existingSamples: 0, existingVertices: 0)
+        var live: [BrushVertex] = []
+        for i in 0..<1000 {
+            let input = sample(Double(i), 40 + sin(Double(i) * 0.02) * 15, time: Double(i))
+            live += try session.append(input)
+            XCTAssertEqual(session.estimatedVertexCount, StrokeGeometry.estimatedVertexCount(session.stroke))
+        }
+        live += BrushGeometry.tail(session.stroke)
+        let reopened = try JSONDecoder().decode(InkStroke.self, from: JSONEncoder().encode(session.stroke))
+        XCTAssertEqual(live, BrushGeometry.mesh(reopened))
+        XCTAssertEqual(live.count, session.estimatedVertexCount)
+        // The previous implementation emitted at least one full disk per
+        // sample, even on a straight line. Require a substantial real reduction.
+        let oldMinimum = session.stroke.samples.count * brush.diskSides * 3
+        XCTAssertLessThan(live.count * 5, oldMinimum)
+        var d = DrawingDocument(); d.strokes = [reopened]
+        try d.validate()
+    }
+
+    func testRibbonMidpointEdgesMeetAndHairpinsStayFinite() {
+        let brush = InkBrush(width: 18, pressureEnabled: true, stabilization: 0)
+        let points = [sample(10, 10), sample(35, 30, time: 2), sample(70, 40, time: 3), sample(90, 60, time: 4)]
+        let before = StrokeGeometry.stableAddition(samples: Array(points.prefix(3)), brush: brush)
+        let after = StrokeGeometry.stableAddition(samples: Array(points.suffix(3)), brush: brush)
+        XCTAssertEqual(before[before.count - 4], after[0])
+        XCTAssertEqual(before[before.count - 1], after[1])
+        for coordinates in [[0.0, 100, 0], [0, 0, 0], [0, 100, 100]] {
+            let samples = coordinates.enumerated().map { sample($0.element, 20, time: Double($0.offset)) }
+            let stroke = InkStroke(brush: brush, samples: samples)
+            let mesh = StrokeGeometry.mesh(stroke)
+            XCTAssertFalse(mesh.isEmpty)
+            XCTAssertTrue(mesh.allSatisfy(\.isFinite))
+            XCTAssertLessThanOrEqual(mesh.count, StrokeGeometry.estimatedVertexCount(stroke))
+        }
+    }
+
+    func testTwentySixDetailedStrokesFitWithoutIncreasingMemoryLimit() throws {
+        var d = DrawingDocument()
+        for stroke in 0..<26 {
+            let samples = (0..<1000).map { i in
+                sample(100 + Double(i), 100 + Double(stroke) * 20 + sin(Double(i) * 0.02) * 15, time: Double(i))
+            }
+            d.strokes.append(InkStroke(samples: samples))
+        }
+        let vertices = d.strokes.reduce(0) { $0 + StrokeGeometry.estimatedVertexCount($1) }
+        XCTAssertLessThan(vertices, DrawingLimits.vertexCount / 5)
+        XCTAssertEqual(DrawingLimits.vertexCount, 2_000_000)
+        try d.validate()
+    }
+
     func testPerStrokeLimitDoesNotTellUserToAbandonCanvas() throws {
         var session = StrokeSession(brush: InkBrush(stabilization: 0), symmetry: SymmetryConfiguration(),
                                     existingSamples: 0, existingVertices: 0)

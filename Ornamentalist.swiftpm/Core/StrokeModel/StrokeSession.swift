@@ -21,7 +21,7 @@ struct StrokeSession {
     var estimatedVertexCount: Int {
         guard !stroke.samples.isEmpty else { return 0 }
         if stroke.brush.usesStamps { return stableVertices }
-        return stableVertices + (stroke.samples.count > 1 ? 6 + stroke.brush.diskSides * 3 : 0)
+        return stableVertices + StrokeGeometry.estimatedTail(samples: stroke.samples, brush: stroke.brush)
     }
 
     init(brush: InkBrush, symmetry: SymmetryConfiguration, existingSamples: Int, existingVertices: Int,
@@ -65,10 +65,10 @@ struct StrokeSession {
         }
         // Only three samples are needed to price and tessellate the next stable section.
         let recent = Array(stroke.samples.suffix(2)) + [sample]
-        let addition = StrokeGeometry.stableAddition(samples: recent, brush: stroke.brush)
-        let tailReserve = stroke.brush.diskSides * 3 + 6
+        let tailReserve = StrokeGeometry.estimatedTail(samples: recent, brush: stroke.brush)
         let cost = StrokeGeometry.estimatedAddition(samples: recent, brush: stroke.brush)
         guard stableVertices + cost + tailReserve <= remainingVertices else { throw vertexLimitError }
+        let addition = StrokeGeometry.stableAddition(samples: recent, brush: stroke.brush)
         stroke.samples.append(sample); filtered = sample; stableVertices += cost
         return addition.map { BrushVertex($0) }
     }
