@@ -122,7 +122,8 @@ final class StudioModelTests: XCTestCase {
         let (reopened, _) = try await repository.open(id)
         XCTAssertEqual(reopened.brush.preset, .softShader); XCTAssertEqual(reopened.strokes, [ink])
         model.setBrush(.fineliner); model.setOpacity(0.2)
-        XCTAssertEqual(model.document?.brush.opacity, 1)
+        XCTAssertEqual(model.document?.brush.opacity, 0.2)
+        XCTAssertEqual(model.document?.strokes, [ink])
     }
 
     func testImmediateUndoCancelsPendingCanvasPreparationWithoutBlockingInput() async throws {

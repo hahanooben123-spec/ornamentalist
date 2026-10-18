@@ -53,7 +53,12 @@ final class StudioUITests: XCTestCase {
         app.buttons["createDrawing"].tap()
         let size = app.sliders["railSize"], opacity = app.sliders["railOpacity"]
         XCTAssertTrue(size.waitForExistence(timeout: 15)); XCTAssertTrue(opacity.isHittable)
-        size.adjust(toNormalizedSliderPosition: 0.55); opacity.adjust(toNormalizedSliderPosition: 0.3)
+        // XCTest's normalized slider adjustment drags horizontally. Exercise
+        // the real rotated thumb with vertical input instead.
+        size.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.76))
+            .press(forDuration: 0.05, thenDragTo: size.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)))
+        opacity.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12))
+            .press(forDuration: 0.05, thenDragTo: opacity.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65)))
         let sizeValue = app.staticTexts["railSizeValue"].label
         let opacityValue = app.staticTexts["railOpacityValue"].label
         XCTAssertNotEqual(sizeValue, "5.0"); XCTAssertNotEqual(opacityValue, "100%")

@@ -137,7 +137,9 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         setNeedsDisplay()
     }
     func draw(in view: MTKView) {
-        guard let document = model.document, bounds.width > 0, bounds.height > 0 else { return }
+        // Never warm a layer cache with missing source buffers while uploads run.
+        guard !pendingPreparation, !model.isPreparing, let document = model.document,
+              bounds.width > 0, bounds.height > 0 else { return }
         do {
             try renderer?.draw(view: self, document: document, viewport: viewport,
                                active: active, preview: preview, guides: model.guides, revision: model.generation)

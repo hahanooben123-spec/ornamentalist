@@ -181,6 +181,7 @@ struct StudioView: View {
                         }
                         .frame(width: min(330, geometry.size.width * 0.46), height: min(620, max(180, geometry.size.height - 260)))
                         .studioSurface()
+                        .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("layersSidebar")
                         .disabled(controlsDisabled)
                     }
