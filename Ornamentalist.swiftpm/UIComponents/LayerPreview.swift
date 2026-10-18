@@ -39,7 +39,7 @@ struct TransparencyGrid: View {
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
             for y in stride(from: 0, to: Int(size.height), by: 6) {
                 for x in stride(from: 0, to: Int(size.width), by: 6) where (x / 6 + y / 6) % 2 == 0 {
-                    context.fill(Path(CGRect(x: x, y: y, width: 6, height: 6)), with: .color(.gray.opacity(0.2)))
+                    context.fill(Path(CGRect(x: CGFloat(x), y: CGFloat(y), width: 6, height: 6)), with: .color(.gray.opacity(0.2)))
                 }
             }
         }

@@ -16,7 +16,7 @@ final class EditingToolsNativeTests: XCTestCase {
     }
     private func pixel(_ document: DrawingDocument, x: Int, y: Int, transparent: Bool = false) throws -> [UInt8] {
         let image = try XCTUnwrap(UIImage(data: PNGExporter.data(document: document, transparent: transparent))?.cgImage)
-        let crop = try XCTUnwrap(image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)))
+        let crop = try XCTUnwrap(image.cropping(to: CGRect(x: CGFloat(x), y: CGFloat(y), width: 1, height: 1)))
         var bytes = [UInt8](repeating: 0, count: 4)
         try bytes.withUnsafeMutableBytes { data in
             let context = try XCTUnwrap(CGContext(data: data.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,

@@ -160,7 +160,9 @@ final class MetalCanvasRenderer {
         let loader = MTKTextureLoader(device: device)
         for raster in layers.compactMap(\.raster) where rasterTextures[raster.id] == nil {
             let image = try PNGExporter.rasterImage(raster)
-            rasterTextures[raster.id] = try loader.newTexture(cgImage: image, options: [.SRGB: false, .origin: MTKTextureLoader.Origin.topLeft.rawValue, .generateMipmaps: false])
+            let texture = try await loader.newTexture(cgImage: image, options: [.SRGB: false, .origin: MTKTextureLoader.Origin.topLeft.rawValue, .generateMipmaps: false])
+            try Task.checkCancellation()
+            rasterTextures[raster.id] = texture
         }
         prune(strokes, layers: layers)
         for (id, buffers) in uploaded { cache[id] = buffers }
