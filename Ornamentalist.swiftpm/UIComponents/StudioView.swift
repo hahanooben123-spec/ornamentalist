@@ -60,6 +60,7 @@ struct StudioView: View {
             if phase != .active { Task { await model.saveNow() } }
         }
         .alert("Ornamentalist", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
+            Button("Copy errors") { UIPasteboard.general.string = model.errorReport }
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
         .alert("Drawing recovered", isPresented: $model.recoveryNotice) {
@@ -305,7 +306,9 @@ struct StudioView: View {
         .accessibilityAddTraits(item == .layers && layersVisible && panel == nil ? .isSelected : [])
         .popover(isPresented: Binding(get: { panel == item }, set: { if !$0 && panel == item { panel = nil } }), arrowEdge: .bottom) {
             StudioPanelView(panel: item, model: model, appearance: $appearance) {
-                panel = nil; performanceText = model.rendererDiagnostics?()
+                panel = nil
+                let rendering = model.rendererDiagnostics?() ?? "Renderer unavailable"
+                performanceText = model.errorReport.isEmpty ? rendering : rendering + "\n\nRecent errors:\n" + model.errorReport
             }.tint(StudioStyle.copper)
         }
     }

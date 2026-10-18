@@ -5,6 +5,19 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testConcurrentErrorsPreserveFirstAlertAndCanBeCopiedAfterDismissal() {
+        let model = StudioModel()
+        model.error = "First graphics failure"
+        for _ in 0..<100 { model.error = "Later save failure" }
+        XCTAssertEqual(model.error, "First graphics failure")
+        XCTAssertEqual(model.errorReport, "First graphics failure\n\nLater save failure")
+        model.error = nil
+        XCTAssertNil(model.error)
+        XCTAssertTrue(model.errorReport.contains("First graphics failure"))
+        model.error = "New failure"
+        XCTAssertEqual(model.error, "New failure")
+    }
+
     func testQuickBrushSettingsRememberPresetsAndFreezeDuringStroke() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "Ornamentalist-brush-test-\(UUID())"

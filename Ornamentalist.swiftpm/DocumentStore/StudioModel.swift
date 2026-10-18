@@ -13,7 +13,25 @@ final class StudioModel: ObservableObject {
     @Published private(set) var isDrawing = false
     @Published private(set) var busy = false
     @Published private(set) var isPreparing = false
-    @Published var error: String?
+    @Published private var presentedError: String?
+    private var recentErrors: [String] = []
+    // Concurrent renderer/save failures must not replace an alert being read.
+    var error: String? {
+        get { presentedError }
+        set {
+            guard let message = newValue else { presentedError = nil; return }
+            if recentErrors.last != message {
+                recentErrors.append(message)
+                if recentErrors.count > 20 { recentErrors.removeFirst() }
+            }
+            if presentedError == nil { presentedError = message }
+        }
+    }
+    var errorReport: String {
+        var messages = presentedError.map { [$0] } ?? []
+        messages += recentErrors.filter { $0 != presentedError }
+        return messages.joined(separator: "\n\n")
+    }
     @Published var recoveryNotice = false
     @Published var guides = true
     @Published var fingerDrawing = false
