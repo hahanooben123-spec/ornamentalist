@@ -1,5 +1,17 @@
 # Verified build status — 18 October 2026
 
+## Current: 0.2.1 startup audit
+
+[Apple validation run 39105575507](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39105575507) passed at app-source commit `0c775afbf15b192eab876d31d1c6cb7ca4889f4e`: **32 tests passed**, comprising 19 portable Swift tests, 9 native unit tests and 4 UI tests. No test was skipped. Messages saying an attachment export was skipped refer to tests without screenshots, not skipped tests.
+
+The new oversized metadata-index regression passed. The new `testNormalLaunchWithoutShowcase` passed in 30.591 seconds: no showcase environment/arguments, normal repository and gallery, create a default drawing, open the Metal canvas, save/close, terminate/relaunch and find the saved drawing. Debug actor data-race checks were enabled. The simulator remains iPad Air 11-inch (M3), iOS 26.2, Xcode 26.6, deployment target 17. The logs show the studio-visible and gallery-loaded milestones. Compiler warnings include an existing unmutated `uniforms` variable; no Swift compilation errors occurred.
+
+Download the [0.2.1 iPad source artifact](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39105575507/artifacts/12127793881). The local ZIP is rebuilt from the same app source, with subsequently updated delivery documentation. The artifact includes documentation as it stood at the verified commit.
+
+**The user's physical iPad Swift Playground crash is unresolved.** The simulator has not reproduced it. See [the audit](CRASH-AUDIT.md) for confirmed findings, preventive changes and limitations. The AppleProductTypes manifest is still not exercised by this Xcode target. Open the newly extracted package on iPad to test the update; the previously opened Playground does not update from GitHub automatically.
+
+## Previous: 0.2.0 interface validation
+
 The updated native studio interface passed compilation and **30 automated tests** in [Apple validation run 39103943920](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39103943920), app-source commit `91d977886556f1cd02fbadaa0b61cbb591de8d48`.
 
 - **18 portable Swift tests passed**: geometry, symmetry, input replay/stabilization, budgets, history, autosave deadlines, migration, journal recovery, project import/export and rejection of a late thumbnail after a newer save.

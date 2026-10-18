@@ -52,7 +52,7 @@ def request(path, method="GET"):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['status', 'logs', 'screenshots'])
+    parser.add_argument('action', choices=['status', 'logs', 'screenshots', 'artifacts'])
     parser.add_argument('--run', type=int)
     args = parser.parse_args()
     if args.action == 'status':
@@ -63,6 +63,13 @@ def main():
             return
         runs = json.loads(request('/actions/runs?per_page=5'))['workflow_runs']
         print(json.dumps([{key: run.get(key) for key in ['id', 'head_sha', 'status', 'conclusion', 'html_url', 'created_at']} for run in runs], indent=2))
+    elif args.action == 'artifacts':
+        if args.run is None:
+            parser.error('--run is required for artifacts')
+        artifacts = json.loads(request(f'/actions/runs/{args.run}/artifacts'))['artifacts']
+        print(json.dumps([{'name': a['name'], 'expired': a['expired'],
+                           'url': f"https://github.com/{REPOSITORY}/actions/runs/{args.run}/artifacts/{a['id']}"}
+                          for a in artifacts], indent=2))
     elif args.action == 'screenshots':
         if args.run is None:
             parser.error('--run is required for screenshots')
@@ -93,7 +100,7 @@ def main():
             if name.endswith('.txt') and not name.startswith('0_'):
                 data = archive.read(name).decode('utf-8', errors='replace')
                 lines = data.splitlines()
-                indexes = {j for i, line in enumerate(lines) if any(word in line.lower() for word in ['error:', 'failed', 'test suite', 'executed ', 'warning:', '##[error]']) for j in range(max(0, i-2), min(len(lines), i+4))}
+                indexes = {j for i, line in enumerate(lines) if any(word in line.lower() for word in ['error:', 'failed', 'test suite', 'executed ', 'warning:', '##[error]', 'testnormallaunch', 'testoversizedindex', 'skipped']) for j in range(max(0, i-2), min(len(lines), i+4))}
                 if indexes:
                     print(name)
                     print('\n'.join(lines[i] for i in sorted(indexes))[:24000])
