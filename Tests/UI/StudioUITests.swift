@@ -60,11 +60,12 @@ final class StudioUITests: XCTestCase {
         screenshot("06-Gallery-dark")
 
         XCUIDevice.shared.orientation = .portrait
-        screenshot("07-Gallery-portrait")
         app.textFields["gallerySearch"].tap()
         app.textFields["gallerySearch"].typeText("Quiet")
         XCTAssertTrue(app.buttons["drawing-Quiet orbit"].exists)
         XCTAssertFalse(app.buttons["drawing-Solstice"].exists)
+        // The keyboard interaction also waits for the rotation animation to settle.
+        screenshot("07-Gallery-portrait-search")
     }
 
     func testCreateNamedDrawing() {
