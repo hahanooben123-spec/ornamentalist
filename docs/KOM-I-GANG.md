@@ -64,4 +64,12 @@ Version 0.6.0 skriver `Ornamentalist 0.6.0: app entry reached` ved opstart. Dere
 
 Version 0.6.0 har en eksplicit liste med alle 29 appfiler i buildmålet. Hvis fejlen fortsætter, er det stadig nødvendigt at undersøge den konkrete Swift Playground-/filudbydertilknytning. Sletning af appdata er ikke en del af dette forsøg.
 
+### Hvis Package.swift viser dubletter eller manifestfejl
+
+På den fotograferede iPad-kopi stod både den gamle og den nye appversion samt to executableTarget-blokke i samme manifest. Et senere billede viste sources-listen uden for target-kaldet. Begge strukturer er ugyldige; billederne fastslår ikke, hvordan dubletterne opstod. GitHub-versionen har ét produkt, ét target og alle 29 filstier inde i sources. Pakkekontrollen afviser nu netop disse fejltyper.
+
+Stop projektet i Swift Playground, før dets filer opdateres. Undgå flere manuelle delrettelser af manifestet. Ved lokale ændringer i Working Copy skal den ene fil `Ornamentalist.swiftpm/Package.swift` gendannes til repositoryets version; en Pull alene er ikke bevis for, at lokale ændringer er væk. Den yderste `Package.swift` til modeltests skal ikke kopieres ind i apppakken. Hvis den åbne Playground er en separat importeret kopi, opdaterer Working Copy ikke den kopi.
+
+Eksportér tegninger som redigerbare projekter fra den fungerende appkopi, før du flytter til en ny appkopi. Behold den gamle kopi og dens data. Fortsætter fejlen med en frisk, komplet pakke, skal den nye første fejl og manifestet fra netop den åbnede appkopi undersøges; en bestået simulatorbuild afgør ikke dette.
+
 Viser en tidligere version fejlen **Ambiguous use of 'cos'** i `StudioPanels`, indeholder 0.2.2 en rettelse af taltyperne i symmetriens forhåndsvisning. Åbn den fulde, opdaterede `Ornamentalist.swiftpm` frem for diagnosepakken i `Diagnostics`. Du behøver ikke længere ændre startskærmen til `Text(...)` for denne fejl.

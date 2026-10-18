@@ -1,0 +1,7 @@
+Review Ornamentalist independently using CLAUDE.md as project context. Do not edit files or run commands.
+
+The owner is blocked on iPad after repeated manifest/source-membership errors. Inspect the actual app manifest, packaging/source-discovery checks, the cloud workflow, and the delivery/crash documentation. Determine whether the repository still has a concrete manifest or packaging defect, what the existing tests do not validate, and the smallest practical way to diagnose or repair the installed project without losing drawings. Check the distinction between a Working Copy checkout and a separately imported Playground.
+
+The photographed manifest contained both version 0.2.2 / bundle 4 / asset AppIcon and version 0.6.0 / bundle 9 / placeholder pencil, plus two executableTarget declarations. A later edit closed executableTarget before sources. The repository's current manifest has one product, one target, one set of version fields and all 29 sources. The owner says the app still does not work; no new device error after the latest push is available. Do not attribute the duplicates to a particular app without evidence.
+
+Report confirmed defects first, with file/line and the smallest fix. Separate hypotheses and missing evidence. End with a short Danish recommendation for the next device step. Do not claim the physical iPad was tested. If there is no source defect, say so rather than inventing one.

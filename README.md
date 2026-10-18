@@ -4,6 +4,8 @@
 
 A native iPad app playground in Swift and SwiftUI, with UIKit Pencil input and Metal drawing. No external package dependencies. The adapted MIT-licensed ColorPickerRing wheel is included locally, with its license in ThirdParty/. Target: iPadOS 17 or later, with a Swift Playground installation that includes a compatible SDK.
 
+An optional independent Claude Code review is prepared for Windows. See [login and review instructions](docs/CLAUDE.md). It requires the owner's Claude access and does not add an AI service to the iPad app.
+
 **Delivery status:** The hardened Phase 1 native source has passed a cloud Apple build and automated tests; see [verified build results](docs/BUILD_STATUS.md). This Windows environment has neither Swift nor an Apple SDK. Local grammar checks are separate from Apple compilation. Physical iPad/Pencil acceptance remains pending.
 
 ## Start on your iPad
