@@ -1,4 +1,27 @@
-# Pen response — 0.10.0
+# Pen response — 0.10.1
+
+## Idle energy and redraw scheduling (0.10.1, build 31)
+
+- Canvas synchronization compares visual state. Changes to future brush settings,
+  save status, title or layer name/lock do not submit a new frame. Stroke IDs,
+  guides, selected layer, opacity, visibility, raster placement, view reset and
+  direct Pencil/navigation events still invalidate the correct view. Confirmed
+  strokes remain immutable; changing existing geometry must assign a new ID.
+- The fixed 250 ms maintenance loop is replaced by a cancellable deadline task.
+  Idle/gallery states schedule no wakeups. Dirty work retains the existing 0.5 s
+  idle / 2 s maximum deadline, save errors retain a 5 s retry delay, and active
+  drawing keeps its 2 s recovery checkpoints. Backgrounding cancels maintenance
+  and still requests the existing immediate save; foregrounding reschedules work.
+- History compression runs only when needed. Completion and busy/save/preparation
+  transitions reschedule pending work without polling. Stop/resume invalidates
+  stale timers; changes during an asynchronous save preserve their own deadline.
+- Diagnostics count layer composite passes and live full-surface restores, without
+  representing them as measured memory bandwidth. Live full-surface restoration
+  is retained pending GPU pixel validation; no MSAA/opacity/quality shortcut is
+  introduced. Native CI separates model checks from a bounded Metal smoke test,
+  so a known GPU failure cannot hide the scheduling test results.
+- Battery savings, FPS and heat reduction have not been measured on a physical
+  iPad. The earlier GPU execution failure is still under investigation.
 
 ## Reconstructible geometry and lossless persistence (0.10.0, build 30)
 

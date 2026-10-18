@@ -15,13 +15,17 @@ enum DrawingLimits {
 struct SaveSchedule {
     private(set) var firstDirty: Double?
     private(set) var lastEdit: Double?
+    var deadline: Double? {
+        guard let firstDirty, let lastEdit else { return nil }
+        return min(firstDirty + 2, lastEdit + 0.5)
+    }
     mutating func edited(at time: Double) {
         if firstDirty == nil { firstDirty = time }
         lastEdit = time
     }
     func isDue(at time: Double) -> Bool {
-        guard let firstDirty, let lastEdit else { return false }
-        return time - lastEdit >= 0.5 || time - firstDirty >= 2
+        guard let deadline else { return false }
+        return time >= deadline
     }
     mutating func saved() { firstDirty = nil; lastEdit = nil }
 }

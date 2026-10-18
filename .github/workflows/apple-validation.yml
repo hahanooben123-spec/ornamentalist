@@ -45,13 +45,40 @@ jobs:
           -derivedDataPath DerivedData
           -only-testing:OrnamentalistTests
           CODE_SIGNING_ALLOWED=NO
-      - name: Run native PNG and Metal tests
+      - name: Run native model and energy scheduling tests
+        timeout-minutes: 4
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -derivedDataPath DerivedData -resultBundlePath ModelTests.xcresult
+          -only-testing:OrnamentalistTests/StudioModelTests
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 45
+          -maximum-test-execution-time-allowance 90
+          CODE_SIGNING_ALLOWED=NO
+      - name: Check Metal image rendering before full GPU suite
+        timeout-minutes: 3
+        env:
+          SIMCTL_CHILD_MTL_DEBUG_LAYER: '1'
+          SIMCTL_CHILD_MTL_SHADER_VALIDATION: '1'
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -derivedDataPath DerivedData -resultBundlePath MetalSmoke.xcresult
+          -only-testing:OrnamentalistTests/EditingToolsNativeTests/testImagePlacementMatchesMetalAndPNGAndInvalidatesRasterCache
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 45
+          -maximum-test-execution-time-allowance 90
+          CODE_SIGNING_ALLOWED=NO
+      - name: Run remaining native PNG and Metal tests
         timeout-minutes: 6
         run: >-
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
           -derivedDataPath DerivedData -resultBundlePath AppleTests.xcresult
           -only-testing:OrnamentalistTests
+          -skip-testing:OrnamentalistTests/StudioModelTests
+          -skip-testing:OrnamentalistTests/EditingToolsNativeTests/testImagePlacementMatchesMetalAndPNGAndInvalidatesRasterCache
           -parallel-testing-enabled NO -destination-timeout 60
           -test-timeouts-enabled YES
           -default-test-execution-time-allowance 45
@@ -75,5 +102,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: apple-test-results
-          path: AppleTests.xcresult
+          path: |
+            AppleTests.xcresult
+            ModelTests.xcresult
+            MetalSmoke.xcresult
           if-no-files-found: ignore

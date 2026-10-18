@@ -21,6 +21,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private var pendingPreparation = false
     private var synchronizedIDs: [UUID] = []
     private var synchronizedRasters: [UUID] = []
+    private var synchronizedDisplay: CanvasDisplayState?
+    private(set) var synchronizationRedraws = 0
     private var drawingTouch: UITouch?
     private var colorTouch: UITouch?
     private var preview: [BrushVertex] = []
@@ -113,12 +115,16 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         updateTransformOutline()
     }
     func synchronize() {
-        if resetToken != model.resetViewToken {
+        let reset = resetToken != model.resetViewToken
+        if reset {
             resetToken = model.resetViewToken; viewport = Viewport()
         }
         updateBrushCursor()
         updateTransformOutline()
         guard let document = model.displayDocument, let renderer else { return }
+        let display = CanvasDisplayState(document, guides: model.guides)
+        guard reset || display != synchronizedDisplay else { return }
+        synchronizedDisplay = display
         let ids = document.strokes.map(\.id)
         let rasters = document.layers.compactMap { $0.raster?.id }
         if ids != synchronizedIDs || rasters != synchronizedRasters {
@@ -153,7 +159,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
                 }
             }
         }
-        setNeedsDisplay()
+        synchronizationRedraws += 1; setNeedsDisplay()
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         // A resize changes the inverse mapping; end a stroke in its old coordinate frame.

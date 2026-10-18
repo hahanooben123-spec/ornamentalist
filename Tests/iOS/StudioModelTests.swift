@@ -5,6 +5,57 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testMaintenanceSleepsWithoutWorkAndCancelsForBackground() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder))
+        model.startMaintenance(); XCTAssertFalse(model.hasScheduledMaintenance)
+        await model.create(); XCTAssertFalse(model.hasScheduledMaintenance)
+        model.setWidth(24); XCTAssertTrue(model.hasScheduledMaintenance)
+        let saved = await model.saveNow(); XCTAssertTrue(saved)
+        XCTAssertFalse(model.hasScheduledMaintenance)
+        model.setDrawing(true); XCTAssertTrue(model.hasScheduledMaintenance)
+        model.stopMaintenance(); XCTAssertFalse(model.hasScheduledMaintenance)
+        model.startMaintenance(); XCTAssertTrue(model.hasScheduledMaintenance)
+        model.setDrawing(false); XCTAssertFalse(model.hasScheduledMaintenance)
+        XCTAssertEqual(model.maintenanceWakeups, 0)
+        model.stopMaintenance()
+    }
+
+    func testDeadlineAutosavePersistsInkAndReturnsToIdle() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder)
+        let model = StudioModel(repository: repository)
+        await model.create(); model.startMaintenance()
+        defer { model.stopMaintenance() }
+        model.setWidth(24)
+        for _ in 0..<40 where model.saveStatus != "Saved on iPad" {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(model.saveStatus, "Saved on iPad")
+        XCTAssertEqual(model.maintenanceWakeups, 1)
+        XCTAssertFalse(model.hasScheduledMaintenance)
+        let (opened, _) = try await repository.open(try XCTUnwrap(model.document?.id))
+        XCTAssertEqual(opened.brush.width, 24)
+    }
+
+    func testBrushAndStatusChangesDoNotRequestCanvasRedraw() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder))
+        await model.create()
+        let view = PencilCanvasView(model: model); view.synchronize()
+        let initial = view.synchronizationRedraws
+        model.setWidth(24); view.synchronize()
+        model.setInputOpacity(0.25); view.synchronize()
+        _ = await model.saveNow(); view.synchronize()
+        XCTAssertEqual(view.synchronizationRedraws, initial)
+        model.guides.toggle(); view.synchronize()
+        XCTAssertEqual(view.synchronizationRedraws, initial + 1)
+        model.resetViewToken = UUID(); view.synchronize()
+        XCTAssertEqual(view.synchronizationRedraws, initial + 2)
+    }
     func testEveryEraserBrushRemembersSeparateSettingsAndDoesNotChangeDrawingBrush() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "Ornamentalist-eraser-brushes-\(UUID())"

@@ -2,6 +2,34 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class CoreTests: XCTestCase {
+    func testCanvasInvalidationTracksPixelsRatherThanBrushAndSaveMetadata() {
+        var drawing = DrawingDocument()
+        let initial = CanvasDisplayState(drawing, guides: true)
+        drawing.brush.width = 70; drawing.color = InkColor(red: 1)
+        drawing.title = "Renamed"; drawing.storageRevision += 1; drawing.modified = Date()
+        drawing.layers[0].name = "Renamed layer"; drawing.layers[0].isLocked = true
+        XCTAssertEqual(initial, CanvasDisplayState(drawing, guides: true))
+        drawing.layers[0].opacity = 0.4
+        XCTAssertNotEqual(initial, CanvasDisplayState(drawing, guides: true))
+        drawing.layers[0].opacity = 1
+        XCTAssertNotEqual(initial, CanvasDisplayState(drawing, guides: false))
+        let hiddenGuides = CanvasDisplayState(drawing, guides: false)
+        drawing.symmetry.repetitions = 16
+        XCTAssertEqual(hiddenGuides, CanvasDisplayState(drawing, guides: false))
+        XCTAssertNotEqual(initial, CanvasDisplayState(drawing, guides: true))
+        drawing.strokes.append(InkStroke(samples: [sample(10, 20)]))
+        XCTAssertNotEqual(hiddenGuides, CanvasDisplayState(drawing, guides: false))
+    }
+
+    func testSaveDeadlineUsesIdleOrMaximumDirtyTimeAndClearsAfterSave() {
+        var schedule = SaveSchedule()
+        XCTAssertNil(schedule.deadline)
+        schedule.edited(at: 10); XCTAssertEqual(schedule.deadline, 10.5)
+        schedule.edited(at: 10.4); XCTAssertEqual(schedule.deadline, 10.9)
+        schedule.edited(at: 11.8); XCTAssertEqual(schedule.deadline, 12)
+        XCTAssertFalse(schedule.isDue(at: 11.99)); XCTAssertTrue(schedule.isDue(at: 12))
+        schedule.saved(); XCTAssertNil(schedule.deadline)
+    }
     private func sample(_ x: Double, _ y: Double, time: Double = 1) -> StrokeSample {
         StrokeSample(point: Point(x: x, y: y), pressure: 0.6, altitude: 1, azimuth: 0, time: time)
     }

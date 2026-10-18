@@ -19,9 +19,9 @@ final class StudioModel: ObservableObject {
         return d
     }
     @Published private(set) var saveStatus = "Saved on iPad"
-    @Published private(set) var isDrawing = false
-    @Published private(set) var busy = false
-    @Published private(set) var isPreparing = false
+    @Published private(set) var isDrawing = false { didSet { rescheduleMaintenance() } }
+    @Published private(set) var busy = false { didSet { rescheduleMaintenance() } }
+    @Published private(set) var isPreparing = false { didSet { rescheduleMaintenance() } }
     @Published private var presentedError: String?
     private var recentErrors: [String] = []
     // Concurrent renderer/save failures must not replace an alert being read.
@@ -64,11 +64,16 @@ final class StudioModel: ObservableObject {
     private var writeSequence = 0
     private var schedule = SaveSchedule()
     private var maintenance: Task<Void, Never>?
+    private var maintenanceEnabled = false
+    private var maintenanceRequest = UUID()
+    private(set) var maintenanceWakeups = 0
+    var hasScheduledMaintenance: Bool { maintenance != nil }
+    private var lastCheckpointUptime = 0.0
     private var thumbnailTask: Task<Void, Never>?
     private var thumbnailRequest = UUID()
     private var thumbnailRefreshIDs = Set<UUID>()
-    private var saveRunning = false
-    private var journalRunning = false
+    private var saveRunning = false { didSet { rescheduleMaintenance() } }
+    private var journalRunning = false { didSet { rescheduleMaintenance() } }
     private var historyCompacting = false
     private var lastCheckpoint = Date.distantPast
     private var lastCheckpointSampleCount = -1
@@ -144,35 +149,55 @@ final class StudioModel: ObservableObject {
     }
 
     func startMaintenance() {
-        guard maintenance == nil else { return }
+        maintenanceEnabled = true
+        rescheduleMaintenance()
+    }
+    func stopMaintenance() {
+        maintenanceEnabled = false
+        maintenanceRequest = UUID(); maintenance?.cancel(); maintenance = nil
+    }
+    private func rescheduleMaintenance() {
+        maintenanceRequest = UUID(); maintenance?.cancel(); maintenance = nil
+        guard maintenanceEnabled, document != nil, !busy, !isPreparing,
+              !saveRunning, !journalRunning else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let deadline: Double
+        if isDrawing {
+            deadline = max(now + 0.01, lastCheckpointUptime + 2)
+        } else if history.needsCompaction && !historyCompacting {
+            deadline = now + 0.05
+        } else if let due = schedule.deadline {
+            deadline = max(max(now + 0.01, due), nextSaveAttempt)
+        } else { return } // No periodic wake-ups while the app is idle.
+        let request = maintenanceRequest
         maintenance = Task { [weak self] in
-            while !Task.isCancelled {
-                do { try await Task.sleep(nanoseconds: 250_000_000) } catch { break }
-                guard let self else { break }
-                if self.document != nil, !self.busy {
-                    if !self.isDrawing, !self.historyCompacting, self.history.needsCompaction,
-                       let id = self.document?.id {
-                        self.historyCompacting = true
-                        let snapshot = self.history
-                        Task { [weak self] in
-                            let compacted = await snapshot.compacted()
-                            guard let self else { return }
-                            self.historyCompacting = false
-                            if self.document?.id == id, self.history.revision == snapshot.revision { self.history = compacted }
-                        }
-                    }
-                    if self.schedule.isDue(at: ProcessInfo.processInfo.systemUptime), !self.saveRunning, !self.isDrawing,
-                       ProcessInfo.processInfo.systemUptime >= self.nextSaveAttempt {
-                        await self.saveNow(incremental: true)
-                    }
-                    if Date().timeIntervalSince(self.lastCheckpoint) >= 2 {
-                        await self.checkpointActiveInk()
+            do { try await Task.sleep(nanoseconds: UInt64(max(0.01, deadline - now) * 1_000_000_000)) }
+            catch { return }
+            guard let self, self.maintenanceEnabled, self.maintenanceRequest == request else { return }
+            self.maintenance = nil; self.maintenanceWakeups += 1
+            if self.isDrawing {
+                self.lastCheckpointUptime = ProcessInfo.processInfo.systemUptime
+                await self.checkpointActiveInk()
+            } else if !self.busy && !self.isPreparing {
+                if !self.historyCompacting, self.history.needsCompaction, let id = self.document?.id {
+                    self.historyCompacting = true
+                    let snapshot = self.history
+                    Task { [weak self] in
+                        let compacted = await snapshot.compacted()
+                        guard let self else { return }
+                        self.historyCompacting = false
+                        if self.document?.id == id, self.history.revision == snapshot.revision { self.history = compacted }
+                        self.rescheduleMaintenance()
                     }
                 }
+                let current = ProcessInfo.processInfo.systemUptime
+                if self.schedule.isDue(at: current), current >= self.nextSaveAttempt {
+                    await self.saveNow(incremental: true)
+                }
             }
+            self.rescheduleMaintenance()
         }
     }
-    func stopMaintenance() { maintenance?.cancel(); maintenance = nil }
     func refresh() async {
         do {
             projects = try await repository.list()
@@ -257,7 +282,10 @@ final class StudioModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
         await refresh()
     }
-    func setDrawing(_ value: Bool) { if value { finishLayerOpacityEdit() }; isDrawing = value }
+    func setDrawing(_ value: Bool) {
+        if value { finishLayerOpacityEdit(); lastCheckpointUptime = ProcessInfo.processInfo.systemUptime }
+        isDrawing = value
+    }
     func discardActiveCheckpoint() {
         isDrawing = false
         changed()
@@ -546,6 +574,7 @@ final class StudioModel: ObservableObject {
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)
+        rescheduleMaintenance()
     }
     var inkBudgetReport: String {
         "Input points: \(usedSamples) / \(DrawingLimits.sampleCount)\nDocument geometry estimate (reconstructible): \(usedVertices * 16 / 1024) KiB\nStrokes: \(document?.strokes.count ?? 0)"

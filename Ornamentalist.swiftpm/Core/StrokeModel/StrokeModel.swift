@@ -140,6 +140,33 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
+/// Only properties that change canvas pixels or the selected render cache.
+/// Brush preferences, save status and gallery metadata never invalidate ink.
+struct CanvasDisplayState: Equatable {
+    private struct Layer: Equatable {
+        let id: UUID
+        let visible: Bool
+        let opacity: Double
+        let raster: UUID?
+        let placement: RasterPlacement?
+    }
+    private let document: UUID
+    private let size: Point
+    private let selected: UUID
+    private let guides: SymmetryConfiguration?
+    private let strokes: [UUID]
+    private let layers: [Layer]
+    init(_ drawing: DrawingDocument, guides: Bool) {
+        document = drawing.id; size = drawing.size; selected = drawing.activeLayerID
+        self.guides = guides ? drawing.symmetry : nil
+        strokes = drawing.strokes.map(\.id)
+        layers = drawing.layers.map {
+            Layer(id: $0.id, visible: $0.isVisible, opacity: $0.opacity,
+                  raster: $0.raster?.id, placement: $0.raster?.placement)
+        }
+    }
+}
+
 extension DrawingDocument {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)

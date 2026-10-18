@@ -91,6 +91,8 @@ final class MetalCanvasRenderer {
     private let geometryBudget: Int
     private var strokeBounds: [UUID: CGRect] = [:]
     private(set) var localTileUpdates = 0
+    private(set) var layerCompositePasses = 0
+    private(set) var liveRestorePasses = 0
     private(set) var geometryRebuilds = 0
     private(set) var isPreparingScene = false
     var preparationChanged: ((Bool) -> Void)?
@@ -131,7 +133,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = allocatedGeometryBytes + sealed.reduce(0) { $0 + $1.buffer.length } + scratch.count * 16
-        return "Ornamentalist 0.10.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.10.1\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -685,6 +687,7 @@ final class MetalCanvasRenderer {
                            command: MTLCommandBuffer, load: MTLLoadAction = .load,
                            region: MTLScissorRect? = nil, clear: Bool = false) throws {
         guard let encoder = command.makeRenderCommandEncoder(descriptor: targetPass(output, load: load)) else { throw DocumentError.graphics }
+        layerCompositePasses += 1
         if let region { encoder.setScissorRect(region) }
         if clear {
             encoder.setRenderPipelineState(clearSingleRegionPipeline)
@@ -810,7 +813,10 @@ final class MetalCanvasRenderer {
     private func submit(_ command: MTLCommandBuffer) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             command.addCompletedHandler { @Sendable finished in
-                if finished.status == .error { continuation.resume(throwing: DocumentError.graphics) }
+                if finished.status == .error {
+                    print("Metal command failed: \(String(describing: finished.error))")
+                    continuation.resume(throwing: finished.error ?? DocumentError.graphics)
+                }
                 else { continuation.resume() }
             }
             command.commit()
@@ -1012,6 +1018,7 @@ final class MetalCanvasRenderer {
             // incremental confirmed-prefix path below.
             let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+            liveRestorePasses += 1
             do {
                 encoder.setRenderPipelineState(sampleCount > 1 ? restoreSamplesPipeline : restoreColorPipeline)
                 encoder.setFragmentTexture(base, index: 0)
@@ -1039,6 +1046,7 @@ final class MetalCanvasRenderer {
         }
         let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+        liveRestorePasses += 1
         do {
             encoder.setRenderPipelineState(sampleCount > 1 ? restoreSamplesPipeline : restoreColorPipeline)
             encoder.setFragmentTexture(base, index: 0)
@@ -1281,7 +1289,10 @@ final class MetalCanvasRenderer {
         }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             command.addCompletedHandler { @Sendable command in
-                if command.status == .error { continuation.resume(throwing: DocumentError.graphics) }
+                if command.status == .error {
+                    print("Metal readback failed: \(String(describing: command.error))")
+                    continuation.resume(throwing: command.error ?? DocumentError.graphics)
+                }
                 else { continuation.resume() }
             }
             command.commit()

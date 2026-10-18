@@ -54,14 +54,15 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.10.0: studio visible; loading gallery")
+            print("Ornamentalist 0.10.1: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.10.0: gallery loading finished")
+            print("Ornamentalist 0.10.1: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { Task { await model.saveNow() } }
+            if phase == .active { model.startMaintenance() }
+            else { model.stopMaintenance(); Task { await model.saveNow() } }
         }
         .alert("Ornamentalist", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("Copy errors") { UIPasteboard.general.string = model.errorReport }
