@@ -2,7 +2,7 @@
 
 Local checks: Swift grammar parsing, build YAML/source paths and byte-for-byte ZIP integrity. Swift/Apple compilation runs on [GitHub Actions](https://github.com/hahanooben123-spec/ornamentalist/actions/workflows/apple-validation.yml); see the run for the tested commit and pass/fail status. A syntax parse does not type-check Swift. No physical iPad/Pencil reliability or latency result is claimed.
 
-Version 0.3.1 adds explicit source-list equality checks and actual SwiftPM target-source discovery. The latter replaces only the AppleProductTypes product with a standard executable product in a temporary copy, retains the exact app target declaration and checks all app paths (23 in version 0.4.0), including DrawingLimits.swift. This does not reproduce iPad preview/cache integration.
+Version 0.3.1 adds explicit source-list equality checks and actual SwiftPM target-source discovery. The latter replaces only the AppleProductTypes product with a standard executable product in a temporary copy, retains the exact app target declaration and checks all app paths (26 in version 0.5.0), including DrawingLimits.swift. This does not reproduce iPad preview/cache integration.
 
 ## Included automated checks
 
@@ -65,3 +65,9 @@ Exercise storage failure/recovery with a test app container or development devic
 Use **Canvas → Drawing performance** after drawing at eight and 64 copies, copy the report and record it beside the device/OS/Pencil details. Its last 240 CPU/GPU samples and buffer bytes are diagnostics, not a substitute for touch-to-screen latency measurement or memory profiling.
 
 Do not declare Phase 1 complete until all nine real-device criteria pass. Keep any Swift/Metal compiler diagnostics or device failures with their file/line and reproduction steps for the next fix.
+
+## Colors and layer opacity (0.5.0)
+
+Portable tests cover strict HEX validation, sRGB/HSB round trips, schema-4 migration to black/full opacity, independent visibility and opacity with Undo/Redo, captured stroke color and editable project round trips including recent colors. Native tests compare overlapping red strokes on one 50%-opacity layer above blue, temporary live ink, transparent PNG alpha, hiding/zero opacity and layer order. Each brush is rendered in color through actual Metal and PNG. A model test coalesces a slider drag into one undo and freezes color/layer edits during drawing. UI tests enter HEX, adjust opacity, hide/show and reopen a project to check persisted values.
+
+Device acceptance must include picking from the ring and saturation/value square, choosing white/black, HEX typing with the keyboard, VoiceOver slider/wheel adjustment, two differently colored layers, hiding/unhiding, group opacity across overlapping strokes, all brush families, Mirror, and transparent export. Profile dense artwork and resizing/multitasking while changing layer opacity. The grouped Metal path uses one reusable layer target per command buffer and permits only one grouped display frame in flight; this bounds transient targets by viewport size and sample count, not layer count, but is not a physical-device memory or latency measurement.

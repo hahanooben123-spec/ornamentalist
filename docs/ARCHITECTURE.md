@@ -1,6 +1,6 @@
-# Drawing architecture — 0.3.0
+# Drawing architecture — 0.5.0
 
-The document stores confirmed, stabilized samples in a fixed 2048 × 2048 coordinate system, with pressure, altitude, azimuth, timestamp, brush settings, layer membership and frozen radial/mirror symmetry per stroke. It stores no rendered bitmap or navigation transform. Existing version 1 brush geometry is retained; version 2 adds pressure choice, stabilization, adaptive tips and storage revisions. Version 3 adds ordered layers and reflection. Legacy drawings decode to one visible, unlocked layer with Mirror off.
+The document stores confirmed, stabilized samples in a fixed 2048 × 2048 coordinate system, with pressure, altitude, azimuth, timestamp, brush settings, sRGB color, layer membership and frozen radial/mirror symmetry per stroke. It stores no rendered bitmap or navigation transform. Existing version 1 brush geometry is retained; version 2 adds pressure choice, stabilization, adaptive tips and storage revisions. Version 3 adds ordered layers and reflection, version 4 procedural brushes and version 5 sRGB colors and layer group opacity. Legacy drawings decode to one visible, unlocked layer with Mirror off.
 
 ```mermaid
 flowchart LR
@@ -34,7 +34,7 @@ The CPU tessellates only one source stroke. GPU instancing applies up to 64 rota
 
 Layer metadata is ordered bottom to top. Source strokes remain in chronological order and reference a layer UUID. The renderer and PNG exporter share the same visible-layer projection. The renderer caches this projection by immutable stroke IDs and visible layer order, so visibility/reorder changes invalidate it without re-tessellating ink. Hidden layers retain their editable data and GPU geometry; locked layers remain visible. Both hidden and locked active layers reject new input. Layer and symmetry changes are frozen during a live stroke.
 
-Stroke history commands retain the full original stroke, including layer and symmetry. Layer actions store copy-on-write snapshots of layers, selection and stroke membership, allowing deletion to restore exact ink and ordering. They do not roll back brush or viewport settings. Adding a stroke or making a structural layer edit clears the redo branch. Layer selection is persisted but is not a history action. Structural snapshots can retain deleted ink until the drawing closes; future memory profiling should account for session history as well as active geometry. Layers use normal compositing. Brush opacity is available on stamped brushes; layer opacity and alternate blend modes are deferred.
+Stroke history commands retain the full original stroke, including layer and symmetry. Layer actions store copy-on-write snapshots of layers, selection and stroke membership, allowing deletion to restore exact ink and ordering. They do not roll back brush or viewport settings. Adding a stroke or making a structural layer edit clears the redo branch. Layer selection is persisted but is not a history action. Structural snapshots can retain deleted ink until the drawing closes; future memory profiling should account for session history as well as active geometry. Layers use normal compositing. Brush opacity is available on stamped brushes; layer opacity is applied to the isolated group, while alternate blend modes are deferred.
 
 At completion, the confirmed tail is added to the cache and the source stroke is committed as one history command. On system touch cancellation, confirmed ink is kept and predictions discarded. An allocation error also retains confirmed input in the document for saving. Identical opaque black overlaps do not darken the result, although rotationally invariant input can still produce redundant triangles. Boundary deduplication is deferred.
 
@@ -54,7 +54,7 @@ The renderer redraws committed chunks for each requested frame and has no tile c
 
 ## Later phases
 
-Extend layers with opacity, blending, duplication/merging and optionally per-layer symmetry defaults; current symmetry is frozen per stroke. Movable symmetry centers, imported/custom brushes, erasing and geometry tools follow. Tattoo dimensions, references, stencil previews, SVG/PDF, and high-resolution export follow after Pencil/device acceptance. No stub controls for those features are shipped.
+Extend layers with blending, duplication/merging and optionally per-layer symmetry defaults; current symmetry is frozen per stroke. Movable symmetry centers, imported/custom brushes, erasing and geometry tools follow. Tattoo dimensions, references, stencil previews, SVG/PDF, and high-resolution export follow after Pencil/device acceptance. No stub controls for those features are shipped.
 
 ## Procedural brushes (0.4.0)
 
@@ -63,3 +63,13 @@ The original quadratic fineliner tessellation remains unchanged, including old g
 Metal clips circular/elliptical stamps analytically and uses a smoothstep radial opacity falloff for soft shading. Core Graphics exports the identical dab positions, radii, angle and aspect, with a sampled radial gradient of the same falloff. Native UI swatches call this same painter. Stroke opacity accumulates per dab/pass (including overlapping symmetry copies); it is not a layer-opacity setting. Opaque fineliner/brush-pen strokes retain union-path export; invalid transparent legacy ink is rejected.
 
 Document format 4 persists preset, opacity, spacing and density in each brush. Missing brush fields default to the prior fineliner behavior; old stroke geometry and layer migration are retained. Older app versions reject format 4 instead of silently replacing new brush styles with lines.
+
+## Color and isolated layer compositing (0.5.0)
+
+InkColor stores validated sRGB components in Foundation and converts HSB/HEX without a UIKit/SwiftUI dependency. StrokeSession captures color separately from the brush preset; changing presets cannot reset the selected color. Missing fields decode as black/full layer opacity. Format 5 adds the selected color, up to twelve recent colors, per-stroke colors and per-layer opacity. Layer history snapshots coalesce an opacity gesture into one undo command; brush/color settings are outside these snapshots.
+
+Opaque layers retain the direct MSAA drawing path. If any visible layer has opacity strictly between zero and one, Metal first draws paper/guides into the drawable, then resolves each visible layer's MSAA ink into a transparent texture and composites that premultiplied result once using layer opacity. One layer target and one MSAA target are reused sequentially for all layers in a command buffer. A separate nonblocking one-frame gate limits concurrent grouped display work; opaque frames retain the existing three-frame submission gate. Temporary group targets scale with drawable pixel count/sample count rather than layer count and are additional to the source-vertex budget. This path needs actual-device profiling.
+
+Live and predicted ink is inserted with its layer, before higher layers, in both paths. Hidden/zero-opacity layers are omitted. Core Graphics wraps each visible layer in a transparency group with group alpha, preserving overlap behavior in white/transparent PNG and thumbnails. Native brush swatches use the selected stroke color and the same Core Graphics painter.
+
+The locally adapted ColorPickerRing hue ring is MIT-licensed with original attribution and license in ThirdParty/. The ring uses explicit Double/CGFloat trigonometric boundaries, no DynamicColor runtime dependency, a separate original saturation/value square, sliders, HEX and palettes. See FARVER-OG-OPACITY.md for the pinned upstream revision and alternative evaluation.

@@ -2,7 +2,7 @@
 
 [Dansk vejledning: Kom i gang på iPad](docs/KOM-I-GANG.md)
 
-A native iPad app playground in Swift and SwiftUI, with UIKit Pencil input and Metal drawing. No third-party runtime dependencies. Target: iPadOS 17 or later, with a Swift Playground installation that includes a compatible SDK.
+A native iPad app playground in Swift and SwiftUI, with UIKit Pencil input and Metal drawing. No external package dependencies. The adapted MIT-licensed ColorPickerRing wheel is included locally, with its license in ThirdParty/. Target: iPadOS 17 or later, with a Swift Playground installation that includes a compatible SDK.
 
 **Delivery status:** The hardened Phase 1 native source has passed a cloud Apple build and automated tests; see [verified build results](docs/BUILD_STATUS.md). This Windows environment has neither Swift nor an Apple SDK. Local grammar checks are separate from Apple compilation. Physical iPad/Pencil acceptance remains pending.
 
@@ -50,6 +50,8 @@ Version 0.3.0 adds **Mirror** under Symmetry and a **Layers** panel: up to 32 la
 
 There are no unimplemented core toolbar actions. Eraser, movable center UI, imported/custom brushes, precision shapes, image import, stencil mode, physical dimensions, SVG, PDF, and cloud sync remain later work. Altitude and azimuth are retained but do not change this brush. Undo history is session-local; saved stroke geometry remains editable after reopening. Version 1 projects retain their original pressure and tip geometry when decoded; version 2 stores brush geometry version and storage revisions explicitly.
 
+Colors: open the header color circle for the hue wheel, saturation/brightness square and sliders, HEX, a studio palette and 12 recent colors. Layers: select a layer for 0–100% group opacity; the eye hides/shows it without changing its opacity. See [the color/opacity guide and open source credits](docs/FARVER-OG-OPACITY.md).
+
 ## Source layout
 
 ```text
@@ -72,7 +74,7 @@ project.yml                            cloud-only XcodeGen project description
 .github/workflows/apple-validation.yml  macOS build and test workflow
 ```
 
-LayerManager implements adding, renaming, hiding, locking, reordering and deleting layers with Undo/Redo. Version 4 adds brush presets/opacity/spacing/density to the version 3 ordered, visible/locked layers and active layer; source strokes retain their layer and radial/mirror configuration. Renderer buffers, live predictions, and navigation state are not serialized. See [architecture](docs/ARCHITECTURE.md), [repository evaluation](docs/RESEARCH.md), and [verification checklist](docs/VALIDATION.md).
+LayerManager implements adding, renaming, hiding, locking, reordering and deleting layers with Undo/Redo. Version 5 adds per-stroke sRGB color, recent color choices and isolated layer opacity alongside brush presets/opacity/spacing/density to the version 3 ordered, visible/locked layers and active layer; source strokes retain their layer and radial/mirror configuration. Renderer buffers, live predictions, and navigation state are not serialized. See [architecture](docs/ARCHITECTURE.md), [repository evaluation](docs/RESEARCH.md), and [verification checklist](docs/VALIDATION.md).
 
 ## Apple build verification without owning a Mac
 

@@ -13,6 +13,8 @@ Hvis du bruger GitHub i stedet for den lokale ZIP, ligger kildekoden i [dit repo
 
 I version 0.3.0 kan du bruge **Symmetry → Mirror** til spejling på begge sider af hjælpelinjerne og **Layers** til at oprette, vælge, skjule, låse, omdøbe, flytte og slette lag. [Se vejledningen til Mirror og lag](MIRROR-OG-LAG.md). Eksportér gamle tegninger som redigerbare projekter, før du erstatter din appkopi.
 
+- **Farvecirklen øverst:** farvehjul, mætning, lyshed, HEX, palet og seneste farver. [Se farve- og lagvejledningen](FARVER-OG-OPACITY.md).
+- **Layers:** vælg lagets opacity fra 0–100 %, og brug øjet til at slå laget til/fra.
 - **Symmetry:** åbner et lille panel med hurtige valg og en præcis tæller fra 1 til 64. Antallet ændrer kun nye streger. **Show guides** slår hjælpelinjerne til eller fra.
 - **Brushes:** 14 pensler til blæk, bløde skygger, prikker, stipple og tekstur. [Se penselvejledningen](PENSLER.md). Justér størrelse, styrke, afstand, tæthed, trykfølsomhed og stabilisering. Vælg 0% for direkte bevægelse eller en højere værdi for mere udglatning.
 - **To fingre:** flyt, zoom og rotér lærredet. Pencil tegner; fingrene laver som standard ingen streger.
@@ -51,7 +53,7 @@ Cloud-testene kontrollerer kode og grafik i simulatoren. Pencil-følelse, håndf
 
 Ændringer på Windows og GitHub opdaterer ikke automatisk det projekt, du allerede har åbent i Swift Playground. Hent pakken fra den nye buildkørsel, pak den ud i en ny mappe i Filer, og åbn den nye `Ornamentalist.swiftpm`. Behold den tidligere kopi, især hvis den indeholder tegninger. Åbn hele pakken frem for kun at udskifte `OrnamentalistApp.swift`.
 
-Version 0.4.0 skriver `Ornamentalist 0.4.0: app entry reached` ved opstart. Derefter følger markører for synligt studio og afsluttet galleriindlæsning, hvis konsollen er tilsluttet. En tom konsol beviser ikke, hvor nedbruddet sker. Se [gennemgangen af opstarten](CRASH-AUDIT.md).
+Version 0.5.0 skriver `Ornamentalist 0.5.0: app entry reached` ved opstart. Derefter følger markører for synligt studio og afsluttet galleriindlæsning, hvis konsollen er tilsluttet. En tom konsol beviser ikke, hvor nedbruddet sker. Se [gennemgangen af opstarten](CRASH-AUDIT.md).
 
 ### Hvis en fil vises som “not in a target”
 
@@ -59,6 +61,6 @@ Version 0.4.0 skriver `Ornamentalist 0.4.0: app entry reached` ved opstart. Dere
 2. I Filer: pak den nye pakke ud i en ny lokal mappe under **På min iPad**. Behold den tidligere projektkopi.
 3. Åbn hele den nye **Ornamentalist.swiftpm**. Vælg **App → OrnamentalistApp** i editoren, og tryk ▶.
 
-Version 0.4.0 har en eksplicit liste med alle 23 appfiler i buildmålet. Hvis fejlen fortsætter, er det stadig nødvendigt at undersøge den konkrete Swift Playground-/filudbydertilknytning. Sletning af appdata er ikke en del af dette forsøg.
+Version 0.5.0 har en eksplicit liste med alle 26 appfiler i buildmålet. Hvis fejlen fortsætter, er det stadig nødvendigt at undersøge den konkrete Swift Playground-/filudbydertilknytning. Sletning af appdata er ikke en del af dette forsøg.
 
 Viser en tidligere version fejlen **Ambiguous use of 'cos'** i `StudioPanels`, indeholder 0.2.2 en rettelse af taltyperne i symmetriens forhåndsvisning. Åbn den fulde, opdaterede `Ornamentalist.swiftpm` frem for diagnosepakken i `Diagnostics`. Du behøver ikke længere ændre startskærmen til `Text(...)` for denne fejl.

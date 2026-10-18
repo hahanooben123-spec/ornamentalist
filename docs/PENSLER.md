@@ -23,4 +23,4 @@ PNG og miniaturebilleder indeholder de synlige lag og penslernes gennemsigtighed
 
 Version 0.4.0 gemmer dokumentformat **4**. Ældre projekter kan importeres og bevarer deres oprindelige fineliner-geometri. Filer gemt i format 4 kræver den nye app. Tag en redigerbar projektkopi fra eksportmenuen, før du udskifter dit Playground-projekt.
 
-Penslerne er procedurebaserede sorte pensler. Import af eksterne penselpakker og redigering af egne presets er ikke med i denne version.
+Fra version 0.5.0 følger alle pensler den valgte sRGB-farve; [se farve- og lagvejledningen](FARVER-OG-OPACITY.md). Penslerne er procedurebaserede. Import af eksterne penselpakker og redigering af egne presets er ikke med i denne version.

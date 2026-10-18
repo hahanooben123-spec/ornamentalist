@@ -1,6 +1,12 @@
 # Verified build status — 18 October 2026
 
-## Current: 0.4.0 brush library
+## Current: 0.5.0 colors and layer opacity
+
+Explicit sRGB color is captured per stroke. A local MIT-licensed adaptation of ColorPickerRing supplies the hue ring, with an original saturation/value square, HSB sliders, HEX input, a studio palette and twelve recent colors per drawing. Layer visibility is retained and clarified in the UI; group opacity is adjustable from 0–100%, coalesced into one Undo action per drag and persisted in format 5. Metal isolates layers before applying group opacity; PNG uses transparency groups, and live colored ink follows its own layer order. See [the guide and source/license evaluation](FARVER-OG-OPACITY.md).
+
+[Apple validation run 39113971022](https://github.com/hahanooben123-spec/ornamentalist/actions/runs/39113971022) passed for commit `9ea1d95b005c58e5b97cf0c8b5daff92e2c8f38f`: **67 tests passed** (40 portable Swift, 20 native unit and 7 native UI), with zero failures or test skips. There were no Swift source compiler warnings; tool/metadata notices remain. Debug actor checks ran on iPad Air 11-inch (M3), iOS 26.2 with Xcode 26.6. Local grammar, ZIP byte checks and real SwiftPM source membership pass for all 26 app sources. The actual pixel tests confirm one group-opacity application over overlapping colored strokes, live layer order, hidden/zero-opacity output, transparent PNG alpha and color in every brush. Native screenshots of the Color Disc and hidden-layer opacity panel were visually inspected (`dist/ui-preview/39113971022`). HEX selection, opacity and visibility persist across closing/reopening in the UI test. The actual installed iPad Swift Playground manifest/preview integration and physical Pencil performance still require device acceptance.
+
+## Previous: 0.4.0 brush library
 
 Fourteen procedural black brushes are implemented: fineliner, brush pen, round/flat marker, soft shader, airbrush, dots/fine dots, light/dense stipple, dot shader, graphite, charcoal and hatching. The native Brushes panel groups them by family and previews real strokes. Stamped styles support opacity/spacing, scattered styles add density, and every style supports size/pressure/stabilization. The original fineliner geometry is preserved. See [the Danish brush guide](PENSLER.md).
 
