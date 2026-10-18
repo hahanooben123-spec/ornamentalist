@@ -1,4 +1,4 @@
-# Pen response — 0.9.0
+# Pen response — 0.9.1
 
 Brush settings now include adaptive stabilization, pressure curve and minimum size.
 Solid ink supports start/end taper. Stamped brushes support Pencil tilt shading.
@@ -12,7 +12,11 @@ Open the Brushes panel and scroll below Pressure sensitivity. A low pressure
 curve value gives more width under a light touch; a high value needs more force.
 Minimum size zero allows a very fine pressure-controlled line. Disable pressure
 and taper for a uniform fineliner. Adaptive stabilization shortens the filter's
-response time at speed and on turns; zero Steady line bypasses filtering.
+response time at speed; zero Steady line bypasses filtering. Version 0.9.1
+smooths the velocity vector so tremor cannot trigger a sudden reduction in
+smoothing, normalizes speed to screen points across zoom levels, and uses two
+position filters with delay compensation to retain deliberate curve radii.
+Predicted ink is limited to the next 16.7 ms when stabilization is enabled.
 
 Taper lengths are measured relative to brush width. The ending is applied on
 Pencil lift, rebuilding this stroke once; ordinary drawing remains incremental.

@@ -6,6 +6,10 @@ struct StrokeSession {
     private(set) var stroke: InkStroke
     private var filtered: StrokeSample?
     private var rawPrevious: StrokeSample?
+    private var velocity = Point.zero
+    private var smoothPosition: Point?
+    private var smoothFollower: Point?
+    private let inputScale: Double
     private var traveled = 0.0
     private var stableVertices = 0
     private var stamps: BrushStampState
@@ -27,26 +31,43 @@ struct StrokeSession {
     }
 
     init(brush: InkBrush, symmetry: SymmetryConfiguration, existingSamples: Int, existingVertices: Int,
-         layerID: UUID = DrawingLayer.legacyID, color: InkColor = .black, operation: StrokeOperation = .ink) {
+         layerID: UUID = DrawingLayer.legacyID, color: InkColor = .black, operation: StrokeOperation = .ink,
+         inputScale: Double = 1) {
         stroke = InkStroke(brush: brush, symmetry: symmetry, layerID: layerID, color: color, operation: operation)
         stamps = BrushStampState(id: stroke.seedID)
+        self.inputScale = inputScale.isFinite ? max(0.001, inputScale) : 1
         remainingSamples = min(DrawingLimits.strokeSamples, DrawingLimits.sampleCount - existingSamples)
         remainingVertices = min(DrawingLimits.strokeVertices, DrawingLimits.vertexCount - existingVertices)
     }
-    private func stabilized(_ sample: StrokeSample, previous: StrokeSample?) -> StrokeSample {
+    private mutating func stabilized(_ sample: StrokeSample, previous: StrokeSample?) -> StrokeSample {
         guard let previous, stroke.brush.stabilization > 0 else { return sample }
         let dt = max(0.001, min(0.1, sample.time - previous.time))
         var response = 1.0
         if stroke.brush.adaptiveStabilization {
-            let delta = sample.point - (rawPrevious?.point ?? previous.point)
-            let speed = delta.length / dt
-            let prior = (rawPrevious?.point ?? previous.point) - previous.point
-            let alignment = (delta.x * prior.x + delta.y * prior.y) / max(0.000001, delta.length * prior.length)
-            response = 1 + min(6, speed / 180) + (alignment < 0.3 ? 3 : 0)
+            // Smooth the velocity vector before measuring its magnitude. Raw
+            // zigzag noise must not masquerade as speed or trigger a turn boost.
+            // Screen points keep the response consistent when the canvas zooms.
+            let measured = (sample.point - (rawPrevious?.point ?? previous.point)) * (inputScale / dt)
+            let velocityAlpha = 1 - exp(-dt / 0.025)
+            velocity = velocity + (measured - velocity) * velocityAlpha
+            response = 1 + min(2, velocity.length / 400)
         }
-        let alpha = 1 - exp(-dt * response / (stroke.brush.stabilization * 0.045))
+        let duration = stroke.brush.adaptiveStabilization ? 0.065 : 0.045
+        let alpha = 1 - exp(-dt * response / (stroke.brush.stabilization * duration))
         var result = sample
-        result.point = previous.point + (sample.point - previous.point) * alpha
+        if stroke.brush.adaptiveStabilization {
+            // Two exponential stages suppress fine wobble. Compensating the
+            // follower's delay retains the radius of a deliberate curve instead
+            // of pulling it inward like a plain moving position average.
+            let first = smoothPosition ?? previous.point
+            let next = first + (sample.point - first) * alpha
+            let follower = smoothFollower ?? previous.point
+            let nextFollower = follower + (next - follower) * alpha
+            smoothPosition = next; smoothFollower = nextFollower
+            result.point = next * 2 - nextFollower
+        } else {
+            result.point = previous.point + (sample.point - previous.point) * alpha
+        }
         return result
     }
     mutating func append(_ raw: StrokeSample) throws -> [BrushVertex] {
@@ -109,7 +130,9 @@ struct StrokeSession {
     }
     func preview(predictions: [StrokeSample]) -> [BrushVertex] {
         var copy = self, vertices: [BrushVertex] = []
+        let horizon = (filtered?.time ?? 0) + 1.0 / 60
         for raw in predictions.prefix(12) {
+            if stroke.brush.stabilization > 0, raw.time > horizon { break }
             guard raw.time.isFinite, raw.time > (copy.filtered?.time ?? -.infinity),
                   raw.point.isFinite, raw.pressure.isFinite,
                   raw.altitude.isFinite, raw.azimuth.isFinite else { continue }

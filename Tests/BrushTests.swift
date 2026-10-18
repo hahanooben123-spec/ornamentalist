@@ -2,6 +2,58 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class BrushTests: XCTestCase {
+    func testAdaptiveSmoothingCleansArcsWithoutShrinkingTheirRadius() throws {
+        var brush = InkBrush(); brush.adaptiveStabilization = true; brush.stabilization = 0.75
+        var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
+        var inputError = 0.0, outputError = 0.0, count = 0
+        for i in 0..<480 {
+            let angle = Double(i) / 240 * Double.pi
+            let radius = 50 + 1.2 * sin(Double(i) * 1.7)
+            let p = sample(100 + radius * cos(angle), y: 100 + radius * sin(angle), time: Double(i) / 240)
+            _ = try session.append(p)
+            if i > 60 {
+                let center = Point(x: 100, y: 100)
+                inputError += abs((p.point - center).length - 50)
+                outputError += abs((session.stroke.samples.last!.point - center).length - 50)
+                count += 1
+            }
+        }
+        XCTAssertLessThan(outputError, inputError * 0.8)
+        XCTAssertLessThan(outputError / Double(count), 0.7)
+    }
+    func testAdaptiveStabilizationRejectsAlternatingJitter() throws {
+        var brush = InkBrush(); brush.adaptiveStabilization = true; brush.stabilization = 0.75
+        var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
+        for i in 0..<240 {
+            _ = try session.append(sample(Double(i), y: i % 2 == 0 ? 3 : -3, time: Double(i) / 240))
+        }
+        let stable = session.stroke.samples.dropFirst(30)
+        let mean = stable.reduce(0) { $0 + abs($1.point.y) } / Double(stable.count)
+        XCTAssertLessThan(mean, 0.8)
+        XCTAssertLessThan(239 - session.stroke.samples.last!.point.x, 5)
+    }
+    func testAdaptiveStabilizationIsConsistentAtDifferentZooms() throws {
+        var brush = InkBrush(); brush.adaptiveStabilization = true; brush.stabilization = 0.6
+        var normal = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
+        var zoomed = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0, inputScale: 4)
+        for i in 0..<120 {
+            var p = sample(Double(i), y: sin(Double(i) / 9) * 12, time: Double(i) / 240)
+            _ = try normal.append(p)
+            p.point = p.point * 0.25; _ = try zoomed.append(p)
+            let a = normal.stroke.samples.last!.point, b = zoomed.stroke.samples.last!.point * 4
+            XCTAssertEqual(a.x, b.x, accuracy: 1e-9); XCTAssertEqual(a.y, b.y, accuracy: 1e-9)
+        }
+    }
+    func testStabilizedPreviewDoesNotChaseDistantPredictions() throws {
+        var brush = InkBrush(); brush.adaptiveStabilization = true
+        var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
+        _ = try session.append(sample(0, time: 0)); _ = try session.append(sample(10, time: 0.01))
+        let before = session.stroke
+        let predictions = [sample(15, time: 0.015), sample(20, time: 0.02)]
+        let short = session.preview(predictions: predictions)
+        XCTAssertEqual(short, session.preview(predictions: predictions + [sample(500, time: 0.08)]))
+        XCTAssertEqual(before, session.stroke)
+    }
     func testPressureCurveAndMinimumSize() {
         var brush = InkBrush(); brush.pressureEnabled = true; brush.minimumSize = 0.05
         XCTAssertEqual(brush.radius(pressure: 0), brush.width * 0.025, accuracy: 1e-10)
