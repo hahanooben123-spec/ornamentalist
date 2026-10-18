@@ -14,6 +14,12 @@ def verify_sources():
     assert sum(len(re.findall(r"(?m)^@main\s*$", p.read_text(encoding="utf-8"))) for p in SOURCES) == 1
     assert (APP / "Package.swift").is_file()
     manifest = (APP / "Package.swift").read_text(encoding="utf-8")
+    assert manifest.count(".iOSApplication(") == 1, "App manifest must contain one application product"
+    assert manifest.count(".executableTarget(") == 1, "App manifest must contain one executable target"
+    for field in ["displayVersion", "bundleVersion", "appIcon"]:
+        assert len(re.findall(rf"(?m)^\s*{field}\s*:", manifest)) == 1, f"App manifest must contain one {field}"
+    target_header = re.search(r"\.executableTarget\((.*?)sources:\s*\[", manifest, flags=re.S)
+    assert target_header is not None and ")" not in target_header.group(1), "Source list must be inside executableTarget"
     block = re.search(r'sources:\s*\[([^\]]*)\]', manifest)
     assert block is not None, "App target must list its sources explicitly"
     listed = re.findall(r'"([^"\n]+\.swift)"', block.group(1))
