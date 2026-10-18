@@ -153,6 +153,14 @@ final class StudioModel: ObservableObject {
             await refresh()
         } catch { self.error = error.localizedDescription }
     }
+    func deleteProject(_ id: UUID) async {
+        guard document == nil, !busy else { return }
+        busy = true; defer { busy = false }
+        do {
+            try await repository.delete(id)
+        } catch { self.error = error.localizedDescription }
+        await refresh()
+    }
     func setDrawing(_ value: Bool) { if value { finishLayerOpacityEdit() }; isDrawing = value }
     func discardActiveCheckpoint() {
         isDrawing = false

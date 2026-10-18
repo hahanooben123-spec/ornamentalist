@@ -2,6 +2,47 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class DocumentRepositoryTests: XCTestCase {
+    func testOpeningAnOlderProjectDoesNotChangeRecentProjectOrder() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DocumentRepository(directory: directory)
+        var older = DrawingDocument(), newer = DrawingDocument()
+        older.modified = Date(timeIntervalSince1970: 100)
+        newer.modified = Date(timeIntervalSince1970: 200)
+        try await store.save(older, generation: 1)
+        try await store.save(newer, generation: 1)
+        let (opened, _) = try await store.open(older.id)
+        try await store.save(opened, generation: 2)
+        let projects = try await store.list()
+        XCTAssertEqual(projects.map(\.id), [newer.id, older.id])
+        XCTAssertEqual(projects.last?.modified, older.modified)
+    }
+
+    func testDeletingProjectRemovesRecoveryCopiesAndRejectsLateWrites() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DocumentRepository(directory: directory)
+        let drawing = DrawingDocument(), keep = DrawingDocument()
+        try await store.save(drawing, generation: 1)
+        try await store.save(drawing, generation: 2)
+        try await store.checkpoint(drawing, generation: 3)
+        try await store.storeThumbnail(Data([1, 2]), id: drawing.id, generation: 3)
+        try await store.save(keep, generation: 1)
+        try await store.delete(drawing.id)
+        for suffix in ["mandala", "backup", "journal", "index", "png"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(drawing.id.uuidString + "." + suffix).path))
+        }
+        // The marker also protects against work completing after app restart.
+        let reopened = DocumentRepository(directory: directory)
+        try await reopened.save(drawing, generation: 4)
+        try await reopened.checkpoint(drawing, generation: 5)
+        try await reopened.storeThumbnail(Data([3]), id: drawing.id, generation: 5)
+        let projects = try await reopened.list()
+        XCTAssertEqual(projects.map(\.id), [keep.id])
+        do { _ = try await reopened.open(drawing.id); XCTFail("Deleted project reopened") }
+        catch DocumentError.invalidData { }
+    }
+
     func testOversizedIndexFallsBackToSavedDrawing() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

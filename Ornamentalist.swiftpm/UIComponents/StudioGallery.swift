@@ -9,6 +9,7 @@ struct StudioGallery: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
     @State private var sortByName = false
+    @State private var deleting: ProjectSummary?
 
     private var projects: [ProjectSummary] {
         let filtered = model.projects.filter { query.isEmpty || $0.title.localizedStandardContains(query) }
@@ -40,6 +41,13 @@ struct StudioGallery: View {
         }
         .disabled(model.busy)
         .overlay { if model.busy { ProgressView().padding(24).studioSurface() } }
+        .alert("Delete project?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("Cancel", role: .cancel) { deleting = nil }
+            Button("Delete project", role: .destructive) {
+                if let project = deleting { Task { await model.deleteProject(project.id) } }
+                deleting = nil
+            }
+        } message: { Text("Delete \(deleting?.title ?? "this project") and its recovery copies from this iPad? This cannot be undone.") }
     }
 
     private func header(compact: Bool) -> some View {
@@ -118,11 +126,11 @@ struct StudioGallery: View {
     private var sortMenu: some View {
         Menu {
             Picker("Sort drawings", selection: $sortByName) {
-                Text("Last edited").tag(false)
+                Text("Recent projects").tag(false)
                 Text("Name").tag(true)
             }
         } label: {
-            Label(sortByName ? "Name" : "Last edited", systemImage: "arrow.up.arrow.down")
+            Label(sortByName ? "Name" : "Recent projects", systemImage: "arrow.up.arrow.down")
                 .font(.subheadline).frame(minHeight: 44).contentShape(Rectangle())
         }.accessibilityLabel("Sort drawings")
     }
@@ -146,7 +154,10 @@ struct StudioGallery: View {
             }
             .buttonStyle(StudioPressStyle()).accessibilityLabel("Open \(project.title)")
             .accessibilityIdentifier("drawing-\(project.title)")
-            .contextMenu { Button("Rename", systemImage: "pencil") { rename(project) } }
+            .contextMenu {
+                Button("Rename", systemImage: "pencil") { rename(project) }
+                Button("Delete project", systemImage: "trash", role: .destructive) { deleting = project }
+            }
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(project.title).font(.system(.headline, design: .serif)).lineLimit(2)
@@ -156,6 +167,7 @@ struct StudioGallery: View {
                 Spacer(minLength: 4)
                 Menu {
                     Button("Rename", systemImage: "pencil") { rename(project) }
+                    Button("Delete project", systemImage: "trash", role: .destructive) { deleting = project }
                 } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44).contentShape(Rectangle()) }
                     .accessibilityLabel("Options for \(project.title)")
             }

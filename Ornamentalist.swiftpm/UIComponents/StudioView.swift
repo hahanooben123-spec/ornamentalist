@@ -50,10 +50,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.8.1: studio visible; loading gallery")
+            print("Ornamentalist 0.8.2: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.8.1: gallery loading finished")
+            print("Ornamentalist 0.8.2: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -111,27 +111,14 @@ struct StudioView: View {
         // Chrome overlays preserve the canvas bounds and document transform.
         PencilCanvas(model: model)
             .id(document.id)
-            // Reserve room for the floating bars, including in focus mode.
+            // Reserve room for the top toolbar, including in focus mode.
             // Toggling chrome must not change the Pencil coordinate frame.
-            .padding(.top, 84).padding(.bottom, 116)
+            .padding(.top, 60)
             .ignoresSafeArea()
             .allowsHitTesting(!exporting && !model.busy && !model.isPreparing)
             .overlay { editorRails }
             .overlay(alignment: .top) {
-                if !zen { editorHeader(document).padding(.horizontal, 20).padding(.top, 10) }
-            }
-            .overlay(alignment: .bottom) {
-                if !zen {
-                    VStack(spacing: 12) {
-                        dock(document)
-                        Text(horizontalSizeClass == .compact ? document.title :
-                                model.fingerDrawing ? "Finger drawing on · Two fingers to navigate" : "Apple Pencil to draw · Two fingers to navigate")
-                            .font(.caption).foregroundStyle(.white.opacity(0.65))
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(StudioStyle.workspace.opacity(0.85), in: Capsule())
-                            .allowsHitTesting(false)
-                    }.padding(.horizontal, 16).padding(.bottom, 16)
-                }
+                if !zen { editorHeader(document) }
             }
             .overlay(alignment: .topTrailing) {
                 if zen {
@@ -165,7 +152,17 @@ struct StudioView: View {
         GeometryReader { geometry in
             if !zen {
                 HStack(spacing: 0) {
-                    StudioBrushRail(model: model, sliderHeight: min(128, max(60, (geometry.size.height - 390) / 2)))
+                    VStack(spacing: 6) {
+                        StudioBrushRail(model: model, sliderHeight: min(180, max(60, (geometry.size.height - 350) / 2)))
+                        VStack(spacing: 0) {
+                            Button { model.undo() } label: { StudioIcon(symbol: "arrow.uturn.backward") }
+                                .disabled(!model.canUndo || controlsDisabled)
+                                .accessibilityLabel("Undo").accessibilityIdentifier("undo")
+                            Button { model.redo() } label: { StudioIcon(symbol: "arrow.uturn.forward") }
+                                .disabled(!model.canRedo || controlsDisabled)
+                                .accessibilityLabel("Redo").accessibilityIdentifier("redo")
+                        }.studioSurface()
+                    }
                     Spacer(minLength: 12)
                     if layersVisible && panel == nil {
                         VStack(spacing: 0) {
@@ -180,42 +177,34 @@ struct StudioView: View {
                                     .padding(12)
                             }
                         }
-                        .frame(width: min(330, geometry.size.width * 0.46), height: min(620, max(180, geometry.size.height - 260)))
+                        .frame(width: min(360, geometry.size.width * 0.46))
+                        .frame(maxHeight: .infinity)
                         .studioSurface()
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("layersSidebar")
                         .disabled(controlsDisabled)
                     }
                 }
-                .padding(.horizontal, 12).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.leading, 8).padding(.top, 64).padding(.bottom, 8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .disabled(exporting)
             }
         }
     }
 
     private func editorHeader(_ document: DrawingDocument) -> some View {
-        HStack(spacing: horizontalSizeClass == .compact ? 0 : 12) {
+        HStack(spacing: horizontalSizeClass == .compact ? 0 : 6) {
             Button {
                 panel = nil; Task { await model.close() }
-            } label: { StudioIcon(symbol: "square.grid.2x2") }
+            } label: {
+                if horizontalSizeClass == .compact { StudioIcon(symbol: "square.grid.2x2") }
+                else { Text("Gallery").font(.subheadline).padding(.horizontal, 12).frame(minHeight: 44) }
+            }
                 .disabled(controlsDisabled).accessibilityLabel("Gallery").accessibilityIdentifier("gallery")
-            if horizontalSizeClass != .compact {
-                Rectangle().fill(.secondary.opacity(0.2)).frame(width: 1, height: 26)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(document.title).font(.system(.headline, design: .serif)).lineLimit(1)
-                    Text(model.saveStatus).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                        .accessibilityIdentifier("saveStatus")
-                }.frame(maxWidth: 260, alignment: .leading)
-            }
+            dockButton(.canvas, symbol: "wrench", detail: nil)
+            dockButton(.symmetry, symbol: "circle.hexagongrid", detail: nil)
             Spacer(minLength: 0)
-            HStack(spacing: 0) {
-                Button { model.undo() } label: { StudioIcon(symbol: "arrow.uturn.backward") }
-                    .disabled(!model.canUndo || controlsDisabled)
-                    .accessibilityLabel("Undo").accessibilityIdentifier("undo")
-                Button { model.redo() } label: { StudioIcon(symbol: "arrow.uturn.forward") }
-                    .disabled(!model.canRedo || controlsDisabled)
-                    .accessibilityLabel("Redo").accessibilityIdentifier("redo")
-            }
+            dockButton(.brush, symbol: "paintbrush.pointed", detail: nil)
             if horizontalSizeClass == .compact {
                 Menu {
                     Button("Brush", systemImage: "pencil.tip") { model.selectTool(.brush) }
@@ -227,6 +216,7 @@ struct StudioView: View {
                 toolButton(.eraser, symbol: "eraser", label: "Eraser")
                 toolButton(.eyedropper, symbol: "eyedropper", label: "Eyedropper")
             }
+            dockButton(.layers, symbol: "square.3.layers.fill", detail: nil)
             Button { panel = panel == .colors ? nil : .colors } label: {
                 Circle().fill(document.color.swiftUIColor)
                     .overlay(Circle().stroke(.secondary.opacity(0.4), lineWidth: 1))
@@ -242,13 +232,20 @@ struct StudioView: View {
                 Button("PNG · White paper", systemImage: "photo") { exportPNG(transparent: false) }
                 Button("PNG · Transparent", systemImage: "square.dashed") { exportPNG(transparent: true) }
                 Button("Editable project", systemImage: "doc") { exportProject() }
+                Divider()
+                Button("Hide studio controls", systemImage: "arrow.up.left.and.arrow.down.right") { panel = nil; zen = true }
+                    .accessibilityIdentifier("enterZen")
             } label: { StudioIcon(symbol: "square.and.arrow.up") }
                 .disabled(controlsDisabled).accessibilityLabel("Save and export")
-            Button { panel = nil; zen = true } label: { StudioIcon(symbol: "arrow.up.left.and.arrow.down.right") }
-                .disabled(controlsDisabled).accessibilityLabel("Hide studio controls").accessibilityIdentifier("enterZen")
+            if horizontalSizeClass != .compact {
+                Button { panel = nil; zen = true } label: { StudioIcon(symbol: "arrow.up.left.and.arrow.down.right") }
+                    .disabled(controlsDisabled).accessibilityLabel("Hide studio controls").accessibilityIdentifier("enterZen")
+            }
         }
-        .padding(.horizontal, horizontalSizeClass == .compact ? 6 : 10).padding(.vertical, 8).studioSurface()
-        .frame(maxWidth: 900)
+        .padding(.horizontal, horizontalSizeClass == .compact ? 4 : 10).padding(.vertical, 6)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) { Divider() }
+        .disabled(controlsDisabled)
     }
 
     private func toolButton(_ tool: StudioTool, symbol: String, label: String) -> some View {
@@ -279,32 +276,19 @@ struct StudioView: View {
     private func dockButton(_ item: StudioPanel, symbol: String, detail: String?) -> some View {
         Button {
             if item == .layers { panel = nil; layersVisible.toggle() }
-            else { panel = panel == item ? nil : item }
-        } label: {
-            Group {
-                if horizontalSizeClass == .compact {
-                    VStack(spacing: 4) {
-                        Image(systemName: symbol).font(.system(size: 18, weight: .light))
-                        Text(detail ?? item.rawValue).font(.caption.monospacedDigit())
-                    }.frame(minWidth: 48).padding(.horizontal, 8)
-                } else {
-                    HStack(spacing: 10) {
-                        Image(systemName: symbol).font(.system(size: 22, weight: .light))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.rawValue).font(.subheadline.weight(.medium))
-                            if let detail { Text(detail).font(.caption.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1) }
-                        }
-                    }.padding(.horizontal, 10)
-                }
+            else {
+                if item == .brush, model.tool != .brush { model.selectTool(.brush) }
+                panel = panel == item ? nil : item
             }
-            .frame(minHeight: 48)
+        } label: {
+            StudioIcon(symbol: symbol)
             .background((panel == item || item == .layers && layersVisible && panel == nil) ? StudioStyle.copper.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 15))
             .contentShape(Rectangle())
         }
         .buttonStyle(StudioPressStyle()).accessibilityLabel(item.rawValue).accessibilityValue(detail ?? "")
         .accessibilityIdentifier("panel-\(item.id)")
         .accessibilityAddTraits(item == .layers && layersVisible && panel == nil ? .isSelected : [])
-        .popover(isPresented: Binding(get: { panel == item }, set: { if !$0 && panel == item { panel = nil } }), arrowEdge: .bottom) {
+        .popover(isPresented: Binding(get: { panel == item }, set: { if !$0 && panel == item { panel = nil } }), arrowEdge: .top) {
             StudioPanelView(panel: item, model: model, appearance: $appearance) {
                 panel = nil
                 let rendering = model.rendererDiagnostics?() ?? "Renderer unavailable"

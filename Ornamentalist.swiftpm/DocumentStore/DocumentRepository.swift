@@ -30,6 +30,22 @@ actor DocumentRepository {
     private func file(_ id: UUID, suffix: String = "mandala") -> URL {
         directory.appendingPathComponent(id.uuidString + "." + suffix)
     }
+    private func isDeleted(_ id: UUID) -> Bool {
+        FileManager.default.fileExists(atPath: file(id, suffix: "deleted").path)
+    }
+    func delete(_ id: UUID) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Persist deletion first: a delayed save or leftover recovery copy must
+        // never bring a deleted project back into the gallery after restart.
+        try Data().write(to: file(id, suffix: "deleted"), options: .atomic)
+        savedGenerations.removeValue(forKey: id)
+        for suffix in ["mandala", "backup", "journal", "index", "png"] {
+            let target = file(id, suffix: suffix)
+            if FileManager.default.fileExists(atPath: target.path) {
+                try FileManager.default.removeItem(at: target)
+            }
+        }
+    }
     private func decode(_ url: URL) throws -> DrawingDocument {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         guard ((attributes[.size] as? NSNumber)?.intValue ?? Int.max) <= DrawingLimits.encodedBytes else {
@@ -48,6 +64,7 @@ actor DocumentRepository {
     }
     func save(_ document: DrawingDocument, generation: Int) async throws {
         if saveDelayNanoseconds > 0 { try await Task.sleep(nanoseconds: saveDelayNanoseconds) }
+        guard !isDeleted(document.id) else { return }
         if let saved = savedGenerations[document.id], generation < saved { return }
         let data = try encoded(document, generation: generation)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -63,6 +80,7 @@ actor DocumentRepository {
     }
     /// Atomic rolling journal, including confirmed input from an unfinished stroke.
     func checkpoint(_ document: DrawingDocument, generation: Int) throws {
+        guard !isDeleted(document.id) else { return }
         if let saved = savedGenerations[document.id], generation < saved { return }
         let data = try encoded(document, generation: generation)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -70,6 +88,7 @@ actor DocumentRepository {
         savedGenerations[document.id] = generation
     }
     func open(_ id: UUID) throws -> (DrawingDocument, Bool) {
+        guard !isDeleted(id) else { throw DocumentError.invalidData }
         let primary = try? decode(file(id))
         let journal = try? decode(file(id, suffix: "journal"))
         let validPrimary = primary.flatMap { $0.id == id ? $0 : nil }
@@ -94,6 +113,7 @@ actor DocumentRepository {
         try JSONEncoder().encode(index).write(to: file(d.id, suffix: "index"), options: .atomic)
     }
     func storeThumbnail(_ data: Data, id: UUID, generation: Int) throws {
+        guard !isDeleted(id) else { return }
         guard savedGenerations[id] == generation, data.count <= 1024*1024 else { return }
         try data.write(to: file(id, suffix: "png"), options: .atomic)
     }
@@ -107,7 +127,7 @@ actor DocumentRepository {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let urls = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         let ids = Set(urls.filter { ["mandala", "backup", "journal"].contains($0.pathExtension) }
-            .compactMap { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) })
+            .compactMap { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) }).filter { !isDeleted($0) }
         return ids.map { id in
             if !FileManager.default.fileExists(atPath: file(id, suffix: "journal").path),
                let bytes = indexData(id),
