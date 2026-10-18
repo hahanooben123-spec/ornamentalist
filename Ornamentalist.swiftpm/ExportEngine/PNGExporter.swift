@@ -119,34 +119,18 @@ enum PNGExporter {
         let vertices = StrokeGeometry.mesh(stroke)
         // A single union fill keeps the original opaque fineliner free of seams.
         for matrix in stroke.symmetry.matrices {
-            let path = CGMutablePath()
+            var path = CGMutablePath()
             for i in stride(from: 0, to: vertices.count, by: 3) {
                 let a = matrix.apply(vertices[i]), b = matrix.apply(vertices[i+1]), c = matrix.apply(vertices[i+2])
                 path.move(to: CGPoint(x: a.x, y: a.y))
                 path.addLine(to: CGPoint(x: b.x, y: b.y))
                 path.addLine(to: CGPoint(x: c.x, y: c.y))
                 path.closeSubpath()
+                // Translucent solid brushes use the same accumulating triangle
+                // coverage as Metal. Preserve the old opaque union-fill path.
+                if stroke.brush.opacity < 1 { context.addPath(path); context.fillPath(); path = CGMutablePath() }
             }
-            if stroke.brush.opacity == 1 {
-                context.addPath(path); context.fillPath()
-            } else {
-                // Antialias the union boundary, not each internal fan edge.
-                // Internal triangle antialiasing otherwise dims even an interior
-                // pixel shared by two adjacent triangles (unlike Metal MSAA).
-                context.saveGState()
-                context.addPath(path); context.clip()
-                context.setShouldAntialias(false)
-                for i in stride(from: 0, to: vertices.count, by: 3) {
-                    let triangle = CGMutablePath()
-                    for j in 0..<3 {
-                        let p = matrix.apply(vertices[i+j])
-                        if j == 0 { triangle.move(to: CGPoint(x: p.x, y: p.y)) }
-                        else { triangle.addLine(to: CGPoint(x: p.x, y: p.y)) }
-                    }
-                    triangle.closeSubpath(); context.addPath(triangle); context.fillPath()
-                }
-                context.restoreGState()
-            }
+            context.addPath(path); context.fillPath()
         }
     }
 

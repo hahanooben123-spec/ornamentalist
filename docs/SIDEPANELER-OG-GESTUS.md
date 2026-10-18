@@ -8,6 +8,8 @@ Hver pensel husker sine indstillinger ved penselskift og mellem appstarter på s
 
 Opacity styrer farvens/removalens bidrag ved hver geometri-/penselaflejring. Overlappende dele kan derfor opbygge mere farve eller viskning, også inden for samme strøg. Lag-opacity er en separat kontrol, der dæmper hele laget én gang. Den tidligere helt dækkende Fineliner beholder sin oprindelige geometri og PNG-fyldning ved 100%. Lavere opacity bruger samme akkumulerende trekantdækning i Metal og PNG. Format 7 tillader dette for Fineliner og Brush pen; tidligere appversioner kan ikke åbne format 7. Version 0.8.0 åbner fortsat format 1–6.
 
+Metal og PNG-eksportens Core Graphics glatter primitive kanter forskelligt. Ved transparent Fineliner/Brush pen kan det give små toneforskelle omkring de indre trekantkanter. Opacity kontrolleres på plane områder, og separate kantprøver måler filtreringsforskellen; der loves ikke fuld pixelidentitet mellem de to renderere.
+
 ## Størrelsescirkel
 
 Under størrelsesjustering vises penslens maksimale diameter på lærredet. Cirklen følger lærredets zoom; ved trykfølsomhed er det størrelsen ved maksimalt tryk. Den bliver kortvarigt stående efter justeringen og skjules ved tegning. På en iPad/Pencil-kombination med hover følger cirklen pennen før berøring. Uden hover bruges cirklen midt på lærredet under justering.

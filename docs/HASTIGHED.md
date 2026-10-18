@@ -1,6 +1,6 @@
 # Hurtigere tegning — version 0.7.0
 
-Versionen optimerer tegning og viskning. Dokumentformatet er fortsat 6; gemte strøg, prikmønstre, trykkurve og stabilisering ændres ikke. Nederst i **Canvas** skal der stå **Ornamentalist 0.7.0**, så den kørende kopi kan kontrolleres uden konsollen.
+Optimeringerne af tegning og viskning blev indført i 0.7.0 og er bevaret i 0.8.0. Gemte strøg, prikmønstre, trykkurve og stabilisering ændres ikke af caching. Den aktuelle 0.8.0 bruger format 7 og tilføjer [sidekontroller og gestus](SIDEPANELER-OG-GESTUS.md). Nederst i **Canvas** skal der stå **Ornamentalist 0.8.0**, så den kørende kopi kan kontrolleres uden konsollen.
 
 ## Rendering
 
@@ -24,7 +24,7 @@ Sammenlægning af uændrede transparente lag til et fælles 8-bit cachebillede k
 
 ## Måling på iPad
 
-1. Kontrollér **0.7.0** nederst i Canvas-panelet.
+1. Kontrollér **0.8.0** nederst i Canvas-panelet.
 2. Tegn og visk i tegningen, der før hakkede. Prøv også blød skygge/stipple og Mirror ved normalt zoomniveau.
 3. Vælg **Canvas → Drawing performance → Copy report**.
 4. Gentag efter zoom/rotation. Arbejdsteksturernes allokeringstæller bør stabilisere sig ved uændret skærmstørrelse. Antallet af genafspillede færdige strøg bør ikke stige under et nyt strøg med varm cache, medmindre hukommelses-reservevejen er aktiv.

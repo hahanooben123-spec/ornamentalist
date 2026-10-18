@@ -17,11 +17,22 @@ final class EditingToolsNativeTests: XCTestCase {
         try renderer.commit(stroke); d.strokes.append(stroke)
         let committed = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
         XCTAssertEqual(live, committed)
-        let i = screenIndex(85, 68), png = try pixel(d, x: 85, y: 68)
-        XCTAssertEqual(Double(png[0]), 89, accuracy: 3)
-        XCTAssertEqual(Double(png[2]), 166, accuracy: 3)
-        XCTAssertEqual(Double(committed[i + 2]), Double(png[0]), accuracy: 3)
-        XCTAssertEqual(Double(committed[i]), Double(png[2]), accuracy: 3)
+        // Flat interior probes lie inside a single triangle, away from its
+        // antialiased edges: they measure opacity rather than coverage filtering.
+        for (x, y) in [(95, 66), (83, 80)] {
+            let i = screenIndex(Double(x), Double(y)), png = try pixel(d, x: x, y: y)
+            XCTAssertEqual(Double(png[0]), 89, accuracy: 3)
+            XCTAssertEqual(Double(png[2]), 166, accuracy: 3)
+            XCTAssertEqual(Double(committed[i + 2]), Double(png[0]), accuracy: 3)
+            XCTAssertEqual(Double(committed[i]), Double(png[2]), accuracy: 3)
+        }
+        // Keep the original seam probe too. CG integrates per-primitive coverage
+        // before blending, whereas Metal blends each MSAA sample. Two adjacent
+        // half-covered primitives differ by at most alpha²/4 (8 codes at 35%).
+        let seam = try pixel(d, x: 85, y: 68), i = screenIndex(85, 68)
+        let filteringBound = ceil(255 * stroke.brush.opacity * stroke.brush.opacity / 4)
+        XCTAssertEqual(Double(committed[i + 2]), Double(seam[0]), accuracy: filteringBound)
+        XCTAssertEqual(Double(committed[i]), Double(seam[2]), accuracy: filteringBound)
     }
     private func fixture() -> DrawingDocument {
         var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
