@@ -10,8 +10,8 @@ final class StudioUITests: XCTestCase {
         app.launchArguments = ["--ui-showcase"]
         app.launchEnvironment["ORNAMENTALIST_UI_TEST"] = "showcase"
         app.launch()
-        XCTAssertTrue(app.otherElements["studio-test"].waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(app.buttons["drawing-Solstice"].waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["studio-test"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+        screenshot("00-Launch")
     }
 
     private func screenshot(_ name: String) {
@@ -22,6 +22,7 @@ final class StudioUITests: XCTestCase {
     }
 
     func testStudioFlowAndScreenshots() {
+        XCTAssertTrue(app.buttons["drawing-Solstice"].waitForExistence(timeout: 30), app.debugDescription)
         screenshot("01-Gallery")
         app.buttons["drawing-Solstice"].tap()
         XCTAssertTrue(app.buttons["panel-Symmetry"].waitForExistence(timeout: 20))

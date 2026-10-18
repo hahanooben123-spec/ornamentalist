@@ -28,7 +28,7 @@ Record iPad model, iPadOS version, Apple Pencil model, Swift Playground version,
 
 | Criterion | Action | Expected result |
 | --- | --- | --- |
-| 1. Runs natively | Open the `.swiftpm` in Swift Playground and Run App | Gallery appears; New canvas opens a native drawing surface |
+| 1. Runs natively | Open the `.swiftpm` in Swift Playground and Run App | Gallery appears; New drawing → Create drawing opens a native drawing surface |
 | 2. Pencil reliability | Draw taps, slow curves, quick curves, varying pressure; rest a palm; lift Pencil; background and return | Pressure changes width, no finger/palm marks in default mode, no stuck active stroke |
 | 3. Live eight-way symmetry | Keep Pencil down and draw a long curve with default ×8 | All eight copies grow before Pencil lifts |
 | 4. Adjustable count | Draw at ×2, ×8, ×16, ×64, and 1 | New strokes use requested count; earlier strokes remain unchanged |
@@ -46,6 +46,6 @@ Run a 10-minute drawing session at eight copies and another at 64. Record visibl
 
 Exercise storage failure/recovery with a test app container or development device. Export an editable project to Files, import it twice and confirm the copies do not overwrite the source. Rename projects and inspect their thumbnails. Background saving and the rolling journal are best effort: a kill before a write completes can lose recent input. Test canceled finger strokes after a journal checkpoint; they must not return after a successful subsequent save. Large-document rendering still needs further work before production performance claims.
 
-Use **Canvas → Performance report** after drawing at eight and 64 copies, copy the report and record it beside the device/OS/Pencil details. Its last 240 CPU/GPU samples and buffer bytes are diagnostics, not a substitute for touch-to-screen latency measurement or memory profiling.
+Use **Canvas → Drawing performance** after drawing at eight and 64 copies, copy the report and record it beside the device/OS/Pencil details. Its last 240 CPU/GPU samples and buffer bytes are diagnostics, not a substitute for touch-to-screen latency measurement or memory profiling.
 
 Do not declare Phase 1 complete until all nine real-device criteria pass. Keep any Swift/Metal compiler diagnostics or device failures with their file/line and reproduction steps for the next fix.

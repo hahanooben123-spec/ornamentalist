@@ -3,6 +3,21 @@ import XCTest
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testShowcaseUsesValidReopenableDrawings() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder)
+        try await StudioShowcase.seed(repository: repository)
+        let projects = try await repository.list()
+        XCTAssertEqual(Set(projects.map(\.title)), Set(["Solstice", "Quiet orbit", "Petal study"]))
+        for project in projects {
+            XCTAssertNotNil(project.thumbnail)
+            let (drawing, recovered) = try await repository.open(project.id)
+            XCTAssertFalse(recovered)
+            XCTAssertFalse(drawing.strokes.isEmpty)
+        }
+    }
+
     func testCloseLocksUndoRedoAndSettingsUntilExactSnapshotIsSaved() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

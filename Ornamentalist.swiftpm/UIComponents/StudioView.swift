@@ -44,7 +44,9 @@ struct StudioView: View {
             }
         }
         .tint(StudioStyle.copper)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(rootIdentifier)
+        .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
             model.startMaintenance()
@@ -92,6 +94,13 @@ struct StudioView: View {
         #else
         return "studio"
         #endif
+    }
+
+    private var rootDiagnostic: String {
+        #if DEBUG
+        if StudioShowcase.enabled { return model.error ?? "\(model.projects.count) test drawings" }
+        #endif
+        return ""
     }
 
     private func editor(_ document: DrawingDocument) -> some View {
