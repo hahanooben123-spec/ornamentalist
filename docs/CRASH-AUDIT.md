@@ -2,6 +2,14 @@
 
 The user subsequently confirmed that version 0.2.2 runs on the physical iPad after the concrete compiler fix below. Earlier investigation notes are retained as history. Version 0.3.0 adds Mirror/layers and requires its own device acceptance.
 
+## Device target/preview association: 0.3.1 investigation
+
+After the 0.3.0 update, Swift Playground reports `DrawingLimits.swift not in a target` / `must be in at least one target in order to update previews`. The displayed URL is under a File Provider path. The source exists in the delivered package and was inside the previous target's recursive `path: "."` discovery; the screenshot does not prove a missing source or establish a cache/provider cause.
+
+Version 0.3.1 explicitly lists all 21 sources in the executable target. Packaging checks reject missing, extra or duplicate entries. A new cloud check copies those sources and the exact target declaration into a temporary SwiftPM package, replacing only the unsupported AppleProductTypes product with a standard executable product, and asks `swift package describe --type json` for membership. This check passes, including `Core/DrawingLimits.swift`. It does not exercise the actual AppleProductTypes application product or the iPad's preview/file-provider mapping.
+
+The device trial is Stop, close the previous document, extract the new archive in a fresh folder under On My iPad, open the full `Ornamentalist.swiftpm`, select App/OrnamentalistApp and Run. Existing app data is not reset. Whether the target/preview association error is resolved on the user's device remains unconfirmed.
+
 ## Confirmed device compiler error: 0.2.2 correction
 
 The latest device screenshot exposes a red **“Ambiguous use of 'cos'” in StudioPanels**. This is a confirmed build blocker; the accompanying yellow `uniforms` message is only an unmutated-variable warning. A generic “Crashed / Build failed” screen did not previously reveal this compiler diagnostic.

@@ -2,6 +2,8 @@
 
 Local checks: Swift grammar parsing, build YAML/source paths and byte-for-byte ZIP integrity. Swift/Apple compilation runs on [GitHub Actions](https://github.com/hahanooben123-spec/ornamentalist/actions/workflows/apple-validation.yml); see the run for the tested commit and pass/fail status. A syntax parse does not type-check Swift. No physical iPad/Pencil reliability or latency result is claimed.
 
+Version 0.3.1 adds explicit source-list equality checks and actual SwiftPM target-source discovery. The latter replaces only the AppleProductTypes product with a standard executable product in a temporary copy, retains the exact app target declaration and checks all 21 paths, including DrawingLimits.swift. This does not reproduce iPad preview/cache integration.
+
 ## Included automated checks
 
 `swift test` at the repository root runs the actual portable Swift implementation, covering:

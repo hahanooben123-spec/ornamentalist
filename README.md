@@ -76,6 +76,8 @@ LayerManager implements adding, renaming, hiding, locking, reordering and deleti
 
 ## Apple build verification without owning a Mac
 
+The app manifest explicitly enumerates all 21 sources, and packaging checks that this list matches the shipped files exactly. `python3 tools/check_playground_target.py` additionally uses real SwiftPM source discovery in a temporary copy with a standard executable product. It preserves the exact target declaration but replaces AppleProductTypes application metadata; it therefore verifies target source membership, not the installed iPad editor's preview/file-provider integration.
+
 The supplied GitHub Actions workflow runs on a hosted macOS runner in [the Ornamentalist repository](https://github.com/hahanooben123-spec/ornamentalist). Open **Actions → Apple validation** to inspect builds. A green build verifies compilation/tests, not physical Pencil behavior. The job also uploads a source ZIP for iPad.
 
 The workflow runs `swift test` against the actual input model, geometry, history, limits, migration, journal and repository code. It then builds the same app source and runs simulator tests for save/close races, PNG pixels/transparency and actual offscreen Metal output with asymmetric strokes, navigation and temporary predictions. No signing secrets are required. A Metal test skip is not a Metal pass.
