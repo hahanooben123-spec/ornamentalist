@@ -107,6 +107,8 @@ final class MetalCanvasRenderer {
     private var cpuFrameMilliseconds: [Double] = []
     private var gpuFrameMilliseconds: [Double] = []
     private var deferredFrames = 0
+    private var redrawAfterGPU = false
+    private weak var redrawView: MTKView?
 
     func performanceReport() -> String {
         func timing(_ values: [Double]) -> String {
@@ -117,7 +119,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = allocatedGeometryBytes + sealed.reduce(0) { $0 + $1.buffer.length } + scratch.count * 16
-        return "Ornamentalist 0.9.7\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.9.8\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -272,11 +274,11 @@ final class MetalCanvasRenderer {
             var total = 0
             for stroke in strokes {
                 total += BrushGeometry.estimatedStorageCost(stroke)
-                guard total <= DrawingLimits.vertexCount else { throw DocumentError.memoryLimit }
+                guard total <= DrawingLimits.vertexCount else { throw DocumentError.geometryLimit }
             }
             for stroke in missing {
                 guard BrushGeometry.estimatedStorageCost(stroke) <= DrawingLimits.strokeVertices else {
-                    throw DocumentError.memoryLimit
+                    throw DocumentError.geometryLimit
                 }
             }
         }.value
@@ -285,7 +287,7 @@ final class MetalCanvasRenderer {
         let kept = strokes.filter { cache[$0.id] != nil }.reduce(0) { n, s in
             n + (cache[s.id]?.reduce(0) { $0 + $1.storageUnits } ?? 0)
         }
-        guard incoming + kept <= DrawingLimits.vertexCount else { throw DocumentError.memoryLimit }
+        guard incoming + kept <= DrawingLimits.vertexCount else { throw DocumentError.geometryLimit }
         var uploaded: [UUID: [GPUChunk]] = [:]
         // Expand and upload one stroke at a time. More compact GPU storage must
         // not create a document-sized expanded CPU mesh during reopening.
@@ -295,7 +297,7 @@ final class MetalCanvasRenderer {
             uploaded[stroke.id] = try chunks(points)
         }
         let uploadedCost = uploaded.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
-        guard uploadedCost + kept <= DrawingLimits.vertexCount else { throw DocumentError.memoryLimit }
+        guard uploadedCost + kept <= DrawingLimits.vertexCount else { throw DocumentError.geometryLimit }
         let loader = MTKTextureLoader(device: device)
         for raster in layers.compactMap(\.raster) where rasterTextures[raster.id] == nil {
             let image = try PNGExporter.rasterImage(raster)
@@ -323,7 +325,7 @@ final class MetalCanvasRenderer {
             ?? scratch.first.map { $0.z < 0 && $0.w < 0 } ?? false
         let liveCost = BrushGeometry.storageCost(vertexCount: scratch.count + points.count, stamped: compactStamps && stamped)
         guard allocatedStorageUnits + sealedStorageUnits + liveCost <= DrawingLimits.vertexCount else {
-            throw DocumentError.memoryLimit
+            throw DocumentError.geometryLimit
         }
         for p in points {
             scratch.append(packedVertex(p))
@@ -369,14 +371,16 @@ final class MetalCanvasRenderer {
             updateScene(document); sceneRevision = revision
         }
         // Never block the touch delivery thread when the GPU is behind.
+        redrawView = view
         guard inFlight.wait(timeout: .now()) == .success else {
             deferredFrames += 1
-            view.setNeedsDisplay()
+            redrawAfterGPU = true
             return
         }
         if groupInFlight.wait(timeout: .now()) != .success {
-            inFlight.signal(); deferredFrames += 1; view.setNeedsDisplay(); return
+            inFlight.signal(); deferredFrames += 1; redrawAfterGPU = true; return
         }
+        redrawAfterGPU = false
         guard let drawable = view.currentDrawable, let command = queue.makeCommandBuffer() else {
             groupInFlight.signal(); inFlight.signal(); return
         }
@@ -387,7 +391,7 @@ final class MetalCanvasRenderer {
             gate.signal()
             groupGate.signal()
             let gpu = (command.gpuEndTime - command.gpuStartTime) * 1000
-            Task { @MainActor in self?.recordGPU(gpu) }
+            Task { @MainActor in self?.completedGPUFrame(gpu) }
         }
         // Even an allocation error closes the encoder and submits its resources.
         defer {
@@ -397,6 +401,15 @@ final class MetalCanvasRenderer {
         let size = Point(x: Double(view.bounds.width), y: Double(view.bounds.height))
         try encodeCachedScene(command: command, output: drawable.texture, document: document,
                               viewport: viewport, viewSize: size, active: active, preview: preview, guides: guides)
+    }
+    private func completedGPUFrame(_ milliseconds: Double) {
+        recordGPU(milliseconds)
+        // Coalesce busy draw requests into one retry after GPU completion.
+        // setNeedsDisplay inside the busy guard can spin until the GPU finishes.
+        if redrawAfterGPU {
+            redrawAfterGPU = false
+            redrawView?.setNeedsDisplay()
+        }
     }
 
     private func encodeScene(encoder: MTLRenderCommandEncoder, document: DrawingDocument, viewport: Viewport,

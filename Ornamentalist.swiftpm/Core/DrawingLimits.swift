@@ -1,13 +1,13 @@
 import Foundation
 
 enum DrawingLimits {
-    static let encodedBytes = 64 * 1024 * 1024
-    static let sampleCount = 100_000
-    static let strokeSamples = 20_000
+    static let encodedBytes = 128 * 1024 * 1024
+    static let sampleCount = 400_000
+    static let strokeSamples = 80_000
     // Storage units of 16 bytes, not expanded triangle vertices. A compact
     // stamped dab uses two units, versus six for its expanded triangles.
-    static let vertexCount = 2_000_000 // 32 MB, excluding render targets.
-    static let strokeVertices = 250_000
+    static let vertexCount = 4_000_000 // 64 MB, excluding render targets.
+    static let strokeVertices = 500_000
 }
 
 /// Uses a fixed deadline as well as an idle deadline. Continuous dotting cannot

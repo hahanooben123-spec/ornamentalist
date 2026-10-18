@@ -54,10 +54,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.9.7: studio visible; loading gallery")
+            print("Ornamentalist 0.9.8: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.9.7: gallery loading finished")
+            print("Ornamentalist 0.9.8: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in

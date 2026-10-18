@@ -13,6 +13,7 @@ struct InkBrush: Codable, Equatable, Sendable {
     var density = 0.5
     var adaptiveStabilization = false
     var pressureCurve = 0.5
+    var pressureGain = 1.0
     var minimumSize = 0.2
     var taperStart = 0.0
     var taperEnd = 0.0
@@ -28,7 +29,8 @@ struct InkBrush: Codable, Equatable, Sendable {
     }
     var usesStamps: Bool { preset != .fineliner && preset != .brushPen }
     var isValid: Bool {
-        [pressureCurve, minimumSize, taperStart, taperEnd, tiltShading, falloff, effectiveSoftness].allSatisfy { $0.isFinite } &&
+        [pressureCurve, pressureGain, minimumSize, taperStart, taperEnd, tiltShading, falloff, effectiveSoftness].allSatisfy { $0.isFinite } &&
+        (1...5).contains(pressureGain) &&
         (0...1).contains(falloff) && (0...1).contains(effectiveSoftness) &&
         (0.2...3).contains(pressureCurve) && (0...1).contains(minimumSize) &&
         (0...2).contains(taperStart) && (0...2).contains(taperEnd) && (0...1).contains(tiltShading) &&
@@ -39,7 +41,7 @@ struct InkBrush: Codable, Equatable, Sendable {
     }
     func radius(pressure: Double) -> Double {
         guard pressureEnabled else { return width * 0.5 }
-        return width * (minimumSize + (1 - minimumSize) * pow(max(0, min(1, pressure)), pressureCurve)) * 0.5
+        return width * (minimumSize + (1 - minimumSize) * pow(max(0, min(1, pressure * pressureGain)), pressureCurve)) * 0.5
     }
     /// Soft dabs overlap several times per brush diameter. Normalize their
     /// accumulation so small opacity changes do not immediately saturate a pass.
@@ -70,6 +72,7 @@ extension InkBrush {
         density = try c.decodeIfPresent(Double.self, forKey: .density) ?? 0.5
         adaptiveStabilization = try c.decodeIfPresent(Bool.self, forKey: .adaptiveStabilization) ?? false
         pressureCurve = try c.decodeIfPresent(Double.self, forKey: .pressureCurve) ?? 0.5
+        pressureGain = try c.decodeIfPresent(Double.self, forKey: .pressureGain) ?? 1
         minimumSize = try c.decodeIfPresent(Double.self, forKey: .minimumSize) ?? 0.2
         taperStart = try c.decodeIfPresent(Double.self, forKey: .taperStart) ?? 0
         taperEnd = try c.decodeIfPresent(Double.self, forKey: .taperEnd) ?? 0
@@ -146,6 +149,7 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .hatching: b.width = 36; b.opacity = 0.65; b.spacing = 0.65; b.density = 0.4
         }
         b.adaptiveStabilization = true
+        b.pressureGain = 2.5
         if self == .brushPen { b.minimumSize = 0.03; b.taperStart = 0.6; b.taperEnd = 0.8 }
         if b.usesStamps { b.tiltShading = 0.7 }
         if softness > 0 { b.normalizedOpacity = true }

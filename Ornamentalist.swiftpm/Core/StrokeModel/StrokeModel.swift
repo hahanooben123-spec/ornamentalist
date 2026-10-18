@@ -59,7 +59,7 @@ extension InkStroke {
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 13
+    var version = 14
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -81,7 +81,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard (1...13).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...14).contains(version) else { throw DocumentError.unsupportedVersion }
         let layerIDs = Set(layers.map(\.id))
         guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
               layerIDs.contains(activeLayerID), layers.allSatisfy({
@@ -117,7 +117,8 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
         var ids = Set<UUID>()
         for stroke in strokes {
             total += stroke.samples.count
-            guard ids.insert(stroke.id).inserted, layerIDs.contains(stroke.layerID), total <= DrawingLimits.sampleCount,
+            guard total <= DrawingLimits.sampleCount else { throw DocumentError.sampleLimit }
+            guard ids.insert(stroke.id).inserted, layerIDs.contains(stroke.layerID),
                   !stroke.samples.isEmpty, stroke.samples.count <= DrawingLimits.strokeSamples,
                   validBrush(stroke.brush), stroke.color.isValid,
                   validSymmetry(stroke.symmetry) else { throw DocumentError.invalidData }
@@ -133,7 +134,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
             let cost = BrushGeometry.estimatedStorageCost(stroke)
             vertices += cost
             guard cost <= DrawingLimits.strokeVertices, vertices <= DrawingLimits.vertexCount else {
-                throw DocumentError.memoryLimit
+                throw DocumentError.geometryLimit
             }
         }
     }
@@ -165,17 +166,19 @@ extension DrawingDocument {
 }
 
 enum DocumentError: LocalizedError {
-    case unsupportedVersion, invalidData, oversized, noMetal, graphics, graphicsMemory, strokeLimit, memoryLimit, mergeSize
+    case unsupportedVersion, invalidData, oversized, noMetal, graphics, graphicsMemory, strokeLimit, sampleLimit, geometryLimit, memoryLimit, mergeSize
     var errorDescription: String? {
         switch self {
         case .mergeSize: return "Merging currently supports canvases up to 2048 × 2048 pixels with whole-pixel dimensions."
         case .unsupportedVersion: return "This drawing uses a document version this app cannot open."
         case .invalidData: return "The drawing contains invalid or unsupported data."
-        case .oversized: return "This prototype supports drawing files up to 64 MB."
+        case .oversized: return "This drawing exceeds the 128 MB file limit."
         case .noMetal: return "Metal is unavailable on this device."
         case .graphics: return "The drawing renderer or image export could not be created."
         case .graphicsMemory: return "The graphics device could not allocate a drawing buffer or texture. Your drawing has not reached the geometry limit. Save your work and reopen the drawing."
         case .strokeLimit: return "This stroke has reached its detail limit. Your confirmed ink is kept. Lift the Pencil and continue with a new stroke on this canvas."
+        case .sampleLimit: return "This drawing has reached its input-point limit. Your confirmed ink is kept. Save your work."
+        case .geometryLimit: return "This drawing has reached its geometry buffer budget. Your confirmed ink is kept. Save your work."
         case .memoryLimit: return "This drawing has reached its geometry or storage limit. Save your work before starting another canvas."
         }
     }

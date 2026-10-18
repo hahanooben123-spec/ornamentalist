@@ -16,10 +16,10 @@ struct StrokeSession {
     private let remainingSamples: Int
     private let remainingVertices: Int
     private var sampleLimitError: DocumentError {
-        remainingSamples == DrawingLimits.strokeSamples ? .strokeLimit : .memoryLimit
+        remainingSamples == DrawingLimits.strokeSamples ? .strokeLimit : .sampleLimit
     }
     private var vertexLimitError: DocumentError {
-        remainingVertices == DrawingLimits.strokeVertices ? .strokeLimit : .memoryLimit
+        remainingVertices == DrawingLimits.strokeVertices ? .strokeLimit : .geometryLimit
     }
 
     /// Same conservative price as a full replay, accumulated while ingesting

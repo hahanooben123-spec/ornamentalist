@@ -154,7 +154,7 @@ final class CoreTests: XCTestCase {
         var stopped = false
         for i in 0..<1000 {
             do { _ = try session.append(sample(Double(i) * 3, Double(i % 2) * 4, time: Double(i))) }
-            catch DocumentError.memoryLimit { stopped = true; break }
+            catch DocumentError.geometryLimit { stopped = true; break }
         }
         XCTAssertTrue(stopped)
         XCTAssertFalse(session.stroke.samples.isEmpty)
@@ -231,7 +231,7 @@ final class CoreTests: XCTestCase {
         }
     }
 
-    func testTwentySixDetailedStrokesFitWithoutIncreasingMemoryLimit() throws {
+    func testTwentySixDetailedStrokesFitWithinBoundedMemoryBudget() throws {
         var d = DrawingDocument()
         for stroke in 0..<26 {
             let samples = (0..<1000).map { i in
@@ -241,8 +241,26 @@ final class CoreTests: XCTestCase {
         }
         let vertices = d.strokes.reduce(0) { $0 + StrokeGeometry.estimatedVertexCount($1) }
         XCTAssertLessThan(vertices, DrawingLimits.vertexCount / 5)
-        XCTAssertEqual(DrawingLimits.vertexCount, 2_000_000)
+        XCTAssertEqual(DrawingLimits.vertexCount, 4_000_000)
         try d.validate()
+    }
+
+    func testComplexMirroredDrawingPassesOldInputLimitAndReopens() throws {
+        var document = DrawingDocument()
+        let symmetry = SymmetryConfiguration(repetitions: 16, center: Point(x: 1024, y: 1024), mirror: true)
+        for row in 0..<4 {
+            let samples = (0..<30_000).map { i in
+                sample(100 + Double(i) * 0.03, 100 + Double(row) * 30 + sin(Double(i) * 0.02) * 10, time: Double(i) / 240)
+            }
+            document.strokes.append(InkStroke(symmetry: symmetry, samples: samples))
+        }
+        XCTAssertGreaterThan(document.strokes.reduce(0) { $0 + $1.samples.count }, 100_000)
+        try document.validate()
+        let data = try JSONEncoder().encode(document)
+        let reopened = try JSONDecoder().decode(DrawingDocument.self, from: data)
+        try reopened.validate()
+        XCTAssertEqual(reopened.strokes.map(\.samples.count), [30_000, 30_000, 30_000, 30_000])
+        XCTAssertTrue(reopened.strokes.allSatisfy { $0.symmetry.mirror })
     }
 
     func testPerStrokeLimitDoesNotTellUserToAbandonCanvas() throws {

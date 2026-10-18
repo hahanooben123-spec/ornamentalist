@@ -1,4 +1,4 @@
-# Pen response — 0.9.7
+# Pen response — 0.9.8
 
 Brush settings now include adaptive stabilization, pressure curve and minimum size.
 Solid ink supports start/end taper. Stamped brushes support Pencil tilt shading.
@@ -81,7 +81,23 @@ Core tests cover input batching, distance-based opacity, validation and reopenin
 native tests compare expanded/compact live and committed drawing plus PNG for
 both ink and erasing. These checks require Apple CI, not Windows grammar checks.
 
-Document format 13 stores softness and distance falloff. Older formats
+Version 0.9.8 coalesces GPU-busy redraw requests until a GPU completion callback,
+instead of immediately scheduling another draw from the busy guard. This removes
+the tight retry loop associated with extreme Deferred frames counts. Device
+performance still needs measurement. The input budget is now 400,000 points
+(80,000 per stroke), source geometry 64 MB (8 MB per stroke), and drawing file
+size 128 MB. Render-target and raster budgets are unchanged. Reopening still
+expands one stroke at a time. These are bounded capacities, not unlimited drawing.
+The diagnostic report now shows input-point and geometry-budget usage, and their
+limit errors are distinct. Tests cover a 120,000-point mirrored drawing and
+shading beyond the former 32 MB geometry budget.
+
+New strokes use 2.5× pressure sensitivity by default. Full size is reached at 40%
+of UIKit's reported maximum force, rather than requiring 100%. Pencil sensitivity
+is adjustable from 1× to 5× and remembered per drawing/eraser preset. Personal
+current settings migrate once; existing strokes decode with the old 1× response.
+
+Document format 14 stores pressure sensitivity and the expanded capacity. Older formats
 remain readable; older app builds cannot read drawings saved by this version.
 
 Local checks: Swift grammar, build YAML and byte-for-byte source packaging.

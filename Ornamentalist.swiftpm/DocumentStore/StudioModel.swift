@@ -125,6 +125,21 @@ final class StudioModel: ObservableObject {
             var brush = stored; brush.normalizedOpacity = true; eraserSettings[preset] = brush
         }
         if eraserBrush.preset.softness > 0 { eraserBrush.normalizedOpacity = true }
+        if preferences?.bool(forKey: "lightPencilPressureV1") != true {
+            for (preset, stored) in brushSettings {
+                var brush = stored; brush.pressureGain = 2.5; brushSettings[preset] = brush
+            }
+            for (preset, stored) in eraserSettings {
+                var brush = stored; brush.pressureGain = 2.5; eraserSettings[preset] = brush
+            }
+            eraserBrush.pressureGain = 2.5
+            let brushes = Dictionary(uniqueKeysWithValues: brushSettings.map { ($0.key.rawValue, $0.value) })
+            let erasers = Dictionary(uniqueKeysWithValues: eraserSettings.map { ($0.key.rawValue, $0.value) })
+            if let data = try? JSONEncoder().encode(brushes) { preferences?.set(data, forKey: "brushSettings") }
+            if let data = try? JSONEncoder().encode(erasers) { preferences?.set(data, forKey: "eraserBrushSettings") }
+            if let data = try? JSONEncoder().encode(eraserBrush) { preferences?.set(data, forKey: "eraserSettings") }
+            preferences?.set(true, forKey: "lightPencilPressureV1")
+        }
     }
 
     func startMaintenance() {
@@ -165,6 +180,7 @@ final class StudioModel: ObservableObject {
         else {
             if adopted.brush.usesStamps, adopted.brush.tiltShading == 0 { adopted.brush.tiltShading = 0.7 }
             if adopted.brush.preset.softness > 0 { adopted.brush.normalizedOpacity = true }
+            adopted.brush.pressureGain = 2.5
             rememberBrush(adopted.brush)
         }
         document = adopted; history = StrokeHistory()
@@ -311,7 +327,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 13
+            after.layers[index].raster = raster; after.version = 14
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -359,7 +375,7 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.layers[index].raster?.placement = p; after.version = 13
+            after.layers[index].raster?.placement = p; after.version = 14
             do {
                 try after.validate()
                 if before.layers != after.layers {
@@ -497,7 +513,7 @@ final class StudioModel: ObservableObject {
     }
     func setPenResponse(adaptive: Bool? = nil, curve: Double? = nil, minimum: Double? = nil,
                         start: Double? = nil, end: Double? = nil, tilt: Double? = nil,
-                        softness: Double? = nil, falloff: Double? = nil) {
+                        softness: Double? = nil, falloff: Double? = nil, gain: Double? = nil) {
         guard canEdit, !isDrawing, document != nil else { return }
         var brush = inputBrush
         if let adaptive { brush.adaptiveStabilization = adaptive }
@@ -508,15 +524,19 @@ final class StudioModel: ObservableObject {
         if let tilt, tilt.isFinite { brush.tiltShading = max(0, min(1, tilt)) }
         if let softness, softness.isFinite { brush.edgeSoftness = max(0, min(1, softness)) }
         if let falloff, falloff.isFinite { brush.falloff = max(0, min(1, falloff)) }
+        if let gain, gain.isFinite { brush.pressureGain = max(1, min(5, gain)) }
         if tool == .eraser { eraserBrush = brush; rememberEraser() }
         else { document?.brush = brush; changed() }
     }
     private func changed() {
-        document?.version = 13; document?.modified = Date()
+        document?.version = 14; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)
+    }
+    var inkBudgetReport: String {
+        "Input points: \(usedSamples) / \(DrawingLimits.sampleCount)\nGeometry budget: \(usedVertices * 16 / 1024) / \(DrawingLimits.vertexCount * 16 / 1024) KiB\nStrokes: \(document?.strokes.count ?? 0)"
     }
     private func rememberBrush(_ brush: InkBrush) {
         guard brushSettings[brush.preset] != brush else { return }

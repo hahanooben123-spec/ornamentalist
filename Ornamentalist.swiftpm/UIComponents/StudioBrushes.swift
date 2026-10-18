@@ -93,6 +93,10 @@ struct StudioBrushesView: View {
                 .font(.subheadline)
             if brush.pressureEnabled {
                 VStack(alignment: .leading, spacing: 8) {
+                    valueLabel("Pencil sensitivity", value: "\(brush.pressureGain.formatted(.number.precision(.fractionLength(1))))×")
+                    Slider(value: Binding(get: { brush.pressureGain }, set: { model.setPenResponse(gain: $0) }), in: 1...5)
+                        .accessibilityLabel("Pencil pressure sensitivity")
+                    Text("Higher sensitivity reaches full size with a lighter touch.").font(.caption).foregroundStyle(.secondary)
                     valueLabel("Pressure curve", value: brush.pressureCurve.formatted(.number.precision(.fractionLength(2))))
                     Slider(value: Binding(get: { brush.pressureCurve }, set: { model.setPenResponse(curve: $0) }), in: 0.2...3)
                     Text("Lower values need less pressure. Higher values need a firmer touch.").font(.caption).foregroundStyle(.secondary)
@@ -100,7 +104,7 @@ struct StudioBrushesView: View {
                         var path = Path()
                         for i in 0...40 {
                             let t = Double(i) / 40
-                            let diameter = brush.minimumSize + (1 - brush.minimumSize) * pow(t, brush.pressureCurve)
+                            let diameter = brush.minimumSize + (1 - brush.minimumSize) * pow(min(1, t * brush.pressureGain), brush.pressureCurve)
                             let p = CGPoint(x: size.width * t, y: size.height * (1 - diameter))
                             if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
                         }

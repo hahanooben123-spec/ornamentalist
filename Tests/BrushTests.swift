@@ -2,6 +2,29 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class BrushTests: XCTestCase {
+    func testLightPressureReachesFullSizeEarlierWithoutChangingLegacyInk() throws {
+        var brush = BrushPreset.brushPen.makeBrush()
+        XCTAssertEqual(brush.pressureGain, 2.5)
+        XCTAssertEqual(brush.radius(pressure: 0.4), brush.width / 2, accuracy: 1e-9)
+        var legacy = brush; legacy.pressureGain = 1
+        XCTAssertGreaterThan(brush.radius(pressure: 0.15), legacy.radius(pressure: 0.15))
+        let data = Data(#"{"width":18,"pressureEnabled":true,"pressureCurve":0.5,"minimumSize":0.03}"#.utf8)
+        let restored = try JSONDecoder().decode(InkBrush.self, from: data)
+        XCTAssertEqual(restored.pressureGain, 1)
+        brush.pressureGain = .infinity; XCTAssertFalse(brush.isValid)
+    }
+    func testDetailedShadingFitsBeyondOldDocumentGeometryBudget() throws {
+        var brush = BrushPreset.stippleDense.makeBrush()
+        brush.width = 4; brush.spacing = 0.06; brush.density = 1
+        var document = DrawingDocument()
+        document.strokes = (0..<24).map { i in
+            InkStroke(brush: brush, samples: [sample(10, y: Double(i) * 20), sample(1010, y: Double(i) * 20, time: 2)])
+        }
+        let cost = document.strokes.reduce(0) { $0 + BrushGeometry.estimatedStorageCost($1) }
+        XCTAssertGreaterThan(cost, 2_000_000)
+        XCTAssertLessThan(cost, DrawingLimits.vertexCount)
+        try document.validate()
+    }
     func testFalloffFollowsDistanceAcrossInputBatchesAndStopsEmittingDabs() throws {
         var brush = BrushPreset.dots.makeBrush(); brush.width = 4; brush.spacing = 2; brush.falloff = 0.5
         let id = UUID()
@@ -91,7 +114,7 @@ final class BrushTests: XCTestCase {
         brush.width = 4; brush.spacing = 0.1; brush.stabilization = 0
         var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
         for i in 0..<220 { _ = try session.append(sample(Double(i) * 6, time: Double(i) / 240)) }
-        XCTAssertGreaterThan(session.estimatedVertexCount, DrawingLimits.strokeVertices)
+        XCTAssertGreaterThan(session.estimatedVertexCount, 250_000)
         XCTAssertLessThan(session.estimatedStorageCost, DrawingLimits.strokeVertices)
         let mesh = BrushGeometry.mesh(session.stroke)
         XCTAssertEqual(mesh.count, session.estimatedVertexCount)
@@ -326,7 +349,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 13); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 14); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }

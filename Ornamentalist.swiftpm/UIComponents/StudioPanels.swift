@@ -110,7 +110,7 @@ struct StudioPanelView: View {
             }
             Button("Drawing performance", systemImage: "speedometer", action: diagnostics)
                 .font(.subheadline).frame(minHeight: 44)
-            Text("Ornamentalist 0.9.7").font(.caption).foregroundStyle(.secondary)
+            Text("Ornamentalist 0.9.8").font(.caption).foregroundStyle(.secondary)
                 .accessibilityIdentifier("appVersion")
         }
     }

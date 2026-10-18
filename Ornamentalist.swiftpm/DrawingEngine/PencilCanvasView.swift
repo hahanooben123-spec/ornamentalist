@@ -70,7 +70,10 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             delegate = self
         } catch { report(error) }
         model.captureActiveStroke = { [weak self] in self?.session?.stroke }
-        model.rendererDiagnostics = { [weak self] in self?.renderer?.performanceReport() ?? "Renderer unavailable" }
+        model.rendererDiagnostics = { [weak self] in
+            guard let self else { return "Renderer unavailable" }
+            return (self.renderer?.performanceReport() ?? "Renderer unavailable") + "\n\n" + self.model.inkBudgetReport
+        }
         model.brushPreviewRequested = { [weak self] editing in self?.showSizePreview(editing) }
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panCanvas(_:)))
         pan.minimumNumberOfTouches = 2; pan.maximumNumberOfTouches = 2
@@ -213,9 +216,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         }
         let p = point(touch)
         guard (0...document.size.x).contains(p.x), (0...document.size.y).contains(p.y) else { return }
-        guard model.usedSamples < DrawingLimits.sampleCount, model.usedVertices < DrawingLimits.vertexCount else {
-            report(DocumentError.memoryLimit); return
-        }
+        guard model.usedSamples < DrawingLimits.sampleCount else { report(DocumentError.sampleLimit); return }
+        guard model.usedVertices < DrawingLimits.vertexCount else { report(DocumentError.geometryLimit); return }
         drawingTouch = touch
         session = StrokeSession(brush: model.tool == .eraser ? model.eraserBrush : document.brush, symmetry: document.symmetry,
                                 existingSamples: model.usedSamples, existingVertices: model.usedVertices,
