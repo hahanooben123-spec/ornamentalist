@@ -5,6 +5,17 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testLogoLookupWithoutResourcesReturnsNilInsteadOfCrashing() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".bundle")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let info: [String: Any] = ["CFBundleIdentifier": "test.ornamentalist.empty-logo", "CFBundlePackageType": "BNDL"]
+        let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+        try data.write(to: folder.appendingPathComponent("Info.plist"))
+        let bundle = try XCTUnwrap(Bundle(url: folder))
+        XCTAssertNil(StudioBrandLogo.loadImage(in: bundle))
+    }
+
     func testAllBrushPreferencesAndEraserSurviveRestartWithoutManualSave() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "Ornamentalist-all-brushes-\(UUID())"

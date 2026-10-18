@@ -58,15 +58,22 @@ struct StudioIcon: View {
 
 @MainActor
 struct StudioBrandLogo: View {
-    private static let image: UIImage? = {
-        #if SWIFT_PACKAGE
-        let bundle = Bundle.module
-        #else
-        let bundle = Bundle.main
-        #endif
-        guard let url = bundle.url(forResource: "Ornamentalist-logo", withExtension: "jpg") else { return nil }
-        return UIImage(contentsOfFile: url.path)
-    }()
+    private static let image = loadImage()
+    static func loadImage(in bundle: Bundle = .main) -> UIImage? {
+        // SwiftPM's generated Bundle.module accessor traps if its bundle is
+        // missing. Swift Playgrounds can relocate the resources when importing
+        // a project; look up both layouts with fallible Foundation APIs instead.
+        if let url = bundle.url(forResource: "Ornamentalist-logo", withExtension: "jpg"),
+           let image = UIImage(contentsOfFile: url.path) { return image }
+        let roots = [bundle.resourceURL, bundle.bundleURL, bundle.bundleURL.deletingLastPathComponent()].compactMap { $0 }
+        for root in roots {
+            let url = root.appendingPathComponent("Ornamentalist_Ornamentalist.bundle")
+            if let resources = Bundle(url: url),
+               let imageURL = resources.url(forResource: "Ornamentalist-logo", withExtension: "jpg"),
+               let image = UIImage(contentsOfFile: imageURL.path) { return image }
+        }
+        return nil
+    }
     var body: some View {
         Group {
             if let image = Self.image { Image(uiImage: image).resizable().scaledToFit() }
