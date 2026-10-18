@@ -329,7 +329,7 @@ final class StudioModel: ObservableObject {
                     history.recordLayerChange(from: before, to: after)
                     document = after; changed()
                 }
-            } catch { error = error.localizedDescription }
+            } catch { self.error = error.localizedDescription }
         }
         imageTransform = nil; transformLayerID = nil; generation += 1
     }
