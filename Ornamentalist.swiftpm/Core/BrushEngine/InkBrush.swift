@@ -125,7 +125,7 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         }
         b.adaptiveStabilization = true
         if self == .brushPen { b.minimumSize = 0.03; b.taperStart = 0.6; b.taperEnd = 0.8 }
-        if [.graphite, .charcoal, .softShader].contains(self) { b.tiltShading = 0.7 }
+        if b.usesStamps { b.tiltShading = 0.7 }
         return b
     }
 }

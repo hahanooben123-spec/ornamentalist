@@ -84,6 +84,18 @@ final class StudioModel: ObservableObject {
                 if let preset = BrushPreset(rawValue: key), preset == brush.preset { brushSettings[preset] = brush }
             }
         }
+        // Enable the new default once, while respecting later choices to turn
+        // tilt off. Never change the brushes embedded in existing strokes.
+        if preferences?.bool(forKey: "tiltDefaultEnabledV1") != true {
+            for (preset, stored) in brushSettings where stored.usesStamps && stored.tiltShading == 0 {
+                var brush = stored
+                brush.tiltShading = 0.7
+                brushSettings[preset] = brush
+            }
+            let settings = Dictionary(uniqueKeysWithValues: brushSettings.map { ($0.key.rawValue, $0.value) })
+            if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "brushSettings") }
+            preferences?.set(true, forKey: "tiltDefaultEnabledV1")
+        }
         if let raw = preferences?.string(forKey: "activeBrushPreset"), let preset = BrushPreset(rawValue: raw) {
             preferredBrushPreset = preset
         }
@@ -129,7 +141,10 @@ final class StudioModel: ObservableObject {
         // Project settings must not overwrite newer personal brush preferences.
         // Stored strokes retain their own brushes and are never rewritten.
         if let remembered = brushSettings[d.brush.preset] { adopted.brush = remembered }
-        else { rememberBrush(d.brush) }
+        else {
+            if adopted.brush.usesStamps, adopted.brush.tiltShading == 0 { adopted.brush.tiltShading = 0.7 }
+            rememberBrush(adopted.brush)
+        }
         document = adopted; history = StrokeHistory()
         preferredBrushPreset = adopted.brush.preset
         preferences?.set(preferredBrushPreset.rawValue, forKey: "activeBrushPreset")

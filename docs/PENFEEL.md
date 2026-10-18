@@ -4,7 +4,9 @@ Brush settings now include adaptive stabilization, pressure curve and minimum si
 Solid ink supports start/end taper. Stamped brushes support Pencil tilt shading.
 All settings are remembered per preset automatically. Saved settings and existing
 strokes retain their old response unless adjusted. New Brush pen defaults use
-taper; new Graphite, Charcoal and Soft shader defaults enable tilt shading.
+taper; all stamped brush defaults enable tilt shading at 70%. Existing personal
+settings with tilt off are migrated once. A later choice to turn tilt off is
+remembered normally. Existing strokes are never migrated or redrawn differently.
 
 Open the Brushes panel and scroll below Pressure sensitivity. A low pressure
 curve value gives more width under a light touch; a high value needs more force.

@@ -5,6 +5,27 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testTiltDefaultsMigrateOnceAndLaterOffChoiceSurvivesRestart() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "Ornamentalist-tilt-default-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        var old = BrushPreset.airbrush.makeBrush(); old.tiltShading = 0; old.width = 57
+        preferences.set(try JSONEncoder().encode([old.preset.rawValue: old]), forKey: "brushSettings")
+        let model = StudioModel(repository: DocumentRepository(directory: folder), preferences: preferences)
+        await model.create(); model.setBrush(.airbrush)
+        XCTAssertEqual(model.document?.brush.tiltShading, 0.7)
+        XCTAssertEqual(model.document?.brush.width, 57)
+        model.setPenResponse(tilt: 0)
+        let restarted = StudioModel(repository: DocumentRepository(directory: folder), preferences: preferences)
+        await restarted.create(); restarted.setBrush(.airbrush)
+        XCTAssertEqual(restarted.document?.brush.tiltShading, 0)
+        XCTAssertEqual(restarted.document?.brush.width, 57)
+        for preset in BrushPreset.allCases {
+            let brush = preset.makeBrush()
+            XCTAssertEqual(brush.tiltShading, brush.usesStamps ? 0.7 : 0)
+        }
+    }
     func testImportedImageTransformCancelApplyUndoAndReopen() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
