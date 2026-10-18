@@ -27,6 +27,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private var colorTouch: UITouch?
     private var preview: [BrushVertex] = []
     private var navigationGestures: [UIGestureRecognizer] = []
+    private var viewportGestures = Set<ObjectIdentifier>()
+    private var navigationRefinement: Task<Void, Never>?
     private let brushCursor = CAShapeLayer()
     private let cursorHalo = CAShapeLayer()
     private var hoverPoint: CGPoint?
@@ -73,7 +75,13 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
                 guard let self else { return }
                 self.model.setPreparing(preparing || self.pendingPreparation)
             }
-            renderer?.preparationFailed = { [weak self] error in self?.report(error) }
+            renderer?.preparationFailed = { [weak self] error in
+                self?.renderer?.cancelViewportNavigation(); self?.report(error)
+            }
+            renderer?.navigationRefined = { [weak self] in
+                guard let self else { return }
+                self.model.setNavigating(false)
+            }
             delegate = self
         } catch { report(error) }
         model.captureActiveStroke = { [weak self] in self?.session?.stroke }
@@ -108,7 +116,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         hover.delegate = self; addGestureRecognizer(hover)
     }
     required init(coder: NSCoder) { fatalError("Create PencilCanvasView programmatically") }
-    deinit { preparation?.cancel(); NotificationCenter.default.removeObserver(self) }
+    deinit { preparation?.cancel(); navigationRefinement?.cancel(); NotificationCenter.default.removeObserver(self) }
     override func layoutSubviews() {
         super.layoutSubviews()
         updateBrushCursor()
@@ -168,12 +176,12 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     func draw(in view: MTKView) {
         // Never warm a layer cache with missing source buffers while uploads run.
-        guard !pendingPreparation, !model.isPreparing, let document = model.displayDocument,
+        guard !pendingPreparation, (!model.isPreparing || model.isNavigating), let document = model.displayDocument,
               bounds.width > 0, bounds.height > 0 else { return }
         do {
             try renderer?.draw(view: self, document: document, viewport: viewport,
                                active: active, preview: preview, guides: model.guides, revision: model.generation)
-        } catch { report(error) }
+        } catch { renderer?.cancelViewportNavigation(); report(error) }
     }
     private var canvasMatrix: Matrix {
         viewport.matrix(viewSize: Point(x: Double(bounds.width), y: Double(bounds.height)),
@@ -301,8 +309,11 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         setNeedsDisplay()
     }
     @objc private func suspendDrawing() {
+        navigationRefinement?.cancel(); viewportGestures.removeAll()
+        renderer?.cancelViewportNavigation(); model.setNavigating(false)
         colorTouch = nil
         finishStroke()
+        setNeedsDisplay()
         Task { await model.saveNow() }
     }
     @objc private func releaseRenderCaches() {
@@ -321,6 +332,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         if navigationGestures.contains(where: { $0 === gestureRecognizer }) {
             colorTouch = nil; discardFingerStroke()
         }
+        if model.isNavigating, isViewportGesture(gestureRecognizer) { return active == nil && !model.busy }
         return active == nil && model.canEdit
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
@@ -380,7 +392,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         guard active == nil else { return }
         let p = gesture.translation(in: self)
         viewport.pan = viewport.pan + Point(x: Double(p.x), y: Double(p.y))
-        gesture.setTranslation(.zero, in: self); setNeedsDisplay()
+        gesture.setTranslation(.zero, in: self); updateViewportNavigation(gesture)
         updateBrushCursor()
     }
     private func anchor(_ gesture: UIGestureRecognizer) -> Point {
@@ -396,7 +408,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         let screen = anchor(gesture), canvas = canvasMatrix.inverse.apply(screen)
         viewport.zoom = max(0.25, min(12, viewport.zoom * Double(gesture.scale)))
         viewport.pan = viewport.pan + screen - canvasMatrix.apply(canvas)
-        gesture.scale = 1; setNeedsDisplay()
+        gesture.scale = 1; updateViewportNavigation(gesture)
         updateBrushCursor()
     }
     @objc private func rotateCanvas(_ gesture: UIRotationGestureRecognizer) {
@@ -408,8 +420,38 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         let screen = anchor(gesture), canvas = canvasMatrix.inverse.apply(screen)
         viewport.rotation += Double(gesture.rotation)
         viewport.pan = viewport.pan + screen - canvasMatrix.apply(canvas)
-        gesture.rotation = 0; setNeedsDisplay()
+        gesture.rotation = 0; updateViewportNavigation(gesture)
         updateBrushCursor()
+    }
+    private func isViewportGesture(_ gesture: UIGestureRecognizer) -> Bool {
+        gesture is UIPanGestureRecognizer || gesture is UIPinchGestureRecognizer || gesture is UIRotationGestureRecognizer
+    }
+    private func updateViewportNavigation(_ gesture: UIGestureRecognizer) {
+        let id = ObjectIdentifier(gesture)
+        if gesture.state == .began || gesture.state == .changed {
+            viewportGestures.insert(id)
+            if !model.isNavigating, let document = model.document {
+                do {
+                    if try renderer?.beginViewportNavigation(document: document, guides: model.guides) == true {
+                        model.setNavigating(true)
+                    }
+                } catch { renderer?.cancelViewportNavigation(); report(error) }
+            } else if gesture.state == .began, let document = model.document {
+                // A new gesture supersedes an older asynchronous refinement.
+                _ = try? renderer?.beginViewportNavigation(document: document, guides: model.guides)
+            }
+        } else if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+            viewportGestures.remove(id)
+        }
+        navigationRefinement?.cancel()
+        if viewportGestures.isEmpty, model.isNavigating {
+            navigationRefinement = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 80_000_000) } catch { return }
+                guard let self, self.viewportGestures.isEmpty else { return }
+                self.renderer?.endViewportNavigation(); self.setNeedsDisplay()
+            }
+        }
+        setNeedsDisplay()
     }
     private func transformScreenCorners() -> [CGPoint] {
         guard model.isTransforming, let d = model.displayDocument, let raster = d.activeLayer?.raster else { return [] }

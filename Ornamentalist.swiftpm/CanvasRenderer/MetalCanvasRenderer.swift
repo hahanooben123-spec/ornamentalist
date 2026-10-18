@@ -47,6 +47,19 @@ final class MetalCanvasRenderer {
     private let pipeline: MTLRenderPipelineState
     private let erasePipeline: MTLRenderPipelineState
     private let rasterPipeline: MTLRenderPipelineState
+    private let navigationPipeline: MTLRenderPipelineState
+    private var lastFrameDocument: UUID?
+    private var lastFrameViewport: Viewport?
+    private var lastFrameViewSize = Point.zero
+    private var lastFrameWidth = 0
+    private var lastFrameHeight = 0
+    private var navigationTexture: MTLTexture?
+    private var navigationQuad: [GPUChunk] = []
+    private var navigationDocument: UUID?
+    private var navigationToken = UUID()
+    private(set) var isViewportNavigating = false
+    private(set) var navigationPreviewFrames = 0
+    var navigationRefined: (() -> Void)?
     private var rasterTextures: [UUID: MTLTexture] = [:]
     private var rasterQuads: [UUID: RasterQuad] = [:]
     private let singlePipeline: MTLRenderPipelineState
@@ -133,7 +146,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = allocatedGeometryBytes + sealed.reduce(0) { $0 + $1.buffer.length } + scratch.count * 16
-        return "Ornamentalist 0.10.1\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.10.2\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nZoom preview frames: \(navigationPreviewFrames)\nZoom preview texture: \((navigationTexture.map { $0.width * $0.height * 4 } ?? 0) / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -188,6 +201,9 @@ final class MetalCanvasRenderer {
         descriptor.stencilAttachmentPixelFormat = .invalid
         descriptor.depthAttachmentPixelFormat = .invalid
         singlePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.fragmentFunction = library.makeFunction(name: "rasterFragment")
+        attachment.sourceRGBBlendFactor = .one
+        navigationPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.vertexFunction = library.makeFunction(name: "compositeVertex")
         descriptor.fragmentFunction = library.makeFunction(name: "compositeFragment")
         attachment.sourceRGBBlendFactor = .one // Layer textures are premultiplied.
@@ -398,6 +414,87 @@ final class MetalCanvasRenderer {
         }
     }
 
+    /// Flatten the warm layer caches once per gesture, without reading a
+    /// framebuffer or disabling MTKView's framebuffer-only optimization.
+    func beginViewportNavigation(document: DrawingDocument, guides: Bool) throws -> Bool {
+        navigationToken = UUID()
+        if navigationTexture != nil, navigationDocument == document.id {
+            preparationTask?.cancel(); isViewportNavigating = true; return true
+        }
+        guard !isPreparingScene, lastFrameDocument == document.id, let viewport = lastFrameViewport,
+              lastFrameWidth > 0, lastFrameHeight > 0 else { return false }
+        updateScene(document); sceneRevision = nil
+        guard !needsStreamedPreparation(document) else { return false }
+        let image = try texture(width: lastFrameWidth, height: lastFrameHeight)
+        guard let command = queue.makeCommandBuffer() else { throw DocumentError.graphics }
+        defer { command.commit() }
+        try encodeCachedScene(command: command, output: image, document: document, viewport: viewport,
+                              viewSize: lastFrameViewSize, active: nil, preview: [], guides: guides)
+        try beginViewportNavigation(image: image, document: document, viewport: viewport, viewSize: lastFrameViewSize)
+        return true
+    }
+
+    func beginViewportNavigation(image: MTLTexture, document: DrawingDocument, viewport: Viewport, viewSize: Point) throws {
+        let corners = viewport.documentCorners(viewSize: viewSize, canvasSize: document.size)
+        let a = BrushVertex(corners[0], local: .zero)
+        let b = BrushVertex(corners[1], local: Point(x: 1, y: 0))
+        let c = BrushVertex(corners[2], local: Point(x: 1, y: 1))
+        let d = BrushVertex(corners[3], local: Point(x: 0, y: 1))
+        let quad = try chunks([a, b, c, a, c, d])
+        navigationTexture = image; navigationQuad = quad; navigationDocument = document.id
+        isViewportNavigating = true
+    }
+
+    func endViewportNavigation() { isViewportNavigating = false }
+
+    func cancelViewportNavigation() {
+        let hadPreview = navigationTexture != nil
+        navigationToken = UUID(); isViewportNavigating = false
+        navigationTexture = nil; navigationQuad.removeAll(); navigationDocument = nil
+        if hadPreview { navigationRefined?() }
+    }
+
+    private func completeNavigation(_ token: UUID) {
+        guard token == navigationToken, !isViewportNavigating else { return }
+        cancelViewportNavigation()
+    }
+
+    private func encodeNavigation(command: MTLCommandBuffer, output: MTLTexture, document: DrawingDocument,
+                                  viewport: Viewport, viewSize: Point) throws {
+        guard let image = navigationTexture, navigationDocument == document.id else { throw DocumentError.graphics }
+        let pass = targetPass(output)
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+        do {
+            // The newly revealed area gets white paper while the final artwork
+            // is rebuilding. The snapshot shader clips old workspace pixels.
+            try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,
+                            active: nil, preview: [], guides: false, backgroundOnly: true, state: singlePipeline)
+            encoder.setRenderPipelineState(navigationPipeline)
+            encoder.setFragmentTexture(image, index: 0)
+            try encode(navigationQuad, symmetry: SymmetryConfiguration(repetitions: 1, center: .zero),
+                       transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size), size: viewSize,
+                       canvas: document.size, color: SIMD4(1, 1, 1, 1), encoder: encoder)
+        } catch { encoder.endEncoding(); throw error }
+        encoder.endEncoding(); navigationPreviewFrames += 1
+    }
+
+    /// Native pixel verification uses the exact preview encoder, without a drawable.
+    func renderViewportPreview(document: DrawingDocument, viewport: Viewport, width: Int, height: Int) async throws -> [UInt8] {
+        guard width > 0, height > 0, width <= 2048, height <= 2048 else { throw DocumentError.invalidData }
+        let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
+        info.storageMode = .shared; info.usage = .renderTarget
+        guard let image = device.makeTexture(descriptor: info), let command = queue.makeCommandBuffer() else { throw DocumentError.graphicsMemory }
+        try encodeNavigation(command: command, output: image, document: document, viewport: viewport,
+                             viewSize: Point(x: Double(width), y: Double(height)))
+        try await submit(command)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        pixels.withUnsafeMutableBytes {
+            image.getBytes($0.baseAddress!, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+        }
+        return pixels
+    }
+
     func draw(view: MTKView, document: DrawingDocument, viewport: Viewport,
               active: InkStroke?, preview: [BrushVertex], guides: Bool, revision: Int) throws {
         let started = ProcessInfo.processInfo.systemUptime
@@ -406,10 +503,12 @@ final class MetalCanvasRenderer {
         }
         // Never block the touch delivery thread when the GPU is behind.
         redrawView = view
-        guard !isPreparingScene else { return }
+        let navigating = isViewportNavigating && navigationTexture != nil
+        guard navigating || !isPreparingScene else { return }
         let size = Point(x: Double(view.bounds.width), y: Double(view.bounds.height))
         let width = Int(view.drawableSize.width), height = Int(view.drawableSize.height)
         guard width > 0, height > 0 else { return }
+        if !navigating {
         try configureSurface(document: document, viewport: viewport, viewSize: size, width: width, height: height)
         if needsStreamedPreparation(document, focus: active?.layerID) {
             isPreparingScene = true; preparationChanged?(true)
@@ -431,6 +530,7 @@ final class MetalCanvasRenderer {
             }
             return
         }
+        }
         guard inFlight.wait(timeout: .now()) == .success else {
             deferredFrames += 1
             redrawAfterGPU = true
@@ -445,12 +545,20 @@ final class MetalCanvasRenderer {
         }
         let groupGate = groupInFlight
         let gate = inFlight
+        let refinement = !navigating && navigationTexture != nil ? navigationToken : nil
         // Metal invokes this on its own queue, never on the renderer's main actor.
         command.addCompletedHandler { @Sendable [weak self] command in
             gate.signal()
             groupGate.signal()
             let gpu = (command.gpuEndTime - command.gpuStartTime) * 1000
-            Task { @MainActor in self?.completedGPUFrame(gpu) }
+            Task { @MainActor in
+                self?.completedGPUFrame(gpu)
+                if command.status == .completed, let refinement { self?.completeNavigation(refinement) }
+                else if command.status == .error {
+                    self?.cancelViewportNavigation()
+                    self?.preparationFailed?(command.error ?? DocumentError.graphics)
+                }
+            }
         }
         // Even an allocation error closes the encoder and submits its resources.
         var frameComplete = false
@@ -459,8 +567,14 @@ final class MetalCanvasRenderer {
             command.commit()
             recordCPU((ProcessInfo.processInfo.systemUptime - started) * 1000)
         }
-        try encodeCachedScene(command: command, output: drawable.texture, document: document,
-                              viewport: viewport, viewSize: size, active: active, preview: preview, guides: guides)
+        if navigating {
+            try encodeNavigation(command: command, output: drawable.texture, document: document, viewport: viewport, viewSize: size)
+        } else {
+            try encodeCachedScene(command: command, output: drawable.texture, document: document,
+                                  viewport: viewport, viewSize: size, active: active, preview: preview, guides: guides)
+            lastFrameDocument = document.id; lastFrameViewport = viewport; lastFrameViewSize = size
+            lastFrameWidth = width; lastFrameHeight = height
+        }
         frameComplete = true
     }
     private func completedGPUFrame(_ milliseconds: Double) {
@@ -1146,6 +1260,7 @@ final class MetalCanvasRenderer {
     }
 
     func handleMemoryPressure() {
+        cancelViewportNavigation(); lastFrameDocument = nil; lastFrameViewport = nil
         clearLayerCaches()
         cache.removeAll(); cacheOrder.removeAll(); recountBuffers()
         matrixCache.removeAll(); rasterQuads.removeAll(); guideBuffers.removeAll(); guideKey.removeAll()

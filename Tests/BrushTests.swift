@@ -2,6 +2,13 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class BrushTests: XCTestCase {
+    func testInkLinerPresetsDefaultToFullEnabledStabilization() {
+        for preset in BrushPreset.allCases {
+            let brush = preset.makeBrush()
+            XCTAssertEqual(brush.stabilization, preset.family == .ink ? 1 : 0.25, preset.name)
+            XCTAssertTrue(brush.stabilizationEnabled, preset.name)
+        }
+    }
     func testLightPressureReachesFullSizeEarlierWithoutChangingLegacyInk() throws {
         var brush = BrushPreset.brushPen.makeBrush()
         XCTAssertEqual(brush.pressureGain, 2.5)

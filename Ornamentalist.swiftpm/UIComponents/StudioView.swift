@@ -54,10 +54,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.10.1: studio visible; loading gallery")
+            print("Ornamentalist 0.10.2: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.10.1: gallery loading finished")
+            print("Ornamentalist 0.10.2: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -135,7 +135,7 @@ struct StudioView: View {
             // Toggling chrome must not change the Pencil coordinate frame.
             .padding(.top, 60)
             .ignoresSafeArea()
-            .allowsHitTesting(!exporting && !model.busy && !model.isPreparing)
+            .allowsHitTesting(!exporting && !model.busy && (!model.isPreparing || model.isNavigating))
             .overlay { editorRails }
             .overlay(alignment: .top) {
                 if !zen { editorHeader(document) }
@@ -179,7 +179,7 @@ struct StudioView: View {
                 }
             }
             .overlay {
-                if model.isPreparing || model.busy || exporting {
+                if (model.isPreparing && !model.isNavigating) || model.busy || exporting {
                     ProgressView(exporting ? "Preparing export…" : model.isPreparing ? "Preparing drawing…" : "Saving drawing…")
                         .padding(24).studioSurface()
                 }

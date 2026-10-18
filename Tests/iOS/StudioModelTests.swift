@@ -5,6 +5,29 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testLinerDefaultsMigrateOnceWithoutChangingSavedInkOrLaterChoices() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "Ornamentalist-liner-default-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        var brush = InkBrush(width: 14, stabilization: 0.2); brush.stabilizationEnabled = false
+        preferences.set(try JSONEncoder().encode([BrushPreset.fineliner.rawValue: brush]), forKey: "brushSettings")
+        var drawing = DrawingDocument(); drawing.brush = brush
+        drawing.strokes = [InkStroke(brush: brush, samples: [StrokeSample(point: Point(x: 20, y: 30), pressure: 1, altitude: 1, azimuth: 0, time: 1)])]
+        let repository = DocumentRepository(directory: folder)
+        try await repository.save(drawing, generation: 1)
+        let model = StudioModel(repository: repository, preferences: preferences)
+        await model.open(drawing.id)
+        XCTAssertEqual(model.document?.brush.stabilization, 1)
+        XCTAssertEqual(model.document?.brush.stabilizationEnabled, true)
+        XCTAssertEqual(model.document?.strokes, drawing.strokes)
+        model.setStabilization(0.4)
+        let restarted = StudioModel(repository: repository, preferences: preferences)
+        await restarted.open(drawing.id)
+        XCTAssertEqual(restarted.document?.brush.stabilization, 0.4)
+        restarted.setNavigating(true); XCTAssertFalse(restarted.canDraw)
+        restarted.setNavigating(false); XCTAssertTrue(restarted.canDraw)
+    }
     func testMaintenanceSleepsWithoutWorkAndCancelsForBackground() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

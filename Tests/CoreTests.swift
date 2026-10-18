@@ -2,6 +2,26 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class CoreTests: XCTestCase {
+    func testViewportSnapshotCornersTrackZoomRotationAndPan() {
+        let size = Point(x: 800, y: 600), canvas = Point(x: 2048, y: 2048)
+        var source = Viewport(); source.zoom = 1.3; source.rotation = 0.4; source.pan = Point(x: 17, y: -23)
+        let corners = source.documentCorners(viewSize: size, canvasSize: canvas)
+        let screen = [Point.zero, Point(x: 800, y: 0), size, Point(x: 0, y: 600)]
+        for (point, expected) in zip(corners, screen) {
+            let actual = source.matrix(viewSize: size, canvasSize: canvas).apply(point)
+            XCTAssertEqual(actual.x, expected.x, accuracy: 0.000001)
+            XCTAssertEqual(actual.y, expected.y, accuracy: 0.000001)
+        }
+        var destination = source; destination.zoom = 3; destination.rotation = -0.2; destination.pan = Point(x: -10, y: 30)
+        let delta = source.matrix(viewSize: size, canvasSize: canvas).inverse
+            .followed(by: destination.matrix(viewSize: size, canvasSize: canvas))
+        for (point, original) in zip(corners, screen) {
+            let direct = destination.matrix(viewSize: size, canvasSize: canvas).apply(point)
+            let preview = delta.apply(original)
+            XCTAssertEqual(direct.x, preview.x, accuracy: 0.000001)
+            XCTAssertEqual(direct.y, preview.y, accuracy: 0.000001)
+        }
+    }
     func testCanvasInvalidationTracksPixelsRatherThanBrushAndSaveMetadata() {
         var drawing = DrawingDocument()
         let initial = CanvasDisplayState(drawing, guides: true)

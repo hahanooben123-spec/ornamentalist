@@ -45,6 +45,18 @@ jobs:
           -derivedDataPath DerivedData
           -only-testing:OrnamentalistTests
           CODE_SIGNING_ALLOWED=NO
+      - name: Verify zoom preview and liner migration
+        timeout-minutes: 4
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -derivedDataPath DerivedData -resultBundlePath ZoomTests.xcresult
+          -only-testing:OrnamentalistTests/RendererCacheTests/testViewportPreviewTransformsImageWithoutReplayingGeometry
+          -only-testing:OrnamentalistTests/StudioModelTests/testLinerDefaultsMigrateOnceWithoutChangingSavedInkOrLaterChoices
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 45
+          -maximum-test-execution-time-allowance 90
+          CODE_SIGNING_ALLOWED=NO
       - name: Run native model and energy scheduling tests
         timeout-minutes: 4
         run: >-
@@ -106,4 +118,5 @@ jobs:
             AppleTests.xcresult
             ModelTests.xcresult
             MetalSmoke.xcresult
+            ZoomTests.xcresult
           if-no-files-found: ignore

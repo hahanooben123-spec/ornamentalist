@@ -149,6 +149,7 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .hatching: b.width = 36; b.opacity = 0.65; b.spacing = 0.65; b.density = 0.4
         }
         b.adaptiveStabilization = true
+        if family == .ink { b.stabilization = 1; b.stabilizationEnabled = true }
         b.pressureGain = 2.5
         if self == .brushPen { b.minimumSize = 0.03; b.taperStart = 0.6; b.taperEnd = 0.8 }
         if b.usesStamps { b.tiltShading = 0.7 }

@@ -4,6 +4,36 @@ import MetalKit
 
 final class RendererCacheTests: XCTestCase {
     @MainActor
+    func testViewportPreviewTransformsImageWithoutReplayingGeometry() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal unavailable") }
+        let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 256, height: 256, mipmapped: false)
+        info.storageMode = .shared; info.usage = .shaderRead
+        let image = try XCTUnwrap(device.makeTexture(descriptor: info))
+        var source = [UInt8](repeating: 255, count: 256 * 256 * 4)
+        for y in 0..<256 { for x in 0..<256 {
+            let i = (y * 256 + x) * 4
+            source[i] = x < 128 ? 0 : 255; source[i + 1] = 0; source[i + 2] = x < 128 ? 255 : 0
+        } }
+        source.withUnsafeBytes { image.replace(region: MTLRegionMake2D(0, 0, 256, 256), mipmapLevel: 0, withBytes: $0.baseAddress!, bytesPerRow: 1024) }
+        var drawing = DrawingDocument(); drawing.size = Point(x: 128, y: 128)
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try renderer.beginViewportNavigation(image: image, document: drawing, viewport: Viewport(), viewSize: Point(x: 256, y: 256))
+        for zoom in [0.8, 1.5, 2.0] {
+            var viewport = Viewport(); viewport.zoom = zoom; viewport.rotation = 0.2; viewport.pan = Point(x: 8, y: -5)
+            let pixels = try await renderer.renderViewportPreview(document: drawing, viewport: viewport, width: 256, height: 256)
+            for (x, red) in [(40.0, true), (80.0, false)] {
+                let screen = viewport.matrix(viewSize: Point(x: 256, y: 256), canvasSize: drawing.size).apply(Point(x: x, y: 64))
+                let i = (Int(screen.y.rounded()) * 256 + Int(screen.x.rounded())) * 4
+                XCTAssertEqual(pixels[i + 2], red ? 255 : 0); XCTAssertEqual(pixels[i], red ? 0 : 255)
+            }
+        }
+        XCTAssertEqual(renderer.navigationPreviewFrames, 3)
+        XCTAssertEqual(renderer.committedStrokeDraws, 0); XCTAssertEqual(renderer.cachedLayerBuilds, 0)
+        XCTAssertEqual(renderer.cachedGroupBuilds, 0)
+        renderer.endViewportNavigation(); renderer.cancelViewportNavigation()
+        XCTAssertFalse(renderer.isViewportNavigating)
+    }
+    @MainActor
     func testEvictedGeometryStreamsBackWithoutChangingInkOrBlockingNewStrokes() async throws {
         var drawing = DrawingDocument(); drawing.size = Point(x: 128, y: 128)
         drawing.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))

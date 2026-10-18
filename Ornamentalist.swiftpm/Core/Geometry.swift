@@ -40,6 +40,10 @@ struct Viewport: Sendable {
     var zoom = 1.0
     var rotation = 0.0
     var pan = Point.zero
+    func documentCorners(viewSize: Point, canvasSize: Point) -> [Point] {
+        let inverse = matrix(viewSize: viewSize, canvasSize: canvasSize).inverse
+        return [.zero, Point(x: viewSize.x, y: 0), viewSize, Point(x: 0, y: viewSize.y)].map { inverse.apply($0) }
+    }
     func matrix(viewSize: Point, canvasSize: Point) -> Matrix {
         let fit = max(0.001, min(viewSize.x / canvasSize.x, viewSize.y / canvasSize.y) * 0.92)
         return Matrix.translation(canvasSize * -0.5)

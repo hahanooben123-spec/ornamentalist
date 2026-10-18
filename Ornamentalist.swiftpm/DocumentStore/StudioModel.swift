@@ -22,6 +22,7 @@ final class StudioModel: ObservableObject {
     @Published private(set) var isDrawing = false { didSet { rescheduleMaintenance() } }
     @Published private(set) var busy = false { didSet { rescheduleMaintenance() } }
     @Published private(set) var isPreparing = false { didSet { rescheduleMaintenance() } }
+    @Published private(set) var isNavigating = false
     @Published private var presentedError: String?
     private var recentErrors: [String] = []
     // Concurrent renderer/save failures must not replace an alert being read.
@@ -48,7 +49,7 @@ final class StudioModel: ObservableObject {
     @Published var resetViewToken = UUID()
     @Published private(set) var tool = StudioTool.brush
     @Published private(set) var eraserBrush = InkBrush(width: 32, stabilization: 0.15)
-    var canEdit: Bool { !busy && !isPreparing && !isTransforming }
+    var canEdit: Bool { !busy && !isPreparing && !isTransforming && !isNavigating }
     let repository: DocumentRepository
     private let exportService = ExportService()
     // Canvas exposes confirmed ink only; no predicted points enter a checkpoint.
@@ -146,6 +147,15 @@ final class StudioModel: ObservableObject {
             if let data = try? JSONEncoder().encode(eraserBrush) { preferences?.set(data, forKey: "eraserSettings") }
             preferences?.set(true, forKey: "lightPencilPressureV1")
         }
+        if preferences?.bool(forKey: "fullLinerStabilizationV1") != true {
+            for (preset, stored) in brushSettings where preset.family == .ink {
+                var brush = stored; brush.stabilization = 1; brush.stabilizationEnabled = true
+                brushSettings[preset] = brush
+            }
+            let settings = Dictionary(uniqueKeysWithValues: brushSettings.map { ($0.key.rawValue, $0.value) })
+            if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "brushSettings") }
+            preferences?.set(true, forKey: "fullLinerStabilizationV1")
+        }
     }
 
     func startMaintenance() {
@@ -215,6 +225,9 @@ final class StudioModel: ObservableObject {
         // Stored strokes retain their own brushes and are never rewritten.
         if let remembered = brushSettings[d.brush.preset] { adopted.brush = remembered }
         else {
+            if adopted.brush.preset.family == .ink {
+                adopted.brush.stabilization = 1; adopted.brush.stabilizationEnabled = true
+            }
             if adopted.brush.usesStamps, adopted.brush.tiltShading == 0 { adopted.brush.tiltShading = 0.7 }
             if adopted.brush.preset.softness > 0 { adopted.brush.normalizedOpacity = true }
             adopted.brush.pressureGain = 2.5
@@ -292,6 +305,7 @@ final class StudioModel: ObservableObject {
         Task { await saveNow() }
     }
     func setPreparing(_ value: Bool) { isPreparing = value }
+    func setNavigating(_ value: Bool) { isNavigating = value }
     func append(_ stroke: InkStroke, estimatedVertices: Int? = nil) {
         // Completion of confirmed input may occur during deactivation.
         guard !busy, var d = document,

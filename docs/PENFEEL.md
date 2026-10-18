@@ -1,4 +1,31 @@
-# Pen response — 0.10.1
+# Pen response — 0.10.2
+
+## Gesture preview and liner defaults (0.10.2, build 32)
+
+- Pan, pinch and rotation share one snapshot of the warm viewport caches. The
+  renderer composites this once at gesture start, without framebuffer readback
+  or changing MTKView.framebufferOnly. Gesture frames draw one transformed image
+  over paper; they do not invalidate or replay committed layer geometry.
+- Simultaneous gestures retain the snapshot until all gestures end. An 80 ms
+  cancellable delay coalesces final changes. The sharp viewport is then rendered
+  normally, using the existing asynchronous bounded rebuild when geometry was
+  evicted. New gestures supersede unfinished rebuilds and keep the original
+  snapshot transform. A completion token prevents stale GPU completions clearing
+  a newer preview. The final drawable replaces the preview only after rendering.
+- Drawing/editing pauses during navigation/refinement; navigation remains
+  available during refinement. Backgrounding, memory pressure and errors discard
+  the temporary snapshot. Preview memory is one viewport RGBA texture plus a
+  six-vertex quad; it is released after sharp refinement.
+- Temporary zoom-out regions outside the captured viewport show paper until the
+  sharper redraw completes. Existing visible artwork may look soft during zoom.
+  Original geometry, brush samples, layer data and export resolution are unchanged.
+- All four Ink presets (Fineliner, Brush pen, Round marker, Flat marker) default
+  to enabled stabilization at 100%. Existing saved drawing-brush preferences
+  migrate once; later user adjustments remain remembered. Old strokes retain
+  their original brushes. Shading/dots/textures and eraser preferences are separate.
+- Native verification covers transformed preview colors without geometry replay
+  and one-time preference migration. Physical zoom responsiveness remains a
+  device acceptance step, and the earlier MSAA/Metal failure remains separate.
 
 ## Idle energy and redraw scheduling (0.10.1, build 31)
 
