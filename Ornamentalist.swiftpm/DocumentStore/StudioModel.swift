@@ -44,6 +44,7 @@ final class StudioModel: ObservableObject {
     @Published var recoveryNotice = false
     @Published var guides = true
     @Published var fingerDrawing = false
+    @Published private(set) var showBrushCursor = true
     @Published var resetViewToken = UUID()
     @Published private(set) var tool = StudioTool.brush
     @Published private(set) var eraserBrush = InkBrush(width: 32, stabilization: 0.15)
@@ -79,6 +80,7 @@ final class StudioModel: ObservableObject {
 
     init(repository: DocumentRepository = DocumentRepository(), preferences: UserDefaults? = nil) {
         self.repository = repository; self.preferences = preferences
+        showBrushCursor = preferences?.object(forKey: "showBrushCursor") as? Bool ?? true
         if let data = preferences?.data(forKey: "brushSettings"),
            let settings = try? JSONDecoder().decode([String: InkBrush].self, from: data) {
             for (key, brush) in settings where brush.isValid {
@@ -371,6 +373,11 @@ final class StudioModel: ObservableObject {
     func selectTool(_ tool: StudioTool) {
         guard canEdit, !isDrawing, document != nil else { return }
         self.tool = tool
+    }
+    func setShowBrushCursor(_ visible: Bool) {
+        showBrushCursor = visible
+        preferences?.set(visible, forKey: "showBrushCursor")
+        brushPreviewRequested?(false)
     }
     func setEraserWidth(_ width: Double) {
         guard canEdit, !isDrawing, width.isFinite else { return }

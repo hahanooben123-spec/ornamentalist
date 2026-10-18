@@ -113,9 +113,12 @@ final class StudioModelTests: XCTestCase {
         }
         model.selectTool(.eraser); model.setSoftEraser(true)
         model.setInputWidth(77); model.setInputOpacity(0.42)
+        XCTAssertTrue(model.showBrushCursor)
+        model.setShowBrushCursor(false)
         let eraser = model.eraserBrush
         let restarted = StudioModel(repository: DocumentRepository(directory: folder), preferences: preferences)
         await restarted.create()
+        XCTAssertFalse(restarted.showBrushCursor)
         XCTAssertEqual(restarted.document?.brush.preset, BrushPreset.allCases.last)
         for preset in BrushPreset.allCases {
             restarted.setBrush(preset)
@@ -227,11 +230,17 @@ final class StudioModelTests: XCTestCase {
         let before = model.generation
         model.brushPreviewRequested?(true)
         let cursors = (view.layer.sublayers ?? []).compactMap { $0 as? CAShapeLayer }
-        let cursor = try XCTUnwrap(cursors.last)
+        let cursor = try XCTUnwrap(cursors.first { $0.name == "brushCursor" })
         XCTAssertFalse(cursor.isHidden)
         XCTAssertEqual(try XCTUnwrap(cursor.path).boundingBoxOfPath.width, 100 * 600 / 2048 * 0.92, accuracy: 0.001)
         view.frame.size = CGSize(width: 400, height: 300); view.setNeedsLayout(); view.layoutIfNeeded()
         XCTAssertEqual(try XCTUnwrap(cursor.path).boundingBoxOfPath.width, 100 * 300 / 2048 * 0.92, accuracy: 0.001)
+        XCTAssertEqual(model.generation, before)
+        model.setShowBrushCursor(false); view.synchronize()
+        XCTAssertTrue(cursor.isHidden)
+        model.brushPreviewRequested?(true); XCTAssertTrue(cursor.isHidden)
+        model.setShowBrushCursor(true); view.synchronize()
+        XCTAssertFalse(cursor.isHidden)
         XCTAssertEqual(model.generation, before)
         model.selectTool(.eyedropper); view.synchronize(); XCTAssertTrue(cursor.isHidden)
         let taps = (view.gestureRecognizers ?? []).compactMap { $0 as? UITapGestureRecognizer }

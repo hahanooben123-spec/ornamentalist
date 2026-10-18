@@ -94,6 +94,12 @@ struct StudioPanelView: View {
             }.accessibilityIdentifier("fitCanvas")
             Divider()
             Toggle("Draw with finger", isOn: $model.fingerDrawing).font(.subheadline)
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Show Pencil cursor", isOn: Binding(get: { model.showBrushCursor }, set: { model.setShowBrushCursor($0) }))
+                    .font(.subheadline).accessibilityIdentifier("showBrushCursor")
+                Text("Show the brush-size circle while drawing, adjusting size, and during Pencil hover.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Studio appearance").font(.subheadline)
                 Picker("Studio appearance", selection: $appearance) {
@@ -104,7 +110,7 @@ struct StudioPanelView: View {
             }
             Button("Drawing performance", systemImage: "speedometer", action: diagnostics)
                 .font(.subheadline).frame(minHeight: 44)
-            Text("Ornamentalist 0.9.4").font(.caption).foregroundStyle(.secondary)
+            Text("Ornamentalist 0.9.5").font(.caption).foregroundStyle(.secondary)
                 .accessibilityIdentifier("appVersion")
         }
     }

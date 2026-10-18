@@ -54,6 +54,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             layer.addSublayer(cursor)
         }
         cursorHalo.strokeColor = UIColor.white.cgColor; cursorHalo.lineWidth = 3
+        brushCursor.name = "brushCursor"; cursorHalo.name = "brushCursorHalo"
         brushCursor.strokeColor = UIColor.black.withAlphaComponent(0.85).cgColor; brushCursor.lineWidth = 1
         transformOutline.strokeColor = UIColor.systemBlue.cgColor; transformOutline.fillColor = UIColor.clear.cgColor
         transformOutline.lineWidth = 1.5
@@ -341,7 +342,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         updateBrushCursor()
     }
     private func updateBrushCursor() {
-        let hidden = model.tool == .eyedropper || !model.canDraw
+        let hidden = !model.showBrushCursor || model.tool == .eyedropper || !model.canDraw
         accessibilityValue = "Strokes: \(model.document?.strokes.count ?? 0)"
         brushCursor.isHidden = hidden; cursorHalo.isHidden = hidden
         guard !hidden, bounds.width > 0, bounds.height > 0 else { return }

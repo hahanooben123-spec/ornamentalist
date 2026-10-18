@@ -28,8 +28,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: studio.mandala.prototype
-        MARKETING_VERSION: '0.9.4'
-        CURRENT_PROJECT_VERSION: '25'
+        MARKETING_VERSION: '0.9.5'
+        CURRENT_PROJECT_VERSION: '26'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Ornamentalist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
