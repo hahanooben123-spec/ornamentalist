@@ -3,6 +3,25 @@ import XCTest
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testImmediateUndoCancelsPendingCanvasPreparationWithoutBlockingInput() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder))
+        await model.create(); model.addLayer()
+        let layerID = try XCTUnwrap(model.document?.activeLayerID)
+        let s = StrokeSample(point: Point(x: 50, y: 70), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        model.append(InkStroke(samples: [s], layerID: layerID))
+        let view = PencilCanvasView(model: model)
+        view.synchronize()
+        model.undo()
+        view.synchronize()
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertTrue(model.document?.strokes.isEmpty == true)
+        XCTAssertFalse(model.isPreparing)
+        XCTAssertTrue(model.canDraw)
+        withExtendedLifetime(view) {}
+    }
+
     func testLayerEditsAreFrozenDuringStrokeAndLockBlocksDrawing() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

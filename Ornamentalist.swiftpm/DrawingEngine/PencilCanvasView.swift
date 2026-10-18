@@ -68,7 +68,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             if !renderer.hasBuffers(for: document.strokes) {
                 pendingPreparation = true
                 preparation = Task { [weak self] in
-                    guard let self else { return }
+                    guard let self, self.preparationID == request, !Task.isCancelled else { return }
                     self.model.setPreparing(true)
                     defer {
                         if self.preparationID == request {
@@ -78,6 +78,15 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
                     do { try await renderer.synchronize(document.strokes) }
                     catch is CancellationError { }
                     catch { self.report(error) }
+                }
+            } else {
+                // Undo/Redo can replace an upload before its task starts. Do not
+                // leave a stale preparation flag blocking an otherwise ready canvas.
+                pendingPreparation = false
+                preparation = nil
+                Task { [weak self] in
+                    guard let self, self.preparationID == request else { return }
+                    self.model.setPreparing(false)
                 }
             }
         }
