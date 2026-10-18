@@ -203,7 +203,7 @@ final class RendererCacheTests: XCTestCase {
         let d = fixture()
         let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
         try await renderer.synchronize(d.strokes, layers: d.layers)
-        var moved = Viewport(); moved.zoom = 1.6; moved.rotation = -0.2
+        let moved = Viewport(zoom: 1.6, rotation: -0.2)
         async let first = renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
         async let second = renderer.renderOffscreen(document: d, viewport: moved, width: 256, height: 256)
         let images = try await (first, second)

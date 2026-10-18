@@ -19,9 +19,9 @@ This is a native iPad drawing app built from Windows. Communicate with the owner
 
 ## Current device investigation
 
-The owner saw missing types including DrawingLayer, InkColor, BrushVertex, BrushGeometry and StudioLayersView. They confirmed LayerManager.swift exists on iPad. A later photo of the app manifest showed duplicate displayVersion/bundleVersion/appIcon arguments and two executableTarget declarations. A subsequent manual-edit photo showed the target closed before sources. The repository manifest is canonical; the iPad's current bytes after the latest pull have not been obtained. Do not assume another engine bug or successful device repair without new evidence. Do not assume why the manifest acquired duplicates.
+The owner previously saw missing types including DrawingLayer, InkColor, BrushVertex, BrushGeometry and StudioLayersView. They confirmed LayerManager.swift exists on iPad. Photos showed duplicate displayVersion/bundleVersion/appIcon arguments, two executableTarget declarations, and later a target closed before sources. The repository manifest is canonical; do not assume why the iPad copy acquired duplicates. The owner has since confirmed the app builds/runs on an iPad Pro, but drawing and erasing were very slow.
 
-Read `docs/KOM-I-GANG.md`, `docs/CRASH-AUDIT.md`, `docs/ARCHITECTURE.md` and `docs/REDIGERING-OG-LAG.md` as needed. Prioritize the manifest, source membership and delivery flow before speculative drawing-engine changes. Never recommend deleting app data as a routine repair.
+The current task is version 0.7.0 performance optimization: persistent bounded viewport caches, incremental confirmed live geometry, transient predictions and reusable/memoryless work targets. Read `docs/HASTIGHED.md`, `docs/ARCHITECTURE.md` and `Tests/iOS/RendererCacheTests.swift`. Verify cache ownership, cancel/commit promotion, chunk offsets, memory fallback and pixel parity. Simulator benchmark ratios are not physical iPad FPS or Pencil latency. Manifest source membership/delivery still matter when an old app copy is opened. Never recommend deleting app data as a routine repair.
 
 ## Review output
 
