@@ -2,6 +2,24 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class DocumentRepositoryTests: XCTestCase {
+    func testOversizedIndexFallsBackToSavedDrawing() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DocumentRepository(directory: directory)
+        var drawing = DrawingDocument()
+        drawing.title = "Saved drawing"
+        try await store.save(drawing, generation: 1)
+        let index = directory.appendingPathComponent(drawing.id.uuidString + ".index")
+        var corrupted = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: index)) as? [String: Any])
+        corrupted["title"] = String(repeating: "x", count: 32 * 1024)
+        try JSONSerialization.data(withJSONObject: corrupted).write(to: index)
+        let summaries = try await store.list()
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertEqual(summaries.first?.title, drawing.title)
+        let (reopened, _) = try await store.open(drawing.id)
+        XCTAssertEqual(reopened.title, drawing.title)
+    }
+
     func testLateThumbnailCannotReplaceANewerSavedRevision() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

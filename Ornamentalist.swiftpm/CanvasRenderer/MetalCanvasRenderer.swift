@@ -170,7 +170,8 @@ final class MetalCanvasRenderer {
             return
         }
         let gate = inFlight
-        command.addCompletedHandler { [weak self] command in
+        // Metal invokes this on its own queue, never on the renderer's main actor.
+        command.addCompletedHandler { @Sendable [weak self] command in
             gate.signal()
             let gpu = (command.gpuEndTime - command.gpuStartTime) * 1000
             Task { @MainActor in self?.recordGPU(gpu) }
@@ -261,7 +262,7 @@ final class MetalCanvasRenderer {
         } catch { encoder.endEncoding(); throw error }
         encoder.endEncoding()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            command.addCompletedHandler { command in
+            command.addCompletedHandler { @Sendable command in
                 if command.status == .error { continuation.resume(throwing: DocumentError.graphics) }
                 else { continuation.resume() }
             }

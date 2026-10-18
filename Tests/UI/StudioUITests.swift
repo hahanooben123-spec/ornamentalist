@@ -21,6 +21,25 @@ final class StudioUITests: XCTestCase {
         add(attachment)
     }
 
+    func testNormalLaunchWithoutShowcase() {
+        app.terminate()
+        app.launchArguments = []
+        app.launchEnvironment = [:]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["studio"].firstMatch.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.buttons["newDrawing"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["newDrawing"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["createDrawing"].waitForExistence(timeout: 5))
+        app.buttons["createDrawing"].tap()
+        XCTAssertTrue(app.buttons["panel-Symmetry"].waitForExistence(timeout: 15), app.debugDescription)
+        screenshot("10-Normal-launch-canvas")
+        app.buttons["gallery"].tap()
+        XCTAssertTrue(app.buttons["newDrawing"].firstMatch.waitForExistence(timeout: 15))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["drawing-Untitled Drawing"].firstMatch.waitForExistence(timeout: 15))
+    }
+
     func testStudioFlowAndScreenshots() {
         XCTAssertTrue(app.buttons["drawing-Solstice"].waitForExistence(timeout: 30), app.debugDescription)
         screenshot("01-Gallery")

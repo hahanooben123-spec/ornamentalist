@@ -10,6 +10,7 @@ settings:
   configs:
     Debug:
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG"
+      OTHER_SWIFT_FLAGS: "$(inherited) -enable-actor-data-race-checks"
 targets:
   Ornamentalist:
     type: application
@@ -25,6 +26,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: studio.mandala.prototype
+        MARKETING_VERSION: '0.2.1'
+        CURRENT_PROJECT_VERSION: '3'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Ornamentalist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES

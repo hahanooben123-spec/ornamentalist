@@ -2,7 +2,7 @@ import SwiftUI
 
 enum StudioStyle {
     static let copperFill = Color(red: 0.65, green: 0.36, blue: 0.23)
-    static let copper = Color(uiColor: UIColor { traits in
+    static let copper = Color(uiColor: UIColor { @Sendable traits in
         traits.userInterfaceStyle == .dark
             ? UIColor(red: 0.88, green: 0.65, blue: 0.49, alpha: 1)
             : UIColor(red: 0.65, green: 0.36, blue: 0.23, alpha: 1)

@@ -110,8 +110,10 @@ actor DocumentRepository {
             .compactMap { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) })
         return ids.map { id in
             if !FileManager.default.fileExists(atPath: file(id, suffix: "journal").path),
-               let bytes = try? Data(contentsOf: file(id, suffix: "index")),
+               let bytes = indexData(id),
                let index = try? JSONDecoder().decode(ProjectIndex.self, from: bytes), index.id == id,
+               index.title.count <= 200, (0...20_000).contains(index.strokeCount),
+               index.modified.timeIntervalSince1970.isFinite,
                let a = try? FileManager.default.attributesOfItem(atPath: file(id).path),
                (a[.size] as? NSNumber)?.intValue == index.primaryBytes,
                (a[.modificationDate] as? Date) == index.primaryModified {
@@ -125,6 +127,14 @@ actor DocumentRepository {
             return ProjectSummary(id: id, title: "Unreadable drawing · \(id.uuidString.prefix(8))",
                                   modified: .distantPast, strokeCount: 0)
         }.sorted { $0.modified > $1.modified }
+    }
+    private func indexData(_ id: UUID) -> Data? {
+        // Indexes are replaceable metadata. Never allocate an unbounded file at launch.
+        let url = file(id, suffix: "index")
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (attributes[.size] as? NSNumber)?.intValue,
+              size <= 16 * 1024 else { return nil }
+        return try? Data(contentsOf: url)
     }
     func importProject(at url: URL) throws -> DrawingDocument {
         #if os(iOS) || os(macOS)
