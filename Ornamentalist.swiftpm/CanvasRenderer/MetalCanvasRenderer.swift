@@ -3,6 +3,7 @@ import MetalKit
 private struct GPUChunk {
     let buffer: MTLBuffer
     let count: Int
+    var offset = 0
 }
 
 private struct LayerPaintKey: Equatable {
@@ -47,12 +48,16 @@ final class MetalCanvasRenderer {
     private var upperKey: [LayerCompositeKey]?
     private var activeTexture: MTLTexture?
     private var activeKey: LayerPaintKey?
+    private var activeLiveID: UUID?
+    private var activeLiveVertices = 0
+    private var pendingLiveCommit: UUID?
     private var cacheBudget = 160 * 1024 * 1024
     private(set) var workingTextureAllocations = 0
     private(set) var committedStrokeDraws = 0
     private(set) var cachedGroupBuilds = 0
     private(set) var cachedLayerBuilds = 0
     private(set) var incrementalLayerUpdates = 0
+    private(set) var liveConfirmedVertexDraws = 0
     private(set) var renderCacheBytes = 0
     private var liveRevision = 0
     private var uploadedLiveRevision = -1
@@ -90,7 +95,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = (allocatedVertexCount + sealedVertexCount + scratch.count) * MemoryLayout<SIMD4<Float>>.stride
-        return "Ornamentalist 0.7.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.7.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -217,6 +222,10 @@ final class MetalCanvasRenderer {
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
     }
     func begin() {
+        discardUncommittedLiveCache()
+        resetInputBuffers()
+    }
+    private func resetInputBuffers() {
         sealed.removeAll(); sealedVertexCount = 0; scratch.removeAll(keepingCapacity: true)
         liveRevision += 1; uploadedLive.removeAll(); uploadedLiveRevision = -1
         uploadedPrediction.removeAll(); predictionBuffers.removeAll()
@@ -241,9 +250,16 @@ final class MetalCanvasRenderer {
         if !scratch.isEmpty { sealed.append(try chunk(scratch)) }
         cache[stroke.id] = sealed
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
-        begin()
+        if activeLiveID == stroke.id { pendingLiveCommit = stroke.id }
+        resetInputBuffers()
     }
     func cancel() { begin() }
+
+    private func discardUncommittedLiveCache() {
+        if activeLiveID != nil && activeLiveID != pendingLiveCommit {
+            activeKey = nil; activeLiveID = nil; activeLiveVertices = 0
+        }
+    }
 
     func draw(view: MTKView, document: DrawingDocument, viewport: Viewport,
               active: InkStroke?, preview: [BrushVertex], guides: Bool, revision: Int) throws {
@@ -350,6 +366,15 @@ final class MetalCanvasRenderer {
 
     private func encodeLive(_ stroke: InkStroke, preview: [BrushVertex], transform: Matrix,
                             viewSize: Point, canvas: Point, encoder: MTLRenderCommandEncoder) throws {
+        try prepareLiveBuffers(preview)
+        encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
+        try encode(uploadedLive, symmetry: stroke.symmetry, transform: transform, size: viewSize,
+                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+        try encode(predictionBuffers, symmetry: stroke.symmetry, transform: transform, size: viewSize,
+                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+    }
+
+    private func prepareLiveBuffers(_ preview: [BrushVertex]) throws {
         if uploadedLiveRevision != liveRevision {
             uploadedLive = sealed
             if !scratch.isEmpty { uploadedLive.append(try chunk(scratch)) }
@@ -358,11 +383,16 @@ final class MetalCanvasRenderer {
         if uploadedPrediction != preview {
             predictionBuffers = try chunks(preview); uploadedPrediction = preview
         }
-        encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
-        try encode(uploadedLive, symmetry: stroke.symmetry, transform: transform, size: viewSize,
-                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
-        try encode(predictionBuffers, symmetry: stroke.symmetry, transform: transform, size: viewSize,
-                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+    }
+
+    private func suffix(_ chunks: [GPUChunk], after count: Int) -> [GPUChunk] {
+        var skip = count, result: [GPUChunk] = []
+        for chunk in chunks {
+            if skip >= chunk.count { skip -= chunk.count; continue }
+            result.append(GPUChunk(buffer: chunk.buffer, count: chunk.count - skip, offset: chunk.offset + skip))
+            skip = 0
+        }
+        return result
     }
 
     private func texture(width: Int, height: Int, samples: Int = 1, transient: Bool = false) throws -> MTLTexture {
@@ -464,7 +494,10 @@ final class MetalCanvasRenderer {
                 for stroke in (sceneLayerStrokes[layer.id] ?? []).dropFirst(old.strokes.count) {
                     committedStrokeDraws += 1
                     encoder.setRenderPipelineState(stroke.operation == .erase ? erasePipeline : pipeline)
-                    try encode(cache[stroke.id] ?? [], symmetry: stroke.symmetry, transform: transform,
+                    let buffers = cache[stroke.id] ?? []
+                    let remaining = pendingLiveCommit == stroke.id && activeLiveID == stroke.id
+                        ? suffix(buffers, after: activeLiveVertices) : buffers
+                    try encode(remaining, symmetry: stroke.symmetry, transform: transform,
                                size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
                 }
                 incrementalLayerUpdates += 1
@@ -476,6 +509,7 @@ final class MetalCanvasRenderer {
         } catch { encoder.endEncoding(); throw error }
         encoder.endEncoding()
         activeTexture = target; activeKey = key
+        activeLiveID = nil; activeLiveVertices = 0; pendingLiveCommit = nil
     }
 
     /// Keep per-sample committed coverage: restoring a resolved bitmap here would
@@ -483,6 +517,20 @@ final class MetalCanvasRenderer {
     private func renderLiveLayer(_ active: InkStroke, preview: [BrushVertex], command: MTLCommandBuffer,
                                  document: DrawingDocument, viewport: Viewport, viewSize: Point) throws -> MTLTexture {
         guard let base = activeTexture, let work = workTexture else { throw DocumentError.graphics }
+        try prepareLiveBuffers(preview)
+        let confirmed = sealedVertexCount + scratch.count
+        if activeLiveID == nil { activeLiveID = active.id; activeLiveVertices = 0 }
+        if confirmed > activeLiveVertices {
+            let delta = suffix(uploadedLive, after: activeLiveVertices)
+            guard let stable = command.makeRenderCommandEncoder(descriptor: targetPass(base, load: .load)) else { throw DocumentError.graphics }
+            do {
+                stable.setRenderPipelineState(active.operation == .erase ? erasePipeline : pipeline)
+                try encode(delta, symmetry: active.symmetry, transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size),
+                           size: viewSize, canvas: document.size, color: inkColor(active), brush: active.brush, encoder: stable)
+            } catch { stable.endEncoding(); throw error }
+            stable.endEncoding()
+            liveConfirmedVertexDraws += confirmed - activeLiveVertices; activeLiveVertices = confirmed
+        }
         let pass = targetPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
         do {
@@ -491,8 +539,10 @@ final class MetalCanvasRenderer {
             var alpha: Float = 1
             encoder.setFragmentBytes(&alpha, length: MemoryLayout<Float>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
-            try encodeLive(active, preview: preview, transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size),
-                           viewSize: viewSize, canvas: document.size, encoder: encoder)
+            encoder.setRenderPipelineState(active.operation == .erase ? erasePipeline : pipeline)
+            try encode(predictionBuffers, symmetry: active.symmetry,
+                       transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size), size: viewSize,
+                       canvas: document.size, color: inkColor(active), brush: active.brush, encoder: encoder)
         } catch { encoder.endEncoding(); throw error }
         encoder.endEncoding()
         return work
@@ -551,13 +601,21 @@ final class MetalCanvasRenderer {
         renderCacheBytes = bytes
         if let lowerTexture { try composite(lowerTexture, opacity: 1, output: output, command: command) }
         if let selected {
+            if let liveID = activeLiveID, liveID != active?.id {
+                let promoted = pendingLiveCommit == liveID && paintKey(selected).strokes.contains(liveID)
+                if !promoted {
+                    activeKey = nil; activeLiveID = nil; activeLiveVertices = 0; pendingLiveCommit = nil
+                }
+            }
             try prepareActiveLayer(selected, command: command, document: document, viewport: viewport, viewSize: viewSize)
             let image: MTLTexture
             if let active, active.layerID == selected.id {
                 image = try renderLiveLayer(active, preview: preview, command: command, document: document, viewport: viewport, viewSize: viewSize)
             } else { image = try resolveActiveLayer(command: command) }
             try composite(image, opacity: selected.opacity, output: output, command: command)
-        } else { activeTexture = nil; activeKey = nil }
+        } else {
+            activeTexture = nil; activeKey = nil; activeLiveID = nil; activeLiveVertices = 0; pendingLiveCommit = nil
+        }
         if let upperTexture { try composite(upperTexture, opacity: 1, output: output, command: command) }
         } catch DocumentError.memoryLimit {
             clearLayerCaches(); cacheBudget = 0
@@ -571,6 +629,7 @@ final class MetalCanvasRenderer {
     private func clearLayerCaches() {
         lowerTexture = nil; upperTexture = nil; activeTexture = nil
         lowerKey = nil; upperKey = nil; activeKey = nil; renderCacheBytes = 0
+        activeLiveID = nil; activeLiveVertices = 0; pendingLiveCommit = nil
     }
 
     func handleMemoryPressure() {
@@ -706,7 +765,7 @@ final class MetalCanvasRenderer {
         // rather than the small inline setVertexBytes argument limit.
         encoder.setVertexBuffer(matrices, offset: 0, index: 2)
         for chunk in chunks {
-            encoder.setVertexBuffer(chunk.buffer, offset: 0, index: 0)
+            encoder.setVertexBuffer(chunk.buffer, offset: chunk.offset * MemoryLayout<SIMD4<Float>>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: chunk.count,
                                    instanceCount: symmetry.instanceCount)
         }

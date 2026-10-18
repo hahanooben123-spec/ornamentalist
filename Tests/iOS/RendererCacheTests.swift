@@ -60,6 +60,7 @@ final class RendererCacheTests: XCTestCase {
             var session = StrokeSession(brush: brush, symmetry: d.symmetry, existingSamples: 0, existingVertices: 0,
                 layerID: d.activeLayerID, color: InkColor(red: 0.2, green: 0.7, blue: 0.4), operation: operation)
             renderer.begin()
+            _ = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
             try renderer.append(session.append(StrokeSample(point: Point(x: 76, y: 47), pressure: 1, altitude: 1, azimuth: 0, time: 1)))
             let allocations = renderer.workingTextureAllocations, draws = renderer.committedStrokeDraws
             let groups = renderer.cachedGroupBuilds, layers = renderer.cachedLayerBuilds
@@ -209,5 +210,44 @@ final class RendererCacheTests: XCTestCase {
         let referenceA = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, reference: true)
         let referenceB = try await renderer.renderOffscreen(document: d, viewport: moved, width: 256, height: 256, reference: true)
         assertPixels(images.0, referenceA); assertPixels(images.1, referenceB)
+    }
+
+    @MainActor
+    func testLongSoftStrokesPaintConfirmedVerticesOnceAndCancelRestoresTheBase() async throws {
+        var d = fixture()
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(d.strokes, layers: d.layers)
+        let base = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        for operation in [StrokeOperation.ink, .erase] {
+            var brush = BrushPreset.softShader.makeBrush(); brush.width = 12; brush.opacity = 0.35
+            var session = StrokeSession(brush: brush, symmetry: d.symmetry, existingSamples: 0,
+                existingVertices: 0, layerID: d.activeLayerID, operation: operation)
+            renderer.begin()
+            var expected = renderer.liveConfirmedVertexDraws
+            var current: [UInt8] = []
+            for i in 0..<20 {
+                let p = Point(x: 69 + Double(i) * 0.7, y: 39 + sin(Double(i) * 0.4) * 5)
+                let addition = try session.append(StrokeSample(point: p, pressure: 1, altitude: 1, azimuth: 0, time: Double(i)))
+                try renderer.append(addition); expected += addition.count
+                current = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, active: session.stroke)
+                XCTAssertEqual(renderer.liveConfirmedVertexDraws, expected)
+                _ = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, active: session.stroke)
+                XCTAssertEqual(renderer.liveConfirmedVertexDraws, expected)
+            }
+            let reference = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256,
+                active: session.stroke, reference: true)
+            assertPixels(current, reference)
+            if operation == .ink {
+                renderer.cancel()
+                let canceled = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+                XCTAssertEqual(canceled, base)
+            } else {
+                try renderer.commit(session.stroke); d.strokes.append(session.stroke)
+                let committed = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+                assertPixels(committed, current)
+                let replay = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, reference: true)
+                assertPixels(committed, replay)
+            }
+        }
     }
 }
