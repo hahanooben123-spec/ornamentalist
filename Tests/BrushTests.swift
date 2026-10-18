@@ -2,6 +2,57 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class BrushTests: XCTestCase {
+    func testPressureCurveAndMinimumSize() {
+        var brush = InkBrush(); brush.pressureEnabled = true; brush.minimumSize = 0.05
+        XCTAssertEqual(brush.radius(pressure: 0), brush.width * 0.025, accuracy: 1e-10)
+        XCTAssertEqual(brush.radius(pressure: 1), brush.width / 2, accuracy: 1e-10)
+        brush.pressureCurve = 0.3
+        let light = brush.radius(pressure: 0.25)
+        brush.pressureCurve = 2
+        XCTAssertLessThan(brush.radius(pressure: 0.25), light)
+        brush.minimumSize = .nan; XCTAssertFalse(brush.isValid)
+    }
+    func testAdaptiveFilterFollowsFastTurnsAndPredictionsDoNotChangeConfirmedInk() throws {
+        var brush = InkBrush(); brush.stabilization = 0.6
+        var fixed = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
+        brush.adaptiveStabilization = true
+        var adaptive = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
+        for i in 0..<8 {
+            let p = sample(Double(i) * 12, time: Double(i) / 120)
+            _ = try fixed.append(p); _ = try adaptive.append(p)
+        }
+        XCTAssertGreaterThan(adaptive.stroke.samples.last!.point.x, fixed.stroke.samples.last!.point.x)
+        let before = adaptive.stroke
+        _ = adaptive.preview(predictions: [sample(100, time: 0.08), sample(110, time: 0.09)])
+        XCTAssertEqual(before, adaptive.stroke)
+    }
+    func testTaperTapAndFinishedGeometryRoundTrip() throws {
+        var brush = BrushPreset.brushPen.makeBrush(); brush.stabilization = 0
+        var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(mirror: true), existingSamples: 0, existingVertices: 0)
+        _ = try session.append(sample(0, time: 0))
+        XCTAssertEqual(session.finishedStroke().samples[0].radiusScale, 1)
+        for i in 1...60 { _ = try session.append(sample(Double(i), time: Double(i) / 120)) }
+        let finished = session.finishedStroke()
+        XCTAssertEqual(finished.samples.first!.radiusScale, 0)
+        XCTAssertEqual(finished.samples.last!.radiusScale, 0)
+        XCTAssertEqual(finished.samples[30].radiusScale, 1)
+        XCTAssertLessThanOrEqual(BrushGeometry.mesh(finished).count, session.estimatedVertexCount)
+        let restored = try JSONDecoder().decode(InkStroke.self, from: JSONEncoder().encode(finished))
+        XCTAssertEqual(BrushGeometry.mesh(restored), BrushGeometry.mesh(finished))
+    }
+    func testTiltChangesFootprintAndPreservesVertexBudget() throws {
+        var brush = BrushPreset.softShader.makeBrush(); brush.tiltShading = 1
+        var upright = sample(40); upright.altitude = .pi / 2
+        var tilted = upright; tilted.altitude = 0.2; tilted.azimuth = .pi / 3
+        let a = BrushGeometry.dabs(InkStroke(brush: brush, samples: [upright]))[0]
+        let b = BrushGeometry.dabs(InkStroke(brush: brush, samples: [tilted]))[0]
+        XCTAssertGreaterThan(b.radius, a.radius); XCTAssertLessThan(b.aspect, a.aspect)
+        XCTAssertEqual(b.angle, tilted.azimuth)
+        XCTAssertEqual(a.vertices.count, b.vertices.count)
+        let stroke = InkStroke(brush: brush, samples: [upright, tilted])
+        let restored = try JSONDecoder().decode(InkStroke.self, from: JSONEncoder().encode(stroke))
+        XCTAssertEqual(BrushGeometry.mesh(stroke), BrushGeometry.mesh(restored))
+    }
     private func sample(_ x: Double, y: Double = 40, time: Double = 1) -> StrokeSample {
         StrokeSample(point: Point(x: x, y: y), pressure: 0.7, altitude: 1, azimuth: 0, time: time)
     }
@@ -109,7 +160,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 8); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 9); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }

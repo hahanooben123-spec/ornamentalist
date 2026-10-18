@@ -98,7 +98,7 @@ enum PNGExporter {
                 context.saveGState()
                 context.concatenate(CGAffineTransform(a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d,
                                                       tx: matrix.tx, ty: matrix.ty))
-                for dab in dabs {
+                for dab in dabs where dab.radius > 0 {
                     context.saveGState()
                     context.translateBy(x: dab.center.x, y: dab.center.y)
                     context.rotate(by: dab.angle)

@@ -9,8 +9,17 @@ struct InkBrush: Codable, Equatable, Sendable {
     var opacity = 1.0
     var spacing = 0.2
     var density = 0.5
+    var adaptiveStabilization = false
+    var pressureCurve = 0.5
+    var minimumSize = 0.2
+    var taperStart = 0.0
+    var taperEnd = 0.0
+    var tiltShading = 0.0
     var usesStamps: Bool { preset != .fineliner && preset != .brushPen }
     var isValid: Bool {
+        [pressureCurve, minimumSize, taperStart, taperEnd, tiltShading].allSatisfy { $0.isFinite } &&
+        (0.2...3).contains(pressureCurve) && (0...1).contains(minimumSize) &&
+        (0...2).contains(taperStart) && (0...2).contains(taperEnd) && (0...1).contains(tiltShading) &&
         width.isFinite && (0.5...160).contains(width) && stabilization.isFinite &&
         (0...0.85).contains(stabilization) && (1...2).contains(geometryVersion) &&
         opacity.isFinite && (0.01...1).contains(opacity) &&
@@ -18,7 +27,7 @@ struct InkBrush: Codable, Equatable, Sendable {
     }
     func radius(pressure: Double) -> Double {
         guard pressureEnabled else { return width * 0.5 }
-        return width * (0.2 + 0.8 * sqrt(max(0, min(1, pressure)))) * 0.5
+        return width * (minimumSize + (1 - minimumSize) * pow(max(0, min(1, pressure)), pressureCurve)) * 0.5
     }
     var diskSides: Int {
         guard geometryVersion >= 2 else { return 12 }
@@ -39,6 +48,12 @@ extension InkBrush {
         opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
         spacing = try c.decodeIfPresent(Double.self, forKey: .spacing) ?? 0.2
         density = try c.decodeIfPresent(Double.self, forKey: .density) ?? 0.5
+        adaptiveStabilization = try c.decodeIfPresent(Bool.self, forKey: .adaptiveStabilization) ?? false
+        pressureCurve = try c.decodeIfPresent(Double.self, forKey: .pressureCurve) ?? 0.5
+        minimumSize = try c.decodeIfPresent(Double.self, forKey: .minimumSize) ?? 0.2
+        taperStart = try c.decodeIfPresent(Double.self, forKey: .taperStart) ?? 0
+        taperEnd = try c.decodeIfPresent(Double.self, forKey: .taperEnd) ?? 0
+        tiltShading = try c.decodeIfPresent(Double.self, forKey: .tiltShading) ?? 0
     }
 }
 
@@ -108,6 +123,9 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .charcoal: b.width = 42; b.opacity = 0.2; b.spacing = 0.22; b.density = 0.65
         case .hatching: b.width = 36; b.opacity = 0.65; b.spacing = 0.65; b.density = 0.4
         }
+        b.adaptiveStabilization = true
+        if self == .brushPen { b.minimumSize = 0.03; b.taperStart = 0.6; b.taperEnd = 0.8 }
+        if [.graphite, .charcoal, .softShader].contains(self) { b.tiltShading = 0.7 }
         return b
     }
 }

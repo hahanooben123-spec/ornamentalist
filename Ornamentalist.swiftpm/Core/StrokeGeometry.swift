@@ -4,7 +4,7 @@ import Foundation
 /// only the uncommitted tail changes when another sample arrives.
 enum StrokeGeometry {
     static func disk(_ p: StrokeSample, brush: InkBrush) -> [Point] {
-        let r = brush.radius(pressure: p.pressure)
+        let r = p.radius(brush: brush)
         let sides = brush.diskSides
         var result: [Point] = []
         result.reserveCapacity(sides * 3)
@@ -20,7 +20,7 @@ enum StrokeGeometry {
         let delta = b.point - a.point
         guard delta.length > 0.0001 else { return disk(b, brush: brush) }
         let n = Point(x: -delta.y, y: delta.x) * (1 / delta.length)
-        let ra = n * brush.radius(pressure: a.pressure), rb = n * brush.radius(pressure: b.pressure)
+        let ra = n * a.radius(brush: brush), rb = n * b.radius(brush: brush)
         return [a.point+ra, a.point-ra, b.point+rb, b.point+rb, a.point-ra, b.point-rb] + disk(b, brush: brush)
     }
     static func quadratic(_ a: StrokeSample, _ control: StrokeSample, _ b: StrokeSample,
@@ -33,6 +33,7 @@ enum StrokeGeometry {
             var next = b
             next.point = a.point*(u*u) + control.point*(2*u*t) + b.point*(t*t)
             next.pressure = a.pressure*u*u + control.pressure*2*u*t + b.pressure*t*t
+            next.radiusScale = a.radiusScale*u*u + control.radiusScale*2*u*t + b.radiusScale*t*t
             result += segment(previous, next, brush: brush)
             previous = next
         }
@@ -63,7 +64,8 @@ enum StrokeGeometry {
             if tangent.length <= 0.000001 { tangent = c.point - a.point }
             let normal = Point(x: -tangent.y, y: tangent.x) * (1 / max(0.000001, tangent.length))
             let pressure = a.pressure*u*u + c.pressure*2*u*t + b.pressure*t*t
-            let radius = brush.radius(pressure: pressure)
+            let scale = a.radiusScale*u*u + c.radiusScale*2*u*t + b.radiusScale*t*t
+            let radius = brush.radius(pressure: pressure) * scale
             return (center + normal * radius, center - normal * radius)
         }
         var previous = edge(0), result: [Point] = []
@@ -84,6 +86,7 @@ enum StrokeGeometry {
             var join = b
             join.point = a.point*(u*u) + c.point*(2*u*t) + b.point*(t*t)
             join.pressure = a.pressure*u*u + c.pressure*2*u*t + b.pressure*t*t
+            join.radiusScale = a.radiusScale*u*u + c.radiusScale*2*u*t + b.radiusScale*t*t
             result += disk(join, brush: brush)
         }
         return result

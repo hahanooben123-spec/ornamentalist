@@ -171,7 +171,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         let force = touch.type == .pencil && touch.maximumPossibleForce > 0
             ? Double(touch.force / touch.maximumPossibleForce) : 0.6
         return StrokeSample(point: point(touch), pressure: max(0, min(1, force)),
-                            altitude: Double(touch.altitudeAngle), azimuth: Double(touch.azimuthAngle(in: self)) - viewport.rotation,
+                            altitude: touch.type == .pencil ? Double(touch.altitudeAngle) : .pi / 2,
+                            azimuth: touch.type == .pencil ? Double(touch.azimuthAngle(in: self)) - viewport.rotation : 0,
                             time: touch.timestamp)
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -272,7 +273,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     private func finishStroke(rebuild: Bool = false) {
         guard let completed = session else { return }
-        let stroke = completed.stroke
+        let stroke = completed.finishedStroke()
         session = nil; drawingTouch = nil; preview = []
         if rebuild { renderer?.cancel() }
         else {

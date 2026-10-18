@@ -274,7 +274,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 8
+            after.layers[index].raster = raster; after.version = 9
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -322,7 +322,7 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.layers[index].raster?.placement = p; after.version = 8
+            after.layers[index].raster?.placement = p; after.version = 9
             do {
                 try after.validate()
                 if before.layers != after.layers {
@@ -435,8 +435,19 @@ final class StudioModel: ObservableObject {
         guard canEdit, !isDrawing, amount.isFinite else { return }
         document?.brush.stabilization = max(0, min(0.85, amount)); changed()
     }
+    func setPenResponse(adaptive: Bool? = nil, curve: Double? = nil, minimum: Double? = nil,
+                        start: Double? = nil, end: Double? = nil, tilt: Double? = nil) {
+        guard canEdit, !isDrawing, var brush = document?.brush else { return }
+        if let adaptive { brush.adaptiveStabilization = adaptive }
+        if let curve, curve.isFinite { brush.pressureCurve = max(0.2, min(3, curve)) }
+        if let minimum, minimum.isFinite { brush.minimumSize = max(0, min(1, minimum)) }
+        if let start, start.isFinite { brush.taperStart = max(0, min(2, start)) }
+        if let end, end.isFinite { brush.taperEnd = max(0, min(2, end)) }
+        if let tilt, tilt.isFinite { brush.tiltShading = max(0, min(1, tilt)) }
+        document?.brush = brush; changed()
+    }
     private func changed() {
-        document?.version = 8; document?.modified = Date()
+        document?.version = 9; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"

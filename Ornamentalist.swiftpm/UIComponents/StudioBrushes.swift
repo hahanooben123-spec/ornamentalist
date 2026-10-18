@@ -79,6 +79,42 @@ struct StudioBrushesView: View {
             }
             Toggle("Pressure sensitivity", isOn: Binding(get: { brush.pressureEnabled }, set: { model.setPressure($0) }))
                 .font(.subheadline)
+            if brush.pressureEnabled {
+                VStack(alignment: .leading, spacing: 8) {
+                    valueLabel("Pressure curve", value: brush.pressureCurve.formatted(.number.precision(.fractionLength(2))))
+                    Slider(value: Binding(get: { brush.pressureCurve }, set: { model.setPenResponse(curve: $0) }), in: 0.2...3)
+                    Text("Lower values need less pressure. Higher values need a firmer touch.").font(.caption).foregroundStyle(.secondary)
+                    Canvas { context, size in
+                        var path = Path()
+                        for i in 0...40 {
+                            let t = Double(i) / 40
+                            let diameter = brush.minimumSize + (1 - brush.minimumSize) * pow(t, brush.pressureCurve)
+                            let p = CGPoint(x: size.width * t, y: size.height * (1 - diameter))
+                            if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+                        }
+                        context.stroke(path, with: .color(StudioStyle.copper), lineWidth: 2)
+                    }.frame(height: 52).accessibilityLabel("Pressure to brush size curve")
+                    valueLabel("Minimum size", value: "\(Int(brush.minimumSize * 100))%")
+                    Slider(value: Binding(get: { brush.minimumSize }, set: { model.setPenResponse(minimum: $0) }), in: 0...1)
+                }
+            }
+            if !brush.usesStamps {
+                VStack(alignment: .leading, spacing: 8) {
+                    valueLabel("Start taper", value: "\(Int(brush.taperStart * 100))%")
+                    Slider(value: Binding(get: { brush.taperStart }, set: { model.setPenResponse(start: $0) }), in: 0...2)
+                    valueLabel("End taper", value: "\(Int(brush.taperEnd * 100))%")
+                    Slider(value: Binding(get: { brush.taperEnd }, set: { model.setPenResponse(end: $0) }), in: 0...2)
+                    Text("Taper length follows brush size. The ending is applied when Pencil lifts.").font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    valueLabel("Tilt shading", value: "\(Int(brush.tiltShading * 100))%")
+                    Slider(value: Binding(get: { brush.tiltShading }, set: { model.setPenResponse(tilt: $0) }), in: 0...1)
+                    Text("Tilt Pencil for a wider, flatter shading footprint.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Toggle("Adaptive stabilization", isOn: Binding(get: { brush.adaptiveStabilization }, set: { model.setPenResponse(adaptive: $0) }))
+                .font(.subheadline)
             VStack(alignment: .leading, spacing: 8) {
                 valueLabel("Steady line", value: "\(Int(brush.stabilization * 100))%")
                 Slider(value: Binding(get: { brush.stabilization }, set: { model.setStabilization($0) }), in: 0...0.85)

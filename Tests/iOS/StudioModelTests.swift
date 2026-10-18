@@ -59,6 +59,7 @@ final class StudioModelTests: XCTestCase {
             model.setBrush(preset); model.setWidth(20 + Double(index))
             model.setOpacity(0.4); model.setSpacing(0.35); model.setDensity(0.7)
             model.setPressure(true); model.setStabilization(0.55)
+            model.setPenResponse(adaptive: true, curve: 1.4, minimum: 0.08, start: 0.5, end: 0.8, tilt: 0.6)
             expected[preset] = try XCTUnwrap(model.document?.brush)
         }
         model.selectTool(.eraser); model.setSoftEraser(true)

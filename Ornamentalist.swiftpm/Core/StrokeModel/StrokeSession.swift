@@ -5,6 +5,8 @@ import Foundation
 struct StrokeSession {
     private(set) var stroke: InkStroke
     private var filtered: StrokeSample?
+    private var rawPrevious: StrokeSample?
+    private var traveled = 0.0
     private var stableVertices = 0
     private var stamps: BrushStampState
     private let remainingSamples: Int
@@ -34,15 +36,29 @@ struct StrokeSession {
     private func stabilized(_ sample: StrokeSample, previous: StrokeSample?) -> StrokeSample {
         guard let previous, stroke.brush.stabilization > 0 else { return sample }
         let dt = max(0.001, min(0.1, sample.time - previous.time))
-        let alpha = 1 - exp(-dt / (stroke.brush.stabilization * 0.045))
+        var response = 1.0
+        if stroke.brush.adaptiveStabilization {
+            let delta = sample.point - (rawPrevious?.point ?? previous.point)
+            let speed = delta.length / dt
+            let prior = (rawPrevious?.point ?? previous.point) - previous.point
+            let alignment = (delta.x * prior.x + delta.y * prior.y) / max(0.000001, delta.length * prior.length)
+            response = 1 + min(6, speed / 180) + (alignment < 0.3 ? 3 : 0)
+        }
+        let alpha = 1 - exp(-dt * response / (stroke.brush.stabilization * 0.045))
         var result = sample
         result.point = previous.point + (sample.point - previous.point) * alpha
         return result
     }
     mutating func append(_ raw: StrokeSample) throws -> [BrushVertex] {
-        guard raw.point.isFinite, raw.time.isFinite, raw.pressure.isFinite else { throw DocumentError.invalidData }
+        guard raw.point.isFinite, raw.time.isFinite, raw.pressure.isFinite,
+              raw.altitude.isFinite, raw.azimuth.isFinite else { throw DocumentError.invalidData }
         if let last = filtered, raw.time <= last.time { return [] }
-        let sample = stabilized(raw, previous: filtered)
+        var sample = stabilized(raw, previous: filtered)
+        rawPrevious = raw
+        if let last = filtered { traveled += (sample.point - last.point).length }
+        if !stroke.brush.usesStamps, stroke.brush.taperStart > 0 {
+            sample.radiusScale = min(1, traveled / max(0.01, stroke.brush.width * stroke.brush.taperStart))
+        }
         // Retain the first repeated endpoint for midpoint interpolation, but
         // do not spend geometry/sample budgets on a stationary solid Pencil.
         // Keep the filter clock current, so resuming movement has the same dt.
@@ -72,27 +88,52 @@ struct StrokeSession {
         stroke.samples.append(sample); filtered = sample; stableVertices += cost
         return addition.map { BrushVertex($0) }
     }
-    func preview(predictions: [StrokeSample]) -> [BrushVertex] {
-        if stroke.brush.usesStamps {
-            var state = stamps, last = filtered, vertices: [BrushVertex] = []
-            for raw in predictions.prefix(12) {
-                guard raw.time.isFinite, raw.time > (last?.time ?? -.infinity), raw.point.isFinite, raw.pressure.isFinite else { continue }
-                let sample = stabilized(raw, previous: last)
-                let cost = state.stampCount(to: sample, brush: stroke.brush) * BrushStampState.dabsPerStamp(stroke.brush) * 6
-                guard stableVertices + vertices.count + cost <= remainingVertices else { break }
-                vertices += state.advance(sample, brush: stroke.brush).flatMap(\.vertices)
-                last = sample
+    func finishedStroke() -> InkStroke {
+        if !stroke.samples.isEmpty, traveled <= 0.0001 {
+            var tap = stroke
+            for i in tap.samples.indices { tap.samples[i].radiusScale = 1 }
+            return tap
+        }
+        guard !stroke.brush.usesStamps, stroke.brush.taperEnd > 0, stroke.samples.count > 1 else { return stroke }
+        var result = stroke, distance = 0.0
+        if result.samples.count == 2 { result.samples[0].radiusScale = 1 }
+        let length = max(0.01, stroke.brush.width * stroke.brush.taperEnd)
+        for i in result.samples.indices.reversed() {
+            if i < result.samples.count - 1 {
+                distance += (result.samples[i + 1].point - result.samples[i].point).length
             }
-            return vertices
+            if distance >= length { break }
+            result.samples[i].radiusScale = min(result.samples[i].radiusScale, distance / length)
         }
-        var recent = Array(stroke.samples.suffix(2)), last = filtered, vertices: [Point] = []
+        return result
+    }
+    func preview(predictions: [StrokeSample]) -> [BrushVertex] {
+        var copy = self, vertices: [BrushVertex] = []
         for raw in predictions.prefix(12) {
-            guard raw.time > (last?.time ?? -.infinity), raw.point.isFinite else { continue }
-            let sample = stabilized(raw, previous: last)
-            recent.append(sample)
-            vertices += StrokeGeometry.stableAddition(samples: recent, brush: stroke.brush)
-            last = sample
+            guard raw.time.isFinite, raw.time > (copy.filtered?.time ?? -.infinity),
+                  raw.point.isFinite, raw.pressure.isFinite,
+                  raw.altitude.isFinite, raw.azimuth.isFinite else { continue }
+            // Copy only the bounded tail, never the entire accumulated stroke.
+            let sample = copy.stabilized(raw, previous: copy.filtered)
+            if stroke.brush.usesStamps {
+                let cost = copy.stamps.stampCount(to: sample, brush: stroke.brush) * BrushStampState.dabsPerStamp(stroke.brush) * 6
+                guard stableVertices + vertices.count + cost <= remainingVertices else { break }
+                vertices += copy.stamps.advance(sample, brush: stroke.brush).flatMap(\.vertices)
+            } else {
+                var at = sample
+                if let last = copy.filtered { copy.traveled += (at.point - last.point).length }
+                if stroke.brush.taperStart > 0 {
+                    at.radiusScale = min(1, copy.traveled / max(0.01, stroke.brush.width * stroke.brush.taperStart))
+                }
+                let recent = Array(copy.stroke.samples.suffix(2)) + [at]
+                let cost = StrokeGeometry.estimatedAddition(samples: recent, brush: stroke.brush)
+                let tail = StrokeGeometry.estimatedTail(samples: recent, brush: stroke.brush)
+                guard stableVertices + vertices.count + cost + tail <= remainingVertices else { break }
+                vertices += StrokeGeometry.stableAddition(samples: recent, brush: stroke.brush).map { BrushVertex($0) }
+                copy.stroke.samples = recent
+            }
+            copy.filtered = sample; copy.rawPrevious = raw
         }
-        return (vertices + StrokeGeometry.tail(samples: recent, brush: stroke.brush)).map { BrushVertex($0) }
+        return vertices + BrushGeometry.tail(copy.stroke)
     }
 }

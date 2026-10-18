@@ -6,11 +6,26 @@ struct StrokeSample: Codable, Equatable, Sendable {
     var altitude: Double
     var azimuth: Double
     var time: Double
+    var radiusScale = 1.0
     static func midpoint(_ a: StrokeSample, _ b: StrokeSample) -> StrokeSample {
         StrokeSample(point: (a.point + b.point) * 0.5,
                      pressure: (a.pressure + b.pressure) * 0.5,
                      altitude: (a.altitude + b.altitude) * 0.5,
-                     azimuth: (a.azimuth + b.azimuth) * 0.5, time: (a.time + b.time) * 0.5)
+                     azimuth: a.azimuth + atan2(sin(b.azimuth - a.azimuth), cos(b.azimuth - a.azimuth)) * 0.5,
+                     time: (a.time + b.time) * 0.5, radiusScale: (a.radiusScale + b.radiusScale) * 0.5)
+    }
+    func radius(brush: InkBrush) -> Double { brush.radius(pressure: pressure) * radiusScale }
+}
+
+extension StrokeSample {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        point = try c.decode(Point.self, forKey: .point)
+        pressure = try c.decode(Double.self, forKey: .pressure)
+        altitude = try c.decode(Double.self, forKey: .altitude)
+        azimuth = try c.decode(Double.self, forKey: .azimuth)
+        time = try c.decode(Double.self, forKey: .time)
+        radiusScale = try c.decodeIfPresent(Double.self, forKey: .radiusScale) ?? 1
     }
 }
 
@@ -44,7 +59,7 @@ extension InkStroke {
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 8
+    var version = 9
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -66,7 +81,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard (1...8).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...9).contains(version) else { throw DocumentError.unsupportedVersion }
         let layerIDs = Set(layers.map(\.id))
         guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
               layerIDs.contains(activeLayerID), layers.allSatisfy({
@@ -111,6 +126,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
                 guard sample.point.isFinite, abs(sample.point.x) <= 100_000, abs(sample.point.y) <= 100_000,
                       sample.pressure.isFinite, (0...1).contains(sample.pressure),
                       sample.altitude.isFinite, sample.azimuth.isFinite,
+                      sample.radiusScale.isFinite, (0...1).contains(sample.radiusScale),
                       sample.time.isFinite, sample.time >= lastTime else { throw DocumentError.invalidData }
                 lastTime = sample.time
             }

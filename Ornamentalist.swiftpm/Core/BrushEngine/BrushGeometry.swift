@@ -44,10 +44,13 @@ struct BrushStampState: Sendable {
     }
     private func dabs(_ sample: StrokeSample, brush: InkBrush, ordinal: UInt64) -> [BrushDab] {
         let radius = brush.radius(pressure: sample.pressure)
+        let tilt = brush.tiltShading * max(0, min(1, 1 - sample.altitude / (.pi / 2)))
+        let spreadScale = 1 + tilt * 0.8
+        let tiltAngle = sample.azimuth
         if !brush.preset.scattered {
-            return [BrushDab(center: sample.point, radius: radius,
-                             aspect: brush.preset == .flatMarker ? 0.28 : 1,
-                             angle: brush.preset == .flatMarker ? -.pi / 4 : 0)]
+            return [BrushDab(center: sample.point, radius: radius * spreadScale,
+                             aspect: (brush.preset == .flatMarker ? 0.28 : 1) / (spreadScale * spreadScale),
+                             angle: tilt > 0 ? tiltAngle : (brush.preset == .flatMarker ? -.pi / 4 : 0))]
         }
         return (0..<Self.dabsPerStamp(brush)).map { dot in
             let key = ordinal &* 32 &+ UInt64(dot)
@@ -55,7 +58,8 @@ struct BrushStampState: Sendable {
             let u = random(key, 2)
             // Center-weighted dots for a feathered stipple shadow.
             let spread = brush.preset == .dotShader ? u * u : sqrt(u)
-            let center = sample.point + Point(x: cos(angle), y: sin(angle)) * (radius * spread)
+            let offset = Point(x: cos(angle) * spreadScale, y: sin(angle) / spreadScale) * (radius * spread)
+            let center = sample.point + (tilt > 0 ? Matrix.rotation(tiltAngle).apply(offset) : offset)
             let base: Double
             switch brush.preset {
             case .graphite: base = 0.035
@@ -89,6 +93,9 @@ struct BrushStampState: Sendable {
                     var at = sample
                     at.point = previous.point + delta * t
                     at.pressure = previous.pressure + (sample.pressure - previous.pressure) * t
+                    at.altitude = previous.altitude + (sample.altitude - previous.altitude) * t
+                    let turn = atan2(sin(sample.azimuth - previous.azimuth), cos(sample.azimuth - previous.azimuth))
+                    at.azimuth = previous.azimuth + turn * t
                     if emit { result += dabs(at, brush: brush, ordinal: index) }
                     index &+= 1
                 }

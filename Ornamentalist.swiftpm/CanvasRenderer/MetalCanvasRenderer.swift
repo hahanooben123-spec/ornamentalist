@@ -109,7 +109,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = (allocatedVertexCount + sealedVertexCount + scratch.count) * MemoryLayout<SIMD4<Float>>.stride
-        return "Ornamentalist 0.8.9\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.9.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -283,7 +283,16 @@ final class MetalCanvasRenderer {
     }
     func append(_ points: [Point]) throws { try append(points.map { BrushVertex($0) }) }
     func commit(_ stroke: InkStroke) throws {
-        try append(BrushGeometry.tail(stroke))
+        if !stroke.brush.usesStamps, stroke.brush.taperEnd > 0 || stroke.brush.taperStart > 0 {
+            // The ending changes only on Pencil lift. Rebuild this stroke once;
+            // input and frame updates retain incremental geometry throughout.
+            discardUncommittedLiveCache()
+            activeKey = nil; activeLiveID = nil; activeLiveVertices = 0
+            resetInputBuffers()
+            try append(BrushGeometry.mesh(stroke))
+        } else {
+            try append(BrushGeometry.tail(stroke))
+        }
         if !scratch.isEmpty { sealed.append(try chunk(scratch)) }
         cache[stroke.id] = sealed
         allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
