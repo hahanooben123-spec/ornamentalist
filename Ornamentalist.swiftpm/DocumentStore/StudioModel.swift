@@ -69,6 +69,7 @@ final class StudioModel: ObservableObject {
     private var thumbnailRefreshIDs = Set<UUID>()
     private var saveRunning = false
     private var journalRunning = false
+    private var historyCompacting = false
     private var lastCheckpoint = Date.distantPast
     private var lastCheckpointSampleCount = -1
     private var lastCheckpointStrokeID: UUID?
@@ -149,9 +150,20 @@ final class StudioModel: ObservableObject {
                 do { try await Task.sleep(nanoseconds: 250_000_000) } catch { break }
                 guard let self else { break }
                 if self.document != nil, !self.busy {
+                    if !self.isDrawing, !self.historyCompacting, self.history.needsCompaction,
+                       let id = self.document?.id {
+                        self.historyCompacting = true
+                        let snapshot = self.history
+                        Task { [weak self] in
+                            let compacted = await snapshot.compacted()
+                            guard let self else { return }
+                            self.historyCompacting = false
+                            if self.document?.id == id, self.history.revision == snapshot.revision { self.history = compacted }
+                        }
+                    }
                     if self.schedule.isDue(at: ProcessInfo.processInfo.systemUptime), !self.saveRunning, !self.isDrawing,
                        ProcessInfo.processInfo.systemUptime >= self.nextSaveAttempt {
-                        await self.saveNow()
+                        await self.saveNow(incremental: true)
                     }
                     if Date().timeIntervalSince(self.lastCheckpoint) >= 2 {
                         await self.checkpointActiveInk()
@@ -327,7 +339,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 14
+            after.layers[index].raster = raster; after.version = 15
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -375,7 +387,7 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.layers[index].raster?.placement = p; after.version = 14
+            after.layers[index].raster?.placement = p; after.version = 15
             do {
                 try after.validate()
                 if before.layers != after.layers {
@@ -529,14 +541,14 @@ final class StudioModel: ObservableObject {
         else { document?.brush = brush; changed() }
     }
     private func changed() {
-        document?.version = 14; document?.modified = Date()
+        document?.version = 15; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)
     }
     var inkBudgetReport: String {
-        "Input points: \(usedSamples) / \(DrawingLimits.sampleCount)\nGeometry budget: \(usedVertices * 16 / 1024) / \(DrawingLimits.vertexCount * 16 / 1024) KiB\nStrokes: \(document?.strokes.count ?? 0)"
+        "Input points: \(usedSamples) / \(DrawingLimits.sampleCount)\nDocument geometry estimate (reconstructible): \(usedVertices * 16 / 1024) KiB\nStrokes: \(document?.strokes.count ?? 0)"
     }
     private func rememberBrush(_ brush: InkBrush) {
         guard brushSettings[brush.preset] != brush else { return }
@@ -551,7 +563,7 @@ final class StudioModel: ObservableObject {
         if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "eraserBrushSettings") }
     }
     @discardableResult
-    func saveNow() async -> Bool {
+    func saveNow(incremental: Bool = false) async -> Bool {
         guard let snapshot = document else { return true }
         guard !saveRunning, !isDrawing else { return false }
         saveRunning = true; defer { saveRunning = false }
@@ -560,7 +572,8 @@ final class StudioModel: ObservableObject {
         let sequence = writeSequence
         saveStatus = "Saving…"
         do {
-            try await repository.save(snapshot, generation: sequence)
+            if incremental { try await repository.autosave(snapshot, generation: sequence) }
+            else { try await repository.save(snapshot, generation: sequence) }
             guard document?.id == snapshot.id else { return false }
             nextSaveAttempt = 0; reportedSaveFailure = false
             if generation == requestedGeneration {

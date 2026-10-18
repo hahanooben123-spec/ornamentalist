@@ -54,6 +54,8 @@ final class MetalCanvasRenderer {
     private let restoreSamplesPipeline: MTLRenderPipelineState
     private let restoreColorPipeline: MTLRenderPipelineState
     private let clearCoveragePipeline: MTLRenderPipelineState
+    private let clearRegionPipeline: MTLRenderPipelineState
+    private let clearSingleRegionPipeline: MTLRenderPipelineState
     private let clearCoverageState: MTLDepthStencilState
     private let paintOnceState: MTLDepthStencilState
     private var coverageStencil: MTLTexture?
@@ -84,6 +86,16 @@ final class MetalCanvasRenderer {
     private var predictionBuffers: [GPUChunk] = []
     private let groupInFlight = DispatchSemaphore(value: 1)
     private var cache: [UUID: [GPUChunk]] = [:]
+    private var registered: Set<UUID> = []
+    private var cacheOrder: [UUID] = []
+    private let geometryBudget: Int
+    private var strokeBounds: [UUID: CGRect] = [:]
+    private(set) var localTileUpdates = 0
+    private(set) var geometryRebuilds = 0
+    private(set) var isPreparingScene = false
+    var preparationChanged: ((Bool) -> Void)?
+    var preparationFailed: ((Error) -> Void)?
+    private var preparationTask: Task<Void, Never>?
     private var sealed: [GPUChunk] = []
     private var scratch: [SIMD4<Float>] = []
     private let chunkSize = 8190 // Multiple of three.
@@ -119,7 +131,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = allocatedGeometryBytes + sealed.reduce(0) { $0 + $1.buffer.length } + scratch.count * 16
-        return "Ornamentalist 0.9.8\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.10.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -131,11 +143,12 @@ final class MetalCanvasRenderer {
         if gpuFrameMilliseconds.count > 240 { gpuFrameMilliseconds.removeFirst() }
     }
 
-    init(view: MTKView, compactStamps: Bool = true) throws {
+    init(view: MTKView, compactStamps: Bool = true, geometryBudget: Int = 16 * 1024 * 1024) throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
             throw DocumentError.noMetal
         }
         self.device = device
+        self.geometryBudget = max(DrawingLimits.strokeVertices * 16, geometryBudget)
         self.compactStamps = compactStamps
         self.queue = queue
         view.device = device
@@ -187,6 +200,12 @@ final class MetalCanvasRenderer {
         descriptor.fragmentFunction = nil
         attachment.writeMask = []
         clearCoveragePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        attachment.writeMask = .all
+        descriptor.fragmentFunction = library.makeFunction(name: "clearRegionFragment")
+        clearRegionPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.rasterSampleCount = 1
+        descriptor.depthAttachmentPixelFormat = .invalid; descriptor.stencilAttachmentPixelFormat = .invalid
+        clearSingleRegionPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         let stencil = MTLStencilDescriptor()
         stencil.stencilCompareFunction = .always
         stencil.depthStencilPassOperation = .replace
@@ -256,7 +275,27 @@ final class MetalCanvasRenderer {
         return SIMD4(Float(vertex.point.x), Float(vertex.point.y), Float(vertex.local.x * scale), Float(vertex.local.y * scale))
     }
     func hasBuffers(for strokes: [InkStroke], layers: [DrawingLayer] = []) -> Bool {
-        strokes.allSatisfy { cache[$0.id] != nil } && layers.compactMap(\.raster).allSatisfy { rasterTextures[$0.id] != nil }
+        strokes.allSatisfy { registered.contains($0.id) } && layers.compactMap(\.raster).allSatisfy { rasterTextures[$0.id] != nil }
+    }
+    private func recountBuffers() {
+        allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
+        allocatedStorageUnits = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
+    }
+    private func retain(_ buffers: [GPUChunk], for id: UUID) {
+        cache[id] = nil; cacheOrder.removeAll { $0 == id }
+        let bytes = buffers.reduce(0) { $0 + $1.buffer.length }
+        var current = allocatedGeometryBytes
+        while current + bytes > geometryBudget, let oldest = cacheOrder.first {
+            current -= cache[oldest]?.reduce(0) { $0 + $1.buffer.length } ?? 0
+            cache[oldest] = nil; cacheOrder.removeFirst()
+        }
+        cache[id] = buffers; cacheOrder.append(id); registered.insert(id)
+        recountBuffers()
+    }
+    private func buffers(for stroke: InkStroke) throws -> [GPUChunk] {
+        guard let buffers = cache[stroke.id] else { throw DocumentError.graphics }
+        cacheOrder.removeAll { $0 == stroke.id }; cacheOrder.append(stroke.id)
+        return buffers
     }
     func prune(_ strokes: [InkStroke], layers: [DrawingLayer] = []) {
         let layerIDs = Set(layers.map(\.id))
@@ -264,40 +303,39 @@ final class MetalCanvasRenderer {
         let rasters = Set(layers.compactMap { $0.raster?.id })
         rasterTextures = rasterTextures.filter { rasters.contains($0.key) }
         let ids = Set(strokes.map(\.id))
-        cache = cache.filter { ids.contains($0.key) }
-        allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
-        allocatedStorageUnits = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
+        cache = cache.filter { ids.contains($0.key) }; cacheOrder.removeAll { !ids.contains($0) }
+        registered.formIntersection(ids)
+        // Undo needs the removed stroke's old bounds until the dirty tiles are rebuilt.
+        let boundsIDs = ids.union(activeKey?.strokes ?? []).union((lowerKey ?? []).flatMap { $0.paint.strokes })
+            .union((upperKey ?? []).flatMap { $0.paint.strokes })
+        strokeBounds = strokeBounds.filter { boundsIDs.contains($0.key) }
+        recountBuffers()
     }
     func synchronize(_ strokes: [InkStroke], layers: [DrawingLayer] = []) async throws {
-        let missing = strokes.filter { cache[$0.id] == nil }
+        prune(strokes, layers: layers)
+        let missing = strokes.filter { !registered.contains($0.id) }
         try await Task.detached(priority: .userInitiated) {
-            var total = 0
-            for stroke in strokes {
-                total += BrushGeometry.estimatedStorageCost(stroke)
-                guard total <= DrawingLimits.vertexCount else { throw DocumentError.geometryLimit }
-            }
             for stroke in missing {
                 guard BrushGeometry.estimatedStorageCost(stroke) <= DrawingLimits.strokeVertices else {
                     throw DocumentError.geometryLimit
                 }
             }
         }.value
-        try Task.checkCancellation()
-        let incoming = missing.reduce(0) { $0 + BrushGeometry.estimatedStorageCost($1) }
-        let kept = strokes.filter { cache[$0.id] != nil }.reduce(0) { n, s in
-            n + (cache[s.id]?.reduce(0) { $0 + $1.storageUnits } ?? 0)
-        }
-        guard incoming + kept <= DrawingLimits.vertexCount else { throw DocumentError.geometryLimit }
-        var uploaded: [UUID: [GPUChunk]] = [:]
-        // Expand and upload one stroke at a time. More compact GPU storage must
-        // not create a document-sized expanded CPU mesh during reopening.
-        for stroke in missing {
-            let points = await Task.detached(priority: .userInitiated) { BrushGeometry.mesh(stroke) }.value
+        // Only prewarm geometry that fits. Larger drawings are replayed in bounded
+        // GPU submissions by prepareScene, never uploaded as one enormous mesh.
+        var available = geometryBudget - allocatedGeometryBytes
+        for stroke in missing.reversed() {
             try Task.checkCancellation()
-            uploaded[stroke.id] = try chunks(points)
+            let estimate = BrushGeometry.estimatedStorageCost(stroke) * 16
+            if estimate <= available {
+                let points = await Task.detached(priority: .userInitiated) { BrushGeometry.mesh(stroke) }.value
+                try Task.checkCancellation()
+                let uploaded = try chunks(points)
+                retain(uploaded, for: stroke.id)
+                available = geometryBudget - allocatedGeometryBytes
+            }
+            registered.insert(stroke.id)
         }
-        let uploadedCost = uploaded.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
-        guard uploadedCost + kept <= DrawingLimits.vertexCount else { throw DocumentError.geometryLimit }
         let loader = MTKTextureLoader(device: device)
         for raster in layers.compactMap(\.raster) where rasterTextures[raster.id] == nil {
             let image = try PNGExporter.rasterImage(raster)
@@ -305,10 +343,6 @@ final class MetalCanvasRenderer {
             try Task.checkCancellation()
             rasterTextures[raster.id] = texture
         }
-        prune(strokes, layers: layers)
-        for (id, buffers) in uploaded { cache[id] = buffers }
-        allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
-        allocatedStorageUnits = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
     }
     func begin() {
         discardUncommittedLiveCache()
@@ -324,7 +358,7 @@ final class MetalCanvasRenderer {
         let stamped = points.first.map { $0.local == Point(x: -1, y: -1) }
             ?? scratch.first.map { $0.z < 0 && $0.w < 0 } ?? false
         let liveCost = BrushGeometry.storageCost(vertexCount: scratch.count + points.count, stamped: compactStamps && stamped)
-        guard allocatedStorageUnits + sealedStorageUnits + liveCost <= DrawingLimits.vertexCount else {
+        guard sealedStorageUnits + liveCost <= DrawingLimits.strokeVertices else {
             throw DocumentError.geometryLimit
         }
         for p in points {
@@ -350,9 +384,7 @@ final class MetalCanvasRenderer {
             try append(BrushGeometry.tail(stroke))
         }
         if !scratch.isEmpty { sealed.append(try chunk(scratch)) }
-        cache[stroke.id] = sealed
-        allocatedVertexCount = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
-        allocatedStorageUnits = cache.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.storageUnits } }
+        retain(sealed, for: stroke.id)
         if activeLiveID == stroke.id { pendingLiveCommit = stroke.id }
         resetInputBuffers()
     }
@@ -372,6 +404,31 @@ final class MetalCanvasRenderer {
         }
         // Never block the touch delivery thread when the GPU is behind.
         redrawView = view
+        guard !isPreparingScene else { return }
+        let size = Point(x: Double(view.bounds.width), y: Double(view.bounds.height))
+        let width = Int(view.drawableSize.width), height = Int(view.drawableSize.height)
+        guard width > 0, height > 0 else { return }
+        try configureSurface(document: document, viewport: viewport, viewSize: size, width: width, height: height)
+        if needsStreamedPreparation(document, focus: active?.layerID) {
+            isPreparingScene = true; preparationChanged?(true)
+            preparationTask = Task { [weak self] in
+                guard let self else { return }
+                defer {
+                    self.isPreparingScene = false; self.preparationChanged?(false)
+                }
+                do {
+                    try await self.prepareScene(document: document, viewport: viewport, viewSize: size,
+                                                width: width, height: height, focus: active?.layerID)
+                    self.redrawView?.setNeedsDisplay()
+                } catch is CancellationError {
+                    self.clearLayerCaches(); self.redrawView?.setNeedsDisplay()
+                } catch {
+                    self.clearLayerCaches()
+                    self.preparationFailed?(error)
+                }
+            }
+            return
+        }
         guard inFlight.wait(timeout: .now()) == .success else {
             deferredFrames += 1
             redrawAfterGPU = true
@@ -394,13 +451,15 @@ final class MetalCanvasRenderer {
             Task { @MainActor in self?.completedGPUFrame(gpu) }
         }
         // Even an allocation error closes the encoder and submits its resources.
+        var frameComplete = false
         defer {
-            command.present(drawable); command.commit()
+            if frameComplete { command.present(drawable) }
+            command.commit()
             recordCPU((ProcessInfo.processInfo.systemUptime - started) * 1000)
         }
-        let size = Point(x: Double(view.bounds.width), y: Double(view.bounds.height))
         try encodeCachedScene(command: command, output: drawable.texture, document: document,
                               viewport: viewport, viewSize: size, active: active, preview: preview, guides: guides)
+        frameComplete = true
     }
     private func completedGPUFrame(_ milliseconds: Double) {
         recordGPU(milliseconds)
@@ -415,7 +474,9 @@ final class MetalCanvasRenderer {
     private func encodeScene(encoder: MTLRenderCommandEncoder, document: DrawingDocument, viewport: Viewport,
                              viewSize: Point, active: InkStroke?, preview: [BrushVertex], guides: Bool,
                              layerOnly: UUID? = nil, backgroundOnly: Bool = false,
-                             state: MTLRenderPipelineState? = nil) throws {
+                             state: MTLRenderPipelineState? = nil,
+                             strokes: [InkStroke]? = nil, includeRaster: Bool = true,
+                             region: CGRect? = nil) throws {
         encoder.setDepthStencilState(nil)
         encoder.setRenderPipelineState(state ?? pipeline)
         let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
@@ -455,7 +516,7 @@ final class MetalCanvasRenderer {
         }
         if backgroundOnly { return }
         for layer in document.layers where layer.isVisible && layer.opacity > 0 && (layerOnly == nil || layerOnly == layer.id) {
-            if let raster = layer.raster {
+            if includeRaster, let raster = layer.raster {
                 encoder.setDepthStencilState(nil)
                 guard let texture = rasterTextures[raster.id] else { throw DocumentError.graphics }
                 encoder.setRenderPipelineState(rasterPipeline)
@@ -464,10 +525,11 @@ final class MetalCanvasRenderer {
                 try encode(quad, symmetry: identity, transform: transform, size: viewSize, canvas: document.size,
                            color: SIMD4(1, 1, 1, 1), encoder: encoder)
             }
-            for stroke in sceneLayerStrokes[layer.id] ?? [] {
+            for stroke in strokes ?? sceneLayerStrokes[layer.id] ?? [] {
+                if let region, !screenBounds(stroke.id, transform: transform).intersects(region) { continue }
                 committedStrokeDraws += 1
                 beginStroke(stroke, encoder: encoder)
-                try encode(cache[stroke.id] ?? [], symmetry: stroke.symmetry, transform: transform,
+                try encode(buffers(for: stroke), symmetry: stroke.symmetry, transform: transform,
                            size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
             }
             if let active, active.layerID == layer.id {
@@ -620,8 +682,14 @@ final class MetalCanvasRenderer {
     }
 
     private func composite(_ source: MTLTexture, opacity: Double, output: MTLTexture,
-                           command: MTLCommandBuffer, load: MTLLoadAction = .load) throws {
+                           command: MTLCommandBuffer, load: MTLLoadAction = .load,
+                           region: MTLScissorRect? = nil, clear: Bool = false) throws {
         guard let encoder = command.makeRenderCommandEncoder(descriptor: targetPass(output, load: load)) else { throw DocumentError.graphics }
+        if let region { encoder.setScissorRect(region) }
+        if clear {
+            encoder.setRenderPipelineState(clearSingleRegionPipeline)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        }
         encoder.setRenderPipelineState(compositePipeline)
         encoder.setFragmentTexture(source, index: 0)
         var alpha = Float(opacity)
@@ -637,10 +705,195 @@ final class MetalCanvasRenderer {
     private func updateScene(_ document: DrawingDocument) {
         sceneDocumentID = document.id
         sceneLayerStrokes = Dictionary(grouping: document.strokes, by: \.layerID)
+        for stroke in document.strokes where strokeBounds[stroke.id] == nil {
+            // Conservative footprint includes scatter, tilt, square stamp corners
+            // and AA. Original bounds remain available for removed/undone ink.
+            let radius = max(4, stroke.brush.width * 2)
+            var bounds = CGRect.null
+            for sample in stroke.samples {
+                bounds = bounds.union(CGRect(x: sample.point.x - radius, y: sample.point.y - radius,
+                                             width: radius * 2, height: radius * 2))
+            }
+            var mirrored = CGRect.null
+            for matrix in stroke.symmetry.matrices { mirrored = mirrored.union(transformed(bounds, by: matrix)) }
+            strokeBounds[stroke.id] = mirrored
+        }
         scenePaintKeys = Dictionary(uniqueKeysWithValues: document.layers.map { layer in
             (layer.id, LayerPaintKey(id: layer.id, raster: layer.raster?.id,
                                     strokes: (sceneLayerStrokes[layer.id] ?? []).map(\.id), placement: layer.raster?.placement))
         })
+    }
+
+    private func transformed(_ rect: CGRect, by matrix: Matrix) -> CGRect {
+        guard !rect.isNull else { return .null }
+        let points = [Point(x: rect.minX, y: rect.minY), Point(x: rect.maxX, y: rect.minY),
+                      Point(x: rect.maxX, y: rect.maxY), Point(x: rect.minX, y: rect.maxY)].map { matrix.apply($0) }
+        let xs = points.map(\.x), ys = points.map(\.y)
+        return CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+    }
+
+    private func screenBounds(_ id: UUID, transform: Matrix) -> CGRect {
+        guard let bounds = strokeBounds[id] else { return .infinite }
+        return transformed(bounds, by: transform).insetBy(dx: -2, dy: -2)
+    }
+
+    private func dirtyTiles(from old: LayerPaintKey, to new: LayerPaintKey, document: DrawingDocument,
+                            viewport: Viewport, viewSize: Point, target: MTLTexture) -> [(MTLScissorRect, CGRect)]? {
+        guard old.id == new.id, old.raster == new.raster, old.placement == new.placement,
+              viewSize.x > 0, viewSize.y > 0 else { return nil }
+        let previous = Set(old.strokes), next = Set(new.strokes)
+        // A reordering changes overlaps even if all stroke IDs are unchanged.
+        guard old.strokes.filter({ next.contains($0) }) == new.strokes.filter({ previous.contains($0) }) else { return nil }
+        let changed = previous.symmetricDifference(next)
+        guard !changed.isEmpty else { return nil }
+        let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
+        let sx = Double(target.width) / viewSize.x, sy = Double(target.height) / viewSize.y
+        let columns = (target.width + 255) / 256
+        var tiles = Set<Int>()
+        for id in changed {
+            guard strokeBounds[id] != nil else { return nil }
+            let rect = screenBounds(id, transform: transform)
+            let x0 = max(0, Int(floor(rect.minX * sx / 256))), y0 = max(0, Int(floor(rect.minY * sy / 256)))
+            let x1 = min(columns - 1, Int(floor(rect.maxX * sx / 256)))
+            let y1 = min((target.height - 1) / 256, Int(floor(rect.maxY * sy / 256)))
+            if x0 > x1 || y0 > y1 { continue }
+            for y in y0...y1 { for x in x0...x1 { tiles.insert(y * columns + x) } }
+        }
+        return tiles.sorted().map { tile in
+            let x = (tile % columns) * 256, y = (tile / columns) * 256
+            let width = min(256, target.width - x), height = min(256, target.height - y)
+            return (MTLScissorRect(x: x, y: y, width: width, height: height),
+                    CGRect(x: Double(x) / sx, y: Double(y) / sy, width: Double(width) / sx, height: Double(height) / sy))
+        }
+    }
+
+    private func clearRegion(_ encoder: MTLRenderCommandEncoder, scissor: MTLScissorRect) {
+        encoder.setScissorRect(scissor); encoder.setDepthStencilState(nil)
+        encoder.setRenderPipelineState(clearRegionPipeline)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+    }
+
+    private func configureSurface(document: DrawingDocument, viewport: Viewport, viewSize: Point,
+                                  width: Int, height: Int) throws {
+        try ensureWorkTargets(width: width, height: height)
+        let next = SurfaceKey(document: document.id, canvas: document.size, view: viewSize,
+            transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size), width: width, height: height)
+        if surfaceKey != next {
+            if surfaceKey?.width != next.width || surfaceKey?.height != next.height {
+                lowerTexture = nil; upperTexture = nil; activeTexture = nil
+            }
+            lowerKey = nil; upperKey = nil; activeKey = nil; surfaceKey = next
+        }
+    }
+
+    private func needsStreamedPreparation(_ document: DrawingDocument, focus: UUID? = nil) -> Bool {
+        let index = document.layers.firstIndex { $0.id == (focus ?? document.activeLayerID) } ?? 0
+        let below = document.layers.prefix(index).filter { $0.isVisible && $0.opacity > 0 }
+        let above = document.layers.dropFirst(index + 1).filter { $0.isVisible && $0.opacity > 0 }
+        let lowerChanged = lowerKey != below.map { LayerCompositeKey(paint: paintKey($0), opacity: $0.opacity) }
+        let upperChanged = upperKey != above.map { LayerCompositeKey(paint: paintKey($0), opacity: $0.opacity) }
+        var required = (lowerChanged ? Array(below) : []) + (upperChanged ? Array(above) : [])
+        if document.layers.indices.contains(index) {
+            let selected = document.layers[index]
+            let key = paintKey(selected)
+            if selected.isVisible && selected.opacity > 0, activeKey != key {
+                if let old = activeKey, old.id == key.id, old.raster == key.raster, old.placement == key.placement,
+                   key.strokes.starts(with: old.strokes) {
+                    let added = Set(key.strokes.dropFirst(old.strokes.count))
+                    if (sceneLayerStrokes[selected.id] ?? []).contains(where: { added.contains($0.id) && cache[$0.id] == nil }) { return true }
+                } else { required.append(selected) }
+            }
+        }
+        return required.contains { layer in (sceneLayerStrokes[layer.id] ?? []).contains { cache[$0.id] == nil } }
+    }
+
+    private func submit(_ command: MTLCommandBuffer) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            command.addCompletedHandler { @Sendable finished in
+                if finished.status == .error { continuation.resume(throwing: DocumentError.graphics) }
+                else { continuation.resume() }
+            }
+            command.commit()
+        }
+        try Task.checkCancellation()
+    }
+
+    /// Rebuild one layer with at most one expanded CPU stroke and one submitted
+    /// stroke at a time. Awaiting GPU completion releases each submission's
+    /// retained buffers before the LRU evicts them; no main-thread GPU wait.
+    private func streamLayer(_ layer: DrawingLayer, target: MTLTexture, document: DrawingDocument,
+                             viewport: Viewport, viewSize: Point, revision: Int?) async throws {
+        guard let first = queue.makeCommandBuffer(), let encoder = first.makeRenderCommandEncoder(
+            descriptor: try geometryPass(target)) else { throw DocumentError.graphics }
+        do {
+            try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,
+                            active: nil, preview: [], guides: false, layerOnly: layer.id, strokes: [])
+        } catch { encoder.endEncoding(); throw error }
+        encoder.endEncoding(); try await submit(first)
+        for stroke in document.strokes where stroke.layerID == layer.id {
+            guard sceneDocumentID == document.id, sceneRevision == revision else { throw CancellationError() }
+            if cache[stroke.id] == nil {
+                let points = await Task.detached(priority: .userInitiated) { BrushGeometry.mesh(stroke) }.value
+                try Task.checkCancellation()
+                retain(try chunks(points), for: stroke.id); geometryRebuilds += 1
+            }
+            guard let command = queue.makeCommandBuffer(), let ink = command.makeRenderCommandEncoder(
+                descriptor: try geometryPass(target, load: .load)) else { throw DocumentError.graphics }
+            do {
+                try encodeScene(encoder: ink, document: document, viewport: viewport, viewSize: viewSize,
+                                active: nil, preview: [], guides: false, layerOnly: layer.id,
+                                strokes: [stroke], includeRaster: false)
+            } catch { ink.endEncoding(); throw error }
+            ink.endEncoding(); try await submit(command)
+        }
+    }
+
+    private func prepareScene(document: DrawingDocument, viewport: Viewport, viewSize: Point,
+                              width: Int, height: Int, focus: UUID? = nil) async throws {
+        let revision = sceneRevision
+        // A queue barrier retires earlier display submissions before releasing
+        // their cache buffers and rebuilding shared render targets.
+        guard let barrier = queue.makeCommandBuffer() else { throw DocumentError.graphics }
+        try await submit(barrier)
+        guard sceneDocumentID == document.id, sceneRevision == revision else { throw CancellationError() }
+        clearLayerCaches(); cache.removeAll(); cacheOrder.removeAll(); recountBuffers()
+        try configureSurface(document: document, viewport: viewport, viewSize: viewSize, width: width, height: height)
+        let index = document.layers.firstIndex { $0.id == (focus ?? document.activeLayerID) } ?? 0
+        // Persistent MSAA is necessary between submissions. A memoryless target
+        // cannot preserve coverage while a later stroke is being reconstructed.
+        let staging = try texture(width: width, height: height, samples: sampleCount)
+        guard let work = workTexture else { throw DocumentError.graphics }
+        for (upper, layers) in [(false, Array(document.layers.prefix(index))),
+                                 (true, Array(document.layers.dropFirst(index + 1)))] {
+            let visible = layers.filter { $0.isVisible && $0.opacity > 0 }
+            let result = visible.isEmpty ? nil : try texture(width: width, height: height)
+            for (offset, layer) in visible.enumerated() {
+                try await streamLayer(layer, target: staging, document: document, viewport: viewport,
+                                      viewSize: viewSize, revision: revision)
+                guard let command = queue.makeCommandBuffer(), let result else { throw DocumentError.graphics }
+                if sampleCount > 1 {
+                    guard let resolve = command.makeRenderCommandEncoder(descriptor: targetPass(staging, load: .load, resolve: work))
+                    else { throw DocumentError.graphics }
+                    resolve.endEncoding()
+                }
+                try composite(sampleCount > 1 ? work : staging, opacity: layer.opacity, output: result,
+                              command: command, load: offset == 0 ? .clear : .load)
+                try await submit(command)
+            }
+            let keys = visible.map { LayerCompositeKey(paint: paintKey($0), opacity: $0.opacity) }
+            if upper { upperTexture = result; upperKey = keys }
+            else { lowerTexture = result; lowerKey = keys }
+        }
+        if document.layers.indices.contains(index) {
+            let layer = document.layers[index]
+            if layer.isVisible && layer.opacity > 0 {
+                try await streamLayer(layer, target: staging, document: document, viewport: viewport,
+                                      viewSize: viewSize, revision: revision)
+                guard sceneDocumentID == document.id, sceneRevision == revision else { throw CancellationError() }
+                activeTexture = staging; activeKey = paintKey(layer); cachedLayerBuilds += 1
+            }
+        }
+        cachedGroupBuilds += 1
     }
 
     private func renderStaticGroup(_ layers: [DrawingLayer], previous: [LayerCompositeKey]?,
@@ -651,6 +904,34 @@ final class MetalCanvasRenderer {
         if previous == key, let target { return (target, key) }
         guard let work = workTexture else { throw DocumentError.graphics }
         let result = try target ?? texture(width: work.width, height: work.height)
+        if let previous, target != nil, previous.map({ $0.paint.id }) == key.map({ $0.paint.id }),
+           zip(previous, key).allSatisfy({ $0.opacity == $1.opacity }) {
+            var tiles: [Int: (MTLScissorRect, CGRect)] = [:]
+            var local = true
+            for (old, new) in zip(previous, key) where old.paint != new.paint {
+                guard let changed = dirtyTiles(from: old.paint, to: new.paint, document: document,
+                    viewport: viewport, viewSize: viewSize, target: result) else { local = false; break }
+                for tile in changed { tiles[tile.0.y * result.width + tile.0.x] = tile }
+            }
+            if local {
+                for (_, tile) in tiles.sorted(by: { $0.key < $1.key }) {
+                    for (offset, layer) in layers.enumerated() {
+                        let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
+                        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+                        encoder.setScissorRect(tile.0)
+                        do {
+                            try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,
+                                            active: nil, preview: [], guides: false, layerOnly: layer.id, region: tile.1)
+                        } catch { encoder.endEncoding(); throw error }
+                        encoder.endEncoding()
+                        try composite(work, opacity: layer.opacity, output: result, command: command,
+                                      region: tile.0, clear: offset == 0)
+                    }
+                    localTileUpdates += 1
+                }
+                return (result, key)
+            }
+        }
         for (index, layer) in layers.enumerated() {
             let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
@@ -676,6 +957,22 @@ final class MetalCanvasRenderer {
             incremental = old.id == key.id && old.raster == key.raster && old.placement == key.placement && old.strokes.count < key.strokes.count &&
                 Array(key.strokes.prefix(old.strokes.count)) == old.strokes
         } else { incremental = false }
+        if !incremental, let old = activeKey,
+           let tiles = dirtyTiles(from: old, to: key, document: document, viewport: viewport, viewSize: viewSize, target: target) {
+            for (scissor, region) in tiles {
+                guard let encoder = command.makeRenderCommandEncoder(descriptor: try geometryPass(target, load: .load))
+                else { throw DocumentError.graphics }
+                clearRegion(encoder, scissor: scissor)
+                do {
+                    try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,
+                                    active: nil, preview: [], guides: false, layerOnly: layer.id, region: region)
+                } catch { encoder.endEncoding(); throw error }
+                encoder.endEncoding(); localTileUpdates += 1
+            }
+            activeTexture = target; activeKey = key
+            activeLiveID = nil; activeLiveVertices = 0; pendingLiveCommit = nil
+            return
+        }
         let pass = try geometryPass(target, load: incremental ? .load : .clear)
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
         do {
@@ -684,7 +981,7 @@ final class MetalCanvasRenderer {
                 for stroke in (sceneLayerStrokes[layer.id] ?? []).dropFirst(old.strokes.count) {
                     committedStrokeDraws += 1
                     beginStroke(stroke, encoder: encoder)
-                    let buffers = cache[stroke.id] ?? []
+                    let buffers = try buffers(for: stroke)
                     let remaining = pendingLiveCommit == stroke.id && activeLiveID == stroke.id
                         ? suffix(buffers, after: activeLiveVertices) : buffers
                     try encode(remaining, symmetry: stroke.symmetry, transform: transform,
@@ -827,9 +1124,8 @@ final class MetalCanvasRenderer {
         }
         if let upperTexture { try composite(upperTexture, opacity: 1, output: output, command: command) }
         } catch DocumentError.graphicsMemory {
-            clearLayerCaches(); cacheBudget = 0
-            try encodeGroups(command: command, output: output, document: document, viewport: viewport,
-                             viewSize: viewSize, active: active, preview: preview, guides: guides)
+            clearLayerCaches(); cache.removeAll(); cacheOrder.removeAll(); recountBuffers()
+            throw DocumentError.graphicsMemory
         } catch {
             clearLayerCaches(); throw error
         }
@@ -843,7 +1139,10 @@ final class MetalCanvasRenderer {
 
     func handleMemoryPressure() {
         clearLayerCaches()
-        cacheBudget = 0 // Keep the bounded, uncached renderer available for this session.
+        cache.removeAll(); cacheOrder.removeAll(); recountBuffers()
+        matrixCache.removeAll(); rasterQuads.removeAll(); guideBuffers.removeAll(); guideKey.removeAll()
+        // Recover through the bounded streaming path on the next frame.
+        cacheBudget = 160 * 1024 * 1024
     }
     private func requiresGroups(_ document: DrawingDocument, active: InkStroke? = nil) -> Bool {
         active?.operation == .erase || document.strokes.contains { $0.operation == .erase } ||
@@ -902,7 +1201,14 @@ final class MetalCanvasRenderer {
                          active: InkStroke? = nil, preview: [BrushVertex] = [], guides: Bool = false,
                          reference: Bool = false) async throws -> [UInt8] {
         guard width > 0, height > 0, width <= 2048, height <= 2048 else { throw DocumentError.invalidData }
+        if isPreparingScene { await preparationTask?.value }
         updateScene(document); sceneRevision = nil
+        let viewSize = Point(x: Double(width), y: Double(height))
+        try configureSurface(document: document, viewport: viewport, viewSize: viewSize, width: width, height: height)
+        if !reference, needsStreamedPreparation(document, focus: active?.layerID) {
+            try await prepareScene(document: document, viewport: viewport, viewSize: viewSize,
+                                   width: width, height: height, focus: active?.layerID)
+        }
         let outputDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
                                       width: width, height: height, mipmapped: false)
         outputDescriptor.storageMode = .shared
@@ -921,7 +1227,43 @@ final class MetalCanvasRenderer {
             guard let texture = device.makeTexture(descriptor: msaa) else { throw DocumentError.graphics }
             color.texture = texture; color.resolveTexture = output; color.storeAction = .multisampleResolve
         } else { color.texture = output; color.storeAction = .store }
-        if !reference {
+        if reference && document.strokes.contains(where: { cache[$0.id] == nil }) {
+            // Large reference/export draws use independent sequential layers,
+            // with the same bounded submissions as a viewport rebuild.
+            guard let background = command.makeRenderCommandEncoder(descriptor: targetPass(output)) else { throw DocumentError.graphics }
+            do {
+                try encodeScene(encoder: background, document: document, viewport: viewport, viewSize: viewSize,
+                                active: nil, preview: [], guides: guides, backgroundOnly: true, state: singlePipeline)
+            } catch { background.endEncoding(); throw error }
+            background.endEncoding(); try await submit(command)
+            let target = try texture(width: width, height: height, samples: sampleCount)
+            guard let work = workTexture else { throw DocumentError.graphics }
+            for layer in document.layers where layer.isVisible && layer.opacity > 0 {
+                try await streamLayer(layer, target: target, document: document, viewport: viewport, viewSize: viewSize, revision: nil)
+                guard let compositeCommand = queue.makeCommandBuffer() else { throw DocumentError.graphics }
+                if let active, active.layerID == layer.id {
+                    guard let ink = compositeCommand.makeRenderCommandEncoder(descriptor: try geometryPass(target, load: .load))
+                    else { throw DocumentError.graphics }
+                    do {
+                        try encodeLive(active, preview: preview, transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size),
+                                       viewSize: viewSize, canvas: document.size, encoder: ink)
+                    } catch { ink.endEncoding(); throw error }
+                    ink.endEncoding()
+                }
+                if sampleCount > 1 {
+                    guard let resolve = compositeCommand.makeRenderCommandEncoder(descriptor: targetPass(target, load: .load, resolve: work))
+                    else { throw DocumentError.graphics }
+                    resolve.endEncoding()
+                }
+                try composite(sampleCount > 1 ? work : target, opacity: layer.opacity, output: output, command: compositeCommand)
+                try await submit(compositeCommand)
+            }
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            pixels.withUnsafeMutableBytes {
+                output.getBytes($0.baseAddress!, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+            }
+            return pixels
+        } else if !reference {
             try encodeCachedScene(command: command, output: output, document: document, viewport: viewport,
                                   viewSize: Point(x: Double(width), y: Double(height)), active: active, preview: preview, guides: guides)
         } else if requiresGroups(document, active: active) {
@@ -987,6 +1329,7 @@ final class MetalCanvasRenderer {
     private static let shader = """
     #include <metal_stdlib>
     using namespace metal;
+    fragment float4 clearRegionFragment() { return float4(0); }
     struct Uniforms { float4 matrix; float4 offsetSize; float4 canvas; float4 color; };
     struct Output { float4 position [[position]]; float2 canvas; float2 limit; float4 color; float2 local; float2 stamp; };
     vertex Output inkVertex(uint v [[vertex_id]], uint instance [[instance_id]],

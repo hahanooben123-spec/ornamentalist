@@ -6,7 +6,7 @@ enum DrawingLimits {
     static let strokeSamples = 80_000
     // Storage units of 16 bytes, not expanded triangle vertices. A compact
     // stamped dab uses two units, versus six for its expanded triangles.
-    static let vertexCount = 4_000_000 // 64 MB, excluding render targets.
+    static let vertexCount = 4_000_000 // Historical diagnostic baseline; not a document limit.
     static let strokeVertices = 500_000
 }
 

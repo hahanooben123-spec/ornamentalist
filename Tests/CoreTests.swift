@@ -148,17 +148,14 @@ final class CoreTests: XCTestCase {
         XCTAssertLessThan(mean, 1)
         XCTAssertEqual(session.stroke.samples.last?.time, 99.0/240)
     }
-    func testInputBudgetStopsBeforeDocumentBecomesUnsaveable() throws {
+    func testExistingDocumentGeometryDoesNotConsumeNewStrokeWorkingBudget() throws {
         var session = StrokeSession(brush: InkBrush(stabilization: 0), symmetry: SymmetryConfiguration(),
                                     existingSamples: 0, existingVertices: DrawingLimits.vertexCount - 2000)
-        var stopped = false
         for i in 0..<1000 {
-            do { _ = try session.append(sample(Double(i) * 3, Double(i % 2) * 4, time: Double(i))) }
-            catch DocumentError.geometryLimit { stopped = true; break }
+            _ = try session.append(sample(Double(i) * 3, Double(i % 2) * 4, time: Double(i)))
         }
-        XCTAssertTrue(stopped)
-        XCTAssertFalse(session.stroke.samples.isEmpty)
-        XCTAssertLessThanOrEqual(StrokeGeometry.estimatedVertexCount(session.stroke), 2000)
+        XCTAssertEqual(session.stroke.samples.count, 1000)
+        XCTAssertGreaterThan(StrokeGeometry.estimatedVertexCount(session.stroke), 2000)
         var d = DrawingDocument(); d.strokes = [session.stroke]
         try d.validate()
     }
@@ -249,8 +246,10 @@ final class CoreTests: XCTestCase {
         var document = DrawingDocument()
         let symmetry = SymmetryConfiguration(repetitions: 16, center: Point(x: 1024, y: 1024), mirror: true)
         for row in 0..<4 {
-            let samples = (0..<30_000).map { i in
-                sample(100 + Double(i) * 0.03, 100 + Double(row) * 30 + sin(Double(i) * 0.02) * 10, time: Double(i) / 240)
+            let samples: [StrokeSample] = (0..<30_000).map { i in
+                let x = 100.0 + Double(i) * 0.03
+                let y = 100.0 + Double(row) * 30.0 + sin(Double(i) * 0.02) * 10.0
+                return sample(x, y, time: Double(i) / 240.0)
             }
             document.strokes.append(InkStroke(symmetry: symmetry, samples: samples))
         }

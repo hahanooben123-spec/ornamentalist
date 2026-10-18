@@ -40,7 +40,7 @@ struct StrokeSession {
         stamps = BrushStampState(id: stroke.seedID)
         self.inputScale = inputScale.isFinite ? max(0.001, inputScale) : 1
         remainingSamples = min(DrawingLimits.strokeSamples, DrawingLimits.sampleCount - existingSamples)
-        remainingVertices = min(DrawingLimits.strokeVertices, DrawingLimits.vertexCount - existingVertices)
+        remainingVertices = DrawingLimits.strokeVertices
     }
     private mutating func stabilized(_ sample: StrokeSample, previous: StrokeSample?) -> StrokeSample {
         guard let previous, stroke.brush.stabilizationEnabled, stroke.brush.stabilization > 0 else { return sample }

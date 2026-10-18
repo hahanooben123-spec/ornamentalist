@@ -1,4 +1,57 @@
 import Foundation
+import Compression
+import CryptoKit
+
+/// Lossless local storage envelope. JSON project export remains portable.
+/// The declared decoded size is bounded before allocating; one extra byte
+/// detects truncated output from compression_decode_buffer's buffer-size limit.
+enum DrawingStorageCodec {
+    static let magic = Data("ORNZ0001".utf8)
+    static func pack(_ data: Data) throws -> Data {
+        guard data.count <= DrawingLimits.encodedBytes else { throw DocumentError.oversized }
+        guard data.count >= 1024 else { return data }
+        var destination = Data(count: data.count)
+        let capacity = destination.count
+        let count = destination.withUnsafeMutableBytes { output in
+            data.withUnsafeBytes { input in
+                compression_encode_buffer(output.bindMemory(to: UInt8.self).baseAddress!, capacity,
+                    input.bindMemory(to: UInt8.self).baseAddress!, input.count, nil, COMPRESSION_LZFSE)
+            }
+        }
+        guard count > 0, count + 48 < data.count else { return data }
+        var result = magic
+        let length = UInt64(data.count)
+        for shift in stride(from: 0, to: 64, by: 8) { result.append(UInt8(truncatingIfNeeded: length >> shift)) }
+        result.append(contentsOf: SHA256.hash(data: data))
+        result.append(destination.prefix(count))
+        return result
+    }
+    static func unpack(_ data: Data) throws -> Data {
+        guard data.count <= DrawingLimits.encodedBytes else { throw DocumentError.oversized }
+        guard data.starts(with: magic) else { return data }
+        guard data.count > 48 else { throw DocumentError.invalidData }
+        let length = data[8..<16].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << ($1.offset * 8) }
+        guard length > 0, length <= UInt64(DrawingLimits.encodedBytes) else { throw DocumentError.oversized }
+        var output = Data(count: Int(length) + 1)
+        let capacity = output.count
+        let decoded = output.withUnsafeMutableBytes { destination in
+            data.withUnsafeBytes { source in
+                compression_decode_buffer(destination.bindMemory(to: UInt8.self).baseAddress!, capacity,
+                    source.bindMemory(to: UInt8.self).baseAddress!.advanced(by: 48), source.count - 48, nil, COMPRESSION_LZFSE)
+            }
+        }
+        guard decoded == Int(length) else { throw DocumentError.invalidData }
+        output.count = decoded
+        guard Data(SHA256.hash(data: output)) == data[16..<48] else { throw DocumentError.invalidData }
+        return output
+    }
+}
+
+private struct DrawingJournal: Codable {
+    let baseRevision: Int
+    let baseStrokeCount: Int
+    var document: DrawingDocument
+}
 
 struct ProjectSummary: Identifiable, Sendable {
     let id: UUID
@@ -21,6 +74,9 @@ actor DocumentRepository {
     private let directory: URL
     private var savedGenerations: [UUID: Int] = [:]
     private let saveDelayNanoseconds: UInt64
+    private var primarySnapshot: DrawingDocument?
+    private var journalBaseRevisions: [UUID: Int] = [:]
+    private(set) var lastCheckpointBytes = 0
 
     init(directory: URL? = nil, saveDelayNanoseconds: UInt64 = 0) {
         self.directory = directory ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -39,7 +95,9 @@ actor DocumentRepository {
         // never bring a deleted project back into the gallery after restart.
         try Data().write(to: file(id, suffix: "deleted"), options: .atomic)
         savedGenerations.removeValue(forKey: id)
-        for suffix in ["mandala", "backup", "journal", "index", "png"] {
+        if primarySnapshot?.id == id { primarySnapshot = nil }
+        journalBaseRevisions.removeValue(forKey: id)
+        for suffix in ["mandala", "backup", "journal", "journalbase", "index", "png"] {
             let target = file(id, suffix: suffix)
             if FileManager.default.fileExists(atPath: target.path) {
                 try FileManager.default.removeItem(at: target)
@@ -51,12 +109,12 @@ actor DocumentRepository {
         guard ((attributes[.size] as? NSNumber)?.intValue ?? Int.max) <= DrawingLimits.encodedBytes else {
             throw DocumentError.oversized
         }
-        let d = try JSONDecoder().decode(DrawingDocument.self, from: Data(contentsOf: url))
+        let d = try JSONDecoder().decode(DrawingDocument.self, from: DrawingStorageCodec.unpack(Data(contentsOf: url)))
         try d.validate()
         return d
     }
     private func encoded(_ document: DrawingDocument, generation: Int) throws -> Data {
-        var d = document; d.version = 14; d.storageRevision = generation
+        var d = document; d.version = 15; d.storageRevision = generation
         try d.validate()
         let data = try JSONEncoder().encode(d)
         guard data.count <= DrawingLimits.encodedBytes else { throw DocumentError.oversized }
@@ -66,7 +124,7 @@ actor DocumentRepository {
         if saveDelayNanoseconds > 0 { try await Task.sleep(nanoseconds: saveDelayNanoseconds) }
         guard !isDeleted(document.id) else { return }
         if let saved = savedGenerations[document.id], generation < saved { return }
-        let data = try encoded(document, generation: generation)
+        let data = try DrawingStorageCodec.pack(encoded(document, generation: generation))
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let target = file(document.id)
         if FileManager.default.fileExists(atPath: target.path), (try? decode(target)) != nil {
@@ -74,23 +132,57 @@ actor DocumentRepository {
         }
         try data.write(to: target, options: .atomic)
         savedGenerations[document.id] = generation
+        var saved = document; saved.storageRevision = generation; primarySnapshot = saved
         // Revisions make a crash between primary write and journal deletion safe.
         try? FileManager.default.removeItem(at: file(document.id, suffix: "journal"))
+        try? FileManager.default.removeItem(at: file(document.id, suffix: "journalbase"))
+        journalBaseRevisions.removeValue(forKey: document.id)
         try? writeIndex(document, bytes: data.count)
     }
     /// Atomic rolling journal, including confirmed input from an unfinished stroke.
+    func autosave(_ document: DrawingDocument, generation: Int) async throws {
+        let base = primarySnapshot?.id == document.id ? primarySnapshot : (try? decode(file(document.id)))
+        if let base, document.strokes.count >= base.strokes.count,
+           document.strokes.count - base.strokes.count < 64,
+           zip(base.strokes, document.strokes).allSatisfy({ $0 == $1 }),
+           document.strokes.dropFirst(base.strokes.count).reduce(0, { $0 + $1.samples.count }) < 20_000 {
+            primarySnapshot = base
+            try checkpoint(document, generation: generation)
+        } else { try await save(document, generation: generation) }
+    }
     func checkpoint(_ document: DrawingDocument, generation: Int) throws {
         guard !isDeleted(document.id) else { return }
         if let saved = savedGenerations[document.id], generation < saved { return }
-        let data = try encoded(document, generation: generation)
+        let base: DrawingDocument?
+        if primarySnapshot?.id == document.id { base = primarySnapshot }
+        else { base = try? decode(file(document.id)); primarySnapshot = base }
+        let data: Data
+        if let base, document.strokes.count >= base.strokes.count,
+           zip(base.strokes, document.strokes).allSatisfy({ $0 == $1 }) {
+            if journalBaseRevisions[document.id] != base.storageRevision {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try Data(contentsOf: file(document.id)).write(to: file(document.id, suffix: "journalbase"), options: .atomic)
+                journalBaseRevisions[document.id] = base.storageRevision
+            }
+            var delta = document; delta.storageRevision = generation
+            delta.strokes = Array(document.strokes.dropFirst(base.strokes.count))
+            try delta.validate()
+            let count = base.strokes.reduce(0) { $0 + $1.samples.count } + delta.strokes.reduce(0) { $0 + $1.samples.count }
+            guard count <= DrawingLimits.sampleCount else { throw DocumentError.sampleLimit }
+            data = try DrawingStorageCodec.pack(JSONEncoder().encode(DrawingJournal(baseRevision: base.storageRevision,
+                baseStrokeCount: base.strokes.count, document: delta)))
+        } else {
+            data = try DrawingStorageCodec.pack(encoded(document, generation: generation))
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try data.write(to: file(document.id, suffix: "journal"), options: .atomic)
+        lastCheckpointBytes = data.count
         savedGenerations[document.id] = generation
     }
     func open(_ id: UUID) throws -> (DrawingDocument, Bool) {
         guard !isDeleted(id) else { throw DocumentError.invalidData }
         let primary = try? decode(file(id))
-        let journal = try? decode(file(id, suffix: "journal"))
+        let journal = try? readJournal(id, primary: primary)
         let validPrimary = primary.flatMap { $0.id == id ? $0 : nil }
         let validJournal = journal.flatMap { $0.id == id ? $0 : nil }
         if let journal = validJournal, journal.storageRevision > (validPrimary?.storageRevision ?? -1) {
@@ -98,6 +190,7 @@ actor DocumentRepository {
             return (journal, true)
         }
         if let primary = validPrimary {
+            primarySnapshot = primary
             savedGenerations[id] = max(savedGenerations[id] ?? 0, primary.storageRevision)
             return (primary, false)
         }
@@ -105,6 +198,26 @@ actor DocumentRepository {
         guard backup.id == id else { throw DocumentError.invalidData }
         savedGenerations[id] = max(savedGenerations[id] ?? 0, backup.storageRevision)
         return (backup, true)
+    }
+    private func readJournal(_ id: UUID, primary: DrawingDocument?) throws -> DrawingDocument {
+        let url = file(id, suffix: "journal")
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard ((attributes[.size] as? NSNumber)?.intValue ?? Int.max) <= DrawingLimits.encodedBytes else { throw DocumentError.oversized }
+        let bytes = try DrawingStorageCodec.unpack(Data(contentsOf: url))
+        if let journal = try? JSONDecoder().decode(DrawingJournal.self, from: bytes) {
+            let base = primary?.storageRevision == journal.baseRevision ? primary : (try? decode(file(id, suffix: "journalbase")))
+            guard let base, base.id == id, journal.document.id == id,
+                  base.storageRevision == journal.baseRevision, base.strokes.count == journal.baseStrokeCount else {
+                throw DocumentError.invalidData
+            }
+            var result = journal.document
+            result.strokes = base.strokes + result.strokes
+            try result.validate()
+            return result
+        }
+        let document = try JSONDecoder().decode(DrawingDocument.self, from: bytes)
+        try document.validate()
+        return document
     }
     private func writeIndex(_ d: DrawingDocument, bytes: Int) throws {
         let a = try FileManager.default.attributesOfItem(atPath: file(d.id).path)
@@ -163,7 +276,7 @@ actor DocumentRepository {
         #endif
         var d = try decode(url)
         d.id = UUID() // Import is a new project, never an overwrite.
-        d.version = 14; d.storageRevision = 0; d.modified = Date()
+        d.version = 15; d.storageRevision = 0; d.modified = Date()
         return d
     }
     func exportProject(_ document: DrawingDocument) throws -> URL {

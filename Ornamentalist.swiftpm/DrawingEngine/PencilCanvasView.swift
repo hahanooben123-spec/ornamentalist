@@ -67,6 +67,11 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         updateBrushCursor()
         do {
             renderer = try MetalCanvasRenderer(view: self)
+            renderer?.preparationChanged = { [weak self] preparing in
+                guard let self else { return }
+                self.model.setPreparing(preparing || self.pendingPreparation)
+            }
+            renderer?.preparationFailed = { [weak self] error in self?.report(error) }
             delegate = self
         } catch { report(error) }
         model.captureActiveStroke = { [weak self] in self?.session?.stroke }
@@ -129,7 +134,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
                     self.model.setPreparing(true)
                     defer {
                         if self.preparationID == request {
-                            self.pendingPreparation = false; self.model.setPreparing(false); self.setNeedsDisplay()
+                            self.pendingPreparation = false
+                            self.model.setPreparing(renderer.isPreparingScene); self.setNeedsDisplay()
                         }
                     }
                     do { try await renderer.synchronize(document.strokes, layers: document.layers) }
@@ -143,7 +149,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
                 preparation = nil
                 Task { [weak self] in
                     guard let self, self.preparationID == request else { return }
-                    self.model.setPreparing(false)
+                    self.model.setPreparing(renderer.isPreparingScene)
                 }
             }
         }
@@ -217,7 +223,6 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         let p = point(touch)
         guard (0...document.size.x).contains(p.x), (0...document.size.y).contains(p.y) else { return }
         guard model.usedSamples < DrawingLimits.sampleCount else { report(DocumentError.sampleLimit); return }
-        guard model.usedVertices < DrawingLimits.vertexCount else { report(DocumentError.geometryLimit); return }
         drawingTouch = touch
         session = StrokeSession(brush: model.tool == .eraser ? model.eraserBrush : document.brush, symmetry: document.symmetry,
                                 existingSamples: model.usedSamples, existingVertices: model.usedVertices,

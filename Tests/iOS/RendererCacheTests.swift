@@ -4,6 +4,68 @@ import MetalKit
 
 final class RendererCacheTests: XCTestCase {
     @MainActor
+    func testEvictedGeometryStreamsBackWithoutChangingInkOrBlockingNewStrokes() async throws {
+        var drawing = DrawingDocument(); drawing.size = Point(x: 128, y: 128)
+        drawing.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        var brush = InkBrush(width: 2, stabilization: 0); brush.geometryVersion = 1
+        for line in 0..<70 {
+            let samples = (0..<900).map { i in
+                StrokeSample(point: Point(x: Double(i % 110), y: Double(line + 20)), pressure: 1,
+                             altitude: 1, azimuth: 0, time: Double(i))
+            }
+            drawing.strokes.append(InkStroke(brush: brush, symmetry: drawing.symmetry, samples: samples))
+        }
+        let total = drawing.strokes.reduce(0) { $0 + BrushGeometry.estimatedStorageCost($1) }
+        XCTAssertGreaterThan(total, DrawingLimits.vertexCount)
+        try drawing.validate()
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero), geometryBudget: 8 * 1024 * 1024)
+        try await renderer.synchronize(drawing.strokes, layers: drawing.layers)
+        XCTAssertLessThanOrEqual(renderer.allocatedGeometryBytes, 8 * 1024 * 1024)
+        XCTAssertTrue(renderer.hasBuffers(for: drawing.strokes, layers: drawing.layers))
+        let image = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 128, height: 128)
+        XCTAssertGreaterThan(renderer.geometryRebuilds, 0)
+        XCTAssertLessThanOrEqual(renderer.allocatedGeometryBytes, 8 * 1024 * 1024)
+        let reference = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 128, height: 128, reference: true)
+        assertPixels(image, reference)
+        var session = StrokeSession(brush: InkBrush(width: 4), symmetry: drawing.symmetry,
+                                    existingSamples: 63_000, existingVertices: total)
+        renderer.begin()
+        try renderer.append(session.append(StrokeSample(point: Point(x: 30, y: 110), pressure: 1,
+                                                         altitude: 1, azimuth: 0, time: 1)))
+        try renderer.commit(session.stroke); drawing.strokes.append(session.stroke)
+        let rebuilds = renderer.geometryRebuilds
+        _ = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 128, height: 128)
+        XCTAssertEqual(renderer.geometryRebuilds, rebuilds, "Appending must not replay evicted old strokes")
+        renderer.handleMemoryPressure()
+        XCTAssertEqual(renderer.allocatedGeometryBytes, 0)
+        let restored = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 128, height: 128)
+        XCTAssertGreaterThan(renderer.renderCacheBytes, 0)
+        let restoredReference = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 128, height: 128, reference: true)
+        assertPixels(restored, restoredReference)
+    }
+
+    @MainActor
+    func testDirtyTilesPreserveMirrorSoftShadingAndEraserAcrossTileBoundaries() async throws {
+        var drawing = DrawingDocument(); drawing.size = Point(x: 512, y: 512)
+        drawing.symmetry = SymmetryConfiguration(repetitions: 2, center: Point(x: 256, y: 256), mirror: true)
+        for operation in [StrokeOperation.ink, .erase] {
+            var brush = BrushPreset.softShader.makeBrush(); brush.width = 36; brush.opacity = 0.35
+            let samples = (0..<10).map { i in
+                StrokeSample(point: Point(x: 245 + Double(i) * 2, y: 220), pressure: 0.6,
+                             altitude: 0.4, azimuth: 0.2, time: Double(i))
+            }
+            drawing.strokes.append(InkStroke(brush: brush, symmetry: drawing.symmetry, samples: samples, operation: operation))
+        }
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(drawing.strokes, layers: drawing.layers)
+        _ = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 512, height: 512)
+        drawing.strokes.removeLast(); renderer.prune(drawing.strokes, layers: drawing.layers)
+        let undone = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 512, height: 512)
+        XCTAssertGreaterThan(renderer.localTileUpdates, 0)
+        let reference = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 512, height: 512, reference: true)
+        assertPixels(undone, reference)
+    }
+    @MainActor
     func testCompactShadingMatchesExpandedLiveCommitAndReopenAcrossChunks() async throws {
         guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
         var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
@@ -159,7 +221,7 @@ final class RendererCacheTests: XCTestCase {
         XCTAssertEqual(renderer.renderCacheBytes, 0)
         let fallback = try await renderer.renderOffscreen(document: d, viewport: viewport, width: 256, height: 256)
         assertPixels(fallback, editedReference)
-        XCTAssertEqual(renderer.renderCacheBytes, 0)
+        XCTAssertGreaterThan(renderer.renderCacheBytes, 0)
         let working = renderer.workingTextureAllocations
         _ = try await renderer.renderOffscreen(document: d, viewport: viewport, width: 256, height: 256)
         XCTAssertEqual(renderer.workingTextureAllocations, working)

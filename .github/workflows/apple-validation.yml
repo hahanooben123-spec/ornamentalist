@@ -42,6 +42,7 @@ jobs:
           xcodebuild test -project Ornamentalist.xcodeproj -scheme Ornamentalist
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
           -derivedDataPath DerivedData -resultBundlePath AppleTests.xcresult
+          -only-testing:OrnamentalistTests
           CODE_SIGNING_ALLOWED=NO
       - name: Export native UI screenshots
         if: always()

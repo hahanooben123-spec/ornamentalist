@@ -2,6 +2,27 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class EditingToolsTests: XCTestCase {
+    func testArchivedStructuralHistoryPreservesUndoAndRedoExactly() async throws {
+        var drawing = DrawingDocument(), history = StrokeHistory()
+        var snapshots = [drawing]
+        for i in 0..<14 {
+            let before = drawing
+            drawing.layers[0].name = "Layer \(i)"
+            drawing.strokes.append(ink())
+            history.recordLayerChange(from: before, to: drawing)
+            snapshots.append(drawing)
+        }
+        XCTAssertTrue(history.needsCompaction)
+        history = await history.compacted()
+        XCTAssertFalse(history.needsCompaction)
+        for expected in snapshots.dropLast().reversed() {
+            XCTAssertTrue(history.undo(in: &drawing)); XCTAssertEqual(drawing, expected)
+        }
+        history = await history.compacted()
+        for expected in snapshots.dropFirst() {
+            XCTAssertTrue(history.redo(in: &drawing)); XCTAssertEqual(drawing, expected)
+        }
+    }
     func testImagePlacementRoundTripSharedImageAndLegacyMigration() throws {
         var d = DrawingDocument()
         var image = raster()
@@ -128,7 +149,7 @@ final class EditingToolsTests: XCTestCase {
         let file = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: file) }
         let imported = try await repository.importProject(at: file)
-        XCTAssertEqual(imported.version, 14); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 15); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(imported.strokes, d.strokes)
     }
 }

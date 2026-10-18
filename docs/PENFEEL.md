@@ -1,4 +1,45 @@
-# Pen response — 0.9.8
+# Pen response — 0.10.0
+
+## Reconstructible geometry and lossless persistence (0.10.0, build 30)
+
+- Document format 15 accepts older projects. Local primary/backup/journal files
+  use bounded LZFSE compression with original size and SHA-256 integrity. JSON
+  project export remains uncompressed and editable. Compression changes no ink.
+- Automatic idle saves append a compressed delta journal against an immutable
+  primary revision, with a recovery copy of that revision. After 64 added strokes
+  or 20,000 added samples, structural edits, explicit Save and Gallery closing,
+  a full atomic primary consolidates the journal. An unfinished stroke is also
+  checkpointed. Recovery checks base identity, revision and full validation.
+- Older structural undo snapshots and redo-only strokes compress on a utility
+  task while idle. The last eight edits stay immediately available. Applying a
+  result requires unchanged document ID/history revision; archive failure keeps
+  the original edit. Ordinary stroke undo shares the original sample arrays.
+- The old 64 MB whole-document geometry guard no longer rejects editable ink.
+  A 16 MiB LRU holds reconstructible committed GPU buffers; live stroke buffers
+  remain separately bounded by the existing per-stroke allocation guard. File,
+  sample, raster and per-stroke safety limits remain in force.
+- Reopening, navigation or undo after eviction rebuilds layers in sequential
+  GPU submissions. Only one stroke is expanded on a worker at a time. Each
+  submitted stroke completes before resources are reused, so Metal command
+  retention cannot silently retain a document-sized mesh. Input pauses during
+  reconstruction; no unfinished display frame is presented. Zoom still requires
+  a viewport rebuild; this is not a claim that zoom/reopening costs are eliminated.
+- Existing persistent MSAA layer surfaces are divided into 256-pixel update
+  regions. Local content changes/undo clear and replay intersecting strokes in
+  affected regions, including conservative tilt/scatter/AA and Mirror bounds.
+  Unchanged regions retain per-sample coverage. Static layer groups use the same
+  regional path when layer order/opacity/raster placement are unchanged.
+  Raster transforms, reordering, changed opacity and missing geometry may take
+  the full bounded rebuild path. They preserve both old and new image coverage.
+- Memory pressure drops reconstructible buffers/surfaces; the next render can
+  recover caches, rather than disabling them for the rest of the session.
+- Diagnostics separate document geometry estimates from the GPU working budget,
+  and count reconstructed strokes and dirty tile updates. These numbers still
+  do not measure total memory or Pencil-to-screen latency.
+- This engine/storage iteration runs the native model/Metal/PNG test target in
+  Apple CI. Slow unrelated UI screenshot tests are excluded from this run.
+  Physical iPad latency, pressure feel and sustained memory still require owner
+  testing; syntax and ZIP checks alone do not establish native correctness.
 
 Brush settings now include adaptive stabilization, pressure curve and minimum size.
 Solid ink supports start/end taper. Stamped brushes support Pencil tilt shading.

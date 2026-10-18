@@ -2,6 +2,71 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class DocumentRepositoryTests: XCTestCase {
+    func testCompressionChecksIntegrityBoundsAndLegacyJSON() throws {
+        let original = Data(String(repeating: "editable drawing samples ", count: 4000).utf8)
+        let packed = try DrawingStorageCodec.pack(original)
+        XCTAssertTrue(packed.starts(with: DrawingStorageCodec.magic))
+        XCTAssertLessThan(packed.count, original.count / 4)
+        XCTAssertEqual(try DrawingStorageCodec.unpack(packed), original)
+        let legacy = Data("{\"version\":1}".utf8)
+        XCTAssertEqual(try DrawingStorageCodec.unpack(legacy), legacy)
+        var corrupted = packed; corrupted[16] ^= 1
+        XCTAssertThrowsError(try DrawingStorageCodec.unpack(corrupted))
+        var oversized = packed
+        oversized.replaceSubrange(8..<16, with: repeatElement(UInt8(255), count: 8))
+        XCTAssertThrowsError(try DrawingStorageCodec.unpack(oversized))
+        var truncatedSize = packed; truncatedSize[8] ^= 1
+        XCTAssertThrowsError(try DrawingStorageCodec.unpack(truncatedSize))
+        XCTAssertThrowsError(try DrawingStorageCodec.unpack(Data(packed.dropLast(8))))
+    }
+
+    func testIncrementalAutosaveReconstructsExactInkAfterPrimaryCorruption() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DocumentRepository(directory: directory)
+        var drawing = DrawingDocument()
+        for line in 0..<20 {
+            let samples = (0..<300).map { i in
+                StrokeSample(point: Point(x: Double(i), y: Double(line * 4)), pressure: 0.5,
+                             altitude: 1, azimuth: 0, time: Double(i))
+            }
+            drawing.strokes.append(InkStroke(samples: samples))
+        }
+        try await store.save(drawing, generation: 1)
+        let primary = directory.appendingPathComponent(drawing.id.uuidString + ".mandala")
+        let initial = try Data(contentsOf: primary)
+        XCTAssertTrue(initial.starts(with: DrawingStorageCodec.magic))
+        drawing.strokes.append(InkStroke(samples: [StrokeSample(point: Point(x: 10, y: 20), pressure: 1,
+                                                               altitude: 1, azimuth: 0, time: 1)]))
+        drawing.title = "Latest title"
+        try await store.autosave(drawing, generation: 2)
+        XCTAssertEqual(try Data(contentsOf: primary), initial, "Autosave must not rewrite the full primary")
+        let journalBytes = await store.lastCheckpointBytes
+        XCTAssertLessThan(journalBytes, initial.count)
+        let restarted = DocumentRepository(directory: directory)
+        let (opened, recovered) = try await restarted.open(drawing.id)
+        XCTAssertTrue(recovered); XCTAssertEqual(opened.strokes, drawing.strokes)
+        XCTAssertEqual(opened.title, drawing.title)
+        try Data("corrupt primary".utf8).write(to: primary)
+        let recovery = DocumentRepository(directory: directory)
+        let (repaired, _) = try await recovery.open(drawing.id)
+        XCTAssertEqual(repaired.strokes, drawing.strokes)
+        XCTAssertEqual(repaired.storageRevision, 2)
+        try await recovery.save(repaired, generation: 3)
+        let (saved, usedRecovery) = try await recovery.open(drawing.id)
+        XCTAssertFalse(usedRecovery); XCTAssertEqual(saved.strokes, drawing.strokes)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(drawing.id.uuidString + ".journalbase").path))
+    }
+
+    func testLegacyUncompressedPrimaryStillOpens() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var drawing = DrawingDocument(); drawing.version = 14
+        try JSONEncoder().encode(drawing).write(to: directory.appendingPathComponent(drawing.id.uuidString + ".mandala"))
+        let (opened, _) = try await DocumentRepository(directory: directory).open(drawing.id)
+        XCTAssertEqual(opened, drawing)
+    }
     func testOpeningAnOlderProjectDoesNotChangeRecentProjectOrder() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
