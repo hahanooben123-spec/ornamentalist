@@ -1,6 +1,10 @@
 # Verified build status — 18 October 2026
 
-## Current: 0.7.0 rendering performance
+## Current: 0.8.0 side controls and gestures
+
+The left vertical size/opacity rail, per-preset settings memory, transient canvas size cursor with Pencil hover, finger Undo/Redo and collapsible right layer sidebar are implemented. Canvas bounds remain fixed when chrome changes. Opacity is now available for solid brushes using accumulating coverage consistently in Metal/PNG; document format 7 retains older-format decoding. See [the controls guide](SIDEPANELER-OG-GESTUS.md). Apple compilation, native rendering/model checks and UI gesture/side-panel tests are in progress. Physical Pencil/hover acceptance remains separate.
+
+## Previous: 0.7.0 rendering performance
 
 Bounded static-group and per-sample active-layer caches, reusable render targets, memoryless transient MSAA on Apple GPUs, incremental committed ink, revision-based scene preparation and cached layer thumbnails are implemented. Pencil completion reuses its incrementally accumulated conservative vertex budget. A visible version label is available in Canvas. Document format remains 6. See [performance behavior and device checks](HASTIGHED.md).
 

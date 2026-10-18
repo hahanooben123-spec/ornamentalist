@@ -97,6 +97,7 @@ final class StudioModel: ObservableObject {
         guard document == nil, !busy else { return }
         busy = true; defer { busy = false }
         var d = DrawingDocument()
+        d.brush = brushSettings[.fineliner] ?? InkBrush()
         let cleaned = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
         d.title = cleaned.isEmpty ? "Untitled Drawing" : cleaned
         writeSequence += 1

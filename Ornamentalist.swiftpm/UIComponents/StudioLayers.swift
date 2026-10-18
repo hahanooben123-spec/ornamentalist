@@ -12,6 +12,7 @@ struct StudioLayersView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let document = model.document {
+                let grouped = Dictionary(grouping: document.strokes, by: \.layerID)
                 HStack {
                     Text("\(document.layers.count) / \(LayerManager.maximumLayers)")
                         .font(.caption).foregroundStyle(.secondary)
@@ -36,7 +37,7 @@ struct StudioLayersView: View {
                     }.padding(14).background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
                 }
                 ForEach(Array(document.layers.reversed())) { layer in
-                    row(layer, in: document)
+                    row(layer, in: document, strokes: grouped[layer.id] ?? [])
                 }
                 Text("Tap a layer to adjust its opacity. The eye switches it on or off. Top layers sit above the ones below. Hidden or locked layers cannot be drawn on.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -60,17 +61,17 @@ struct StudioLayersView: View {
         } message: { Text("The layer and its strokes will be removed. You can restore them with Undo before closing the drawing.") }
     }
 
-    private func row(_ layer: DrawingLayer, in document: DrawingDocument) -> some View {
+    private func row(_ layer: DrawingLayer, in document: DrawingDocument, strokes: [InkStroke]) -> some View {
         HStack(spacing: 2) {
             Button { model.selectLayer(layer.id) } label: {
                 HStack(spacing: 9) {
                     Image(systemName: layer.id == document.activeLayerID ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(layer.id == document.activeLayerID ? StudioStyle.copper : .secondary)
                         .font(.caption)
-                    LayerPreview(model: model, document: document, layer: layer)
+                    LayerPreview(model: model, document: document, layer: layer, strokeIDs: strokes.map(\.id))
                     VStack(alignment: .leading, spacing: 3) {
                         Text(layer.name).font(.subheadline.weight(.medium)).lineLimit(1)
-                        Text("\(layer.isVisible ? "\(Int((layer.opacity * 100).rounded()))%" : "Hidden") · \(document.strokes.filter { $0.layerID == layer.id }.count) strokes")
+                        Text("\(layer.isVisible ? "\(Int((layer.opacity * 100).rounded()))%" : "Hidden") · \(strokes.count) strokes")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)

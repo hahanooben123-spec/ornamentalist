@@ -8,9 +8,10 @@ private struct LayerPreviewKey: Hashable {
 
 @MainActor
 struct LayerPreview: View {
-    @ObservedObject var model: StudioModel
+    let model: StudioModel
     let document: DrawingDocument
     let layer: DrawingLayer
+    let strokeIDs: [UUID]
     @State private var image: UIImage?
 
     var body: some View {
@@ -22,7 +23,7 @@ struct LayerPreview: View {
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(.secondary.opacity(0.25)))
             .accessibilityHidden(true)
             .task(id: LayerPreviewKey(layerID: layer.id, rasterID: layer.raster?.id,
-                                      strokes: document.strokes.filter { $0.layerID == layer.id }.map(\.id))) {
+                                      strokes: strokeIDs)) {
                 image = nil
                 do {
                     let data = try await model.layerThumbnail(document, id: layer.id)

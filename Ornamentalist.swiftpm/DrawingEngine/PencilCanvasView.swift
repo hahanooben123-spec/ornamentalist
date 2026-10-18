@@ -80,6 +80,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         }
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(hoverPencil(_:)))
         hover.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        hover.cancelsTouchesInView = false
         hover.delegate = self; addGestureRecognizer(hover)
     }
     required init(coder: NSCoder) { fatalError("Create PencilCanvasView programmatically") }
@@ -158,7 +159,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         let fingers = event?.allTouches?.filter { $0.type == .direct && $0.phase != .ended && $0.phase != .cancelled }.count ?? 0
-        if fingers > 1 {
+        if fingers > 1 && !touches.contains(where: { $0.type == .pencil }) {
             discardFingerStroke()
             return
         }

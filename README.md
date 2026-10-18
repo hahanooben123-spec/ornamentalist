@@ -2,7 +2,7 @@
 
 [Dansk vejledning: Kom i gang på iPad](docs/KOM-I-GANG.md)
 
-Version 0.7.0 adds bounded viewport caches, reusable Metal targets and incremental committed ink for faster drawing/erasing. See [performance changes and device measurements](docs/HASTIGHED.md) and [validation status](docs/BUILD_STATUS.md).
+Version 0.8.0 adds a left size/opacity rail, canvas brush-size/hover cursor, two-/three-finger Undo/Redo and a collapsible right layer sidebar. See [the Danish controls guide](docs/SIDEPANELER-OG-GESTUS.md), [retained rendering optimizations](docs/HASTIGHED.md) and [validation status](docs/BUILD_STATUS.md).
 
 A native iPad app playground in Swift and SwiftUI, with UIKit Pencil input and Metal drawing. No external package dependencies. The adapted MIT-licensed ColorPickerRing wheel is included locally, with its license in ThirdParty/. Target: iPadOS 17 or later, with a Swift Playground installation that includes a compatible SDK.
 
