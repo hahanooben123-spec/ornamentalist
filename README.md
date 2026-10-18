@@ -28,13 +28,15 @@ App playground manifest handling can vary across installed versions. Update Swif
 
 1. Create a new **App** in Swift Playground, named Ornamentalist.
 2. Remove its generated `MyApp.swift` and `ContentView.swift` source files. There must be exactly one `@main` declaration.
-3. Use the sidebar **+ → Insert from** to add all **19 `.swift` source files** inside the supplied `Ornamentalist.swiftpm` folders, excluding `Package.swift`. You can also add empty Swift files and paste each file's complete contents. Folder layout is organizational; all files belong to the same app target.
+3. Use the sidebar **+ → Insert from** to add all **21 `.swift` source files** inside the supplied `Ornamentalist.swiftpm` folders, excluding `Package.swift`. You can also add empty Swift files and paste each file's complete contents. Folder layout is organizational; all files belong to the same app target.
 4. Keep the new app's automatically generated manifest. Use an iPadOS 17+ deployment target and Swift 5 language mode if those options are exposed. The supplied source uses Swift 5.9 syntax.
 5. Run App again. You do not need the repository's `Tests`, cloud workflow, or `project.yml` on iPad.
 
 Apple documents adding Swift files and inserting files from Files in its [iPad guide](https://support.apple.com/en-lamr/guide/playgrounds-ipad/itc18b7bce9d/4.6/ipados/18.0). See [technical feasibility](docs/FEASIBILITY.md) for environment and distribution limits.
 
 ## Implemented scope
+
+Version 0.3.0 adds **Mirror** under Symmetry and a **Layers** panel: up to 32 layers, selection, visibility, locking, renaming, reordering and confirmed deletion. Undo/Redo covers layer edits and restores deleted ink. Mirror adds reflection across radial guide axes (up to 128 copies at 64 sectors). Canvas, thumbnails and PNG use visible layers in stacking order; editable projects retain every layer. Schema 1/2 drawings migrate to one visible layer without mirror. See the [Danish feature guide](docs/MIRROR-OG-LAG.md) and [build status](docs/BUILD_STATUS.md).
 
 | Area | Phase 1 implementation |
 | --- | --- |
@@ -46,7 +48,7 @@ Apple documents adding Swift files and inserting files from Files in its [iPad g
 | Storage | Versioned JSON, atomic saves, rolling active-stroke recovery journal, prior valid backup, gallery previews, renaming and metadata index |
 | Export | White/transparent PNG, editable project export/import via Files, native iPad share sheet |
 
-There are no unimplemented core toolbar actions. Layers, eraser, kaleidoscope, mirror modes, movable center UI, brush library, precision shapes, image import, stencil mode, physical dimensions, SVG, PDF, and cloud sync remain later work. Altitude and azimuth are retained but do not change this brush. Undo history is session-local; saved stroke geometry remains editable after reopening. Version 1 projects retain their original pressure and tip geometry when decoded; version 2 stores brush geometry version and storage revisions explicitly.
+There are no unimplemented core toolbar actions. Eraser, movable center UI, brush library, precision shapes, image import, stencil mode, physical dimensions, SVG, PDF, and cloud sync remain later work. Altitude and azimuth are retained but do not change this brush. Undo history is session-local; saved stroke geometry remains editable after reopening. Version 1 projects retain their original pressure and tip geometry when decoded; version 2 stores brush geometry version and storage revisions explicitly.
 
 ## Source layout
 
@@ -70,7 +72,7 @@ project.yml                            cloud-only XcodeGen project description
 .github/workflows/apple-validation.yml  macOS build and test workflow
 ```
 
-LayerManager is deliberately deferred until Phase 2. A single document stroke stack is sufficient for Phase 1. Renderer buffers, live predictions, and navigation state are not serialized. See [architecture](docs/ARCHITECTURE.md), [repository evaluation](docs/RESEARCH.md), and [verification checklist](docs/VALIDATION.md).
+LayerManager implements adding, renaming, hiding, locking, reordering and deleting layers with Undo/Redo. Version 3 stores ordered, visible/locked layers and an active layer; source strokes retain their layer and radial/mirror configuration. Renderer buffers, live predictions, and navigation state are not serialized. See [architecture](docs/ARCHITECTURE.md), [repository evaluation](docs/RESEARCH.md), and [verification checklist](docs/VALIDATION.md).
 
 ## Apple build verification without owning a Mac
 

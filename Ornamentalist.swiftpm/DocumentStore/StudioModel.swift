@@ -6,6 +6,9 @@ final class StudioModel: ObservableObject {
     @Published private(set) var projects: [ProjectSummary] = []
     @Published private var history = StrokeHistory()
     var redoStack: [InkStroke] { history.redoStrokes }
+    var canUndo: Bool { document.map { history.canUndo(in: $0) } ?? false }
+    var canRedo: Bool { history.canRedo }
+    var canDraw: Bool { canEdit && (document?.canDrawOnActiveLayer ?? false) }
     @Published private(set) var saveStatus = "Saved on iPad"
     @Published private(set) var isDrawing = false
     @Published private(set) var busy = false
@@ -122,20 +125,44 @@ final class StudioModel: ObservableObject {
     func setPreparing(_ value: Bool) { isPreparing = value }
     func append(_ stroke: InkStroke) {
         // Completion of confirmed input may occur during deactivation.
-        guard !busy, var d = document else { return }
+        guard !busy, var d = document,
+              d.layers.contains(where: { $0.id == stroke.layerID && $0.isVisible && !$0.isLocked }) else { return }
         history.recordNewStroke(stroke, in: &d); document = d; changed()
         usedSamples += stroke.samples.count; usedVertices += StrokeGeometry.estimatedVertexCount(stroke)
     }
     func undo() {
-        guard canEdit, !isDrawing, var d = document, let stroke = d.strokes.last, history.undo(in: &d) else { return }
-        usedSamples -= stroke.samples.count; usedVertices -= StrokeGeometry.estimatedVertexCount(stroke)
-        document = d; changed()
+        guard canEdit, !isDrawing, var d = document, history.undo(in: &d) else { return }
+        document = d; recountInk(); changed()
     }
     func redo() {
-        guard canEdit, !isDrawing, var d = document, let stroke = history.redoStrokes.last, history.redo(in: &d) else { return }
-        usedSamples += stroke.samples.count; usedVertices += StrokeGeometry.estimatedVertexCount(stroke)
-        document = d; changed()
+        guard canEdit, !isDrawing, var d = document, history.redo(in: &d) else { return }
+        document = d; recountInk(); changed()
     }
+    private func recountInk() {
+        usedSamples = document?.strokes.reduce(0) { $0 + $1.samples.count } ?? 0
+        usedVertices = document?.strokes.reduce(0) { $0 + StrokeGeometry.estimatedVertexCount($1) } ?? 0
+    }
+    func setMirror(_ enabled: Bool) {
+        guard canEdit, !isDrawing, document != nil else { return }
+        document?.symmetry.mirror = enabled; changed()
+    }
+    func selectLayer(_ id: UUID) {
+        guard canEdit, !isDrawing, document?.layers.contains(where: { $0.id == id }) == true else { return }
+        document?.activeLayerID = id; changed()
+    }
+    private func editLayers(_ edit: (inout DrawingDocument) -> Bool) {
+        guard canEdit, !isDrawing, let before = document else { return }
+        var after = before
+        guard edit(&after) else { return }
+        history.recordLayerChange(from: before, to: after)
+        document = after; recountInk(); changed()
+    }
+    func addLayer() { editLayers { LayerManager.add(in: &$0) } }
+    func renameLayer(_ id: UUID, name: String) { editLayers { LayerManager.rename(id, name: name, in: &$0) } }
+    func toggleLayerVisibility(_ id: UUID) { editLayers { LayerManager.toggleVisibility(id, in: &$0) } }
+    func toggleLayerLock(_ id: UUID) { editLayers { LayerManager.toggleLock(id, in: &$0) } }
+    func moveLayer(_ id: UUID, up: Bool) { editLayers { LayerManager.move(id, up: up, in: &$0) } }
+    func deleteLayer(_ id: UUID) { editLayers { LayerManager.delete(id, in: &$0) } }
     func setRepetitions(_ n: Int) {
         guard canEdit, !isDrawing else { return }
         document?.symmetry.repetitions = max(1, min(64, n)); changed()
@@ -153,7 +180,7 @@ final class StudioModel: ObservableObject {
         document?.brush.stabilization = max(0, min(0.85, amount)); changed()
     }
     private func changed() {
-        document?.version = 2; document?.modified = Date()
+        document?.version = 3; document?.modified = Date()
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)

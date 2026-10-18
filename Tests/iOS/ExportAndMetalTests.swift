@@ -4,6 +4,62 @@ import UIKit
 @testable import Ornamentalist
 
 final class ExportAndMetalTests: XCTestCase {
+    @MainActor
+    func testMirrorLiveAndCommittedPixelsAndHiddenLayerPNG() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        let plain = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: plain.center, mirror: true)
+        let old = StrokeSample(point: Point(x: 20, y: 25), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        d.strokes = [InkStroke(brush: InkBrush(width: 6), symmetry: plain, samples: [old])]
+        d.layers[0].isVisible = false
+        _ = LayerManager.add(in: &d)
+        let sample = StrokeSample(point: Point(x: 96, y: 80), pressure: 1, altitude: 1, azimuth: 0, time: 2)
+        let ink = InkStroke(brush: InkBrush(width: 6), symmetry: d.symmetry, samples: [sample], layerID: d.activeLayerID)
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(d.strokes)
+        renderer.begin(); try renderer.append(StrokeGeometry.stableAddition(samples: ink.samples, brush: ink.brush))
+        let live = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256, active: ink)
+        try renderer.commit(ink); d.strokes.append(ink)
+        let committed = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        for pixels in [live, committed] {
+            for (x, y) in [(96.0, 80.0), (96, 48)] {
+                let sx = Int((128 + (x - 64) * 1.84).rounded())
+                let sy = Int((128 + (y - 64) * 1.84).rounded())
+                XCTAssertLessThan(pixels[(sy * 256 + sx) * 4], 20)
+            }
+            let hx = Int((128 + (20.0 - 64) * 1.84).rounded())
+            let hy = Int((128 + (25.0 - 64) * 1.84).rounded())
+            XCTAssertGreaterThan(pixels[(hy * 256 + hx) * 4], 240)
+        }
+        let image = try XCTUnwrap(UIImage(data: PNGExporter.data(document: d, transparent: true))?.cgImage)
+        XCTAssertGreaterThan(try pixel(image, x: 96, y: 80)[3], 245)
+        XCTAssertGreaterThan(try pixel(image, x: 96, y: 48)[3], 245)
+        XCTAssertEqual(try pixel(image, x: 20, y: 25)[3], 0)
+        // Unhide invalidates scene ordering even when all stroke IDs are unchanged.
+        d.layers[0].isVisible = true
+        let unhidden = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        let hx = Int((128 + (20.0 - 64) * 1.84).rounded()), hy = Int((128 + (25.0 - 64) * 1.84).rounded())
+        XCTAssertLessThan(unhidden[(hy * 256 + hx) * 4], 20)
+    }
+
+    @MainActor
+    func test64SectorMirrorRenders128Transforms() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Metal unavailable") }
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 64, center: Point(x: 64, y: 64), mirror: true)
+        let s = StrokeSample(point: Point(x: 100, y: 67), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        d.strokes = [InkStroke(brush: InkBrush(width: 2), symmetry: d.symmetry, samples: [s])]
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(d.strokes)
+        let pixels = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        XCTAssertEqual(d.symmetry.instanceCount, 128)
+        for y in [67.0, 61] {
+            let sx = Int((128 + 36.0 * 1.84).rounded()), sy = Int((128 + (y - 64) * 1.84).rounded())
+            XCTAssertLessThan(pixels[(sy * 256 + sx) * 4], 30)
+        }
+    }
+
     private func drawing() -> DrawingDocument {
         var d = DrawingDocument()
         d.size = Point(x: 128, y: 128)

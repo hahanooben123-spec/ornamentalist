@@ -20,7 +20,7 @@ enum PNGExporter {
             context.scaleBy(x: scale, y: scale)
             context.clip(to: CGRect(x: 0, y: 0, width: document.size.x, height: document.size.y))
             context.setFillColor(UIColor.black.cgColor)
-            for stroke in document.strokes {
+            for stroke in document.visibleStrokes {
                 let vertices = StrokeGeometry.mesh(stroke)
                 // One union-style nonzero fill per transformed stroke avoids seams
                 // between adjacent tessellation triangles in Core Graphics.

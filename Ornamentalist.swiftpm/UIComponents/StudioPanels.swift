@@ -2,7 +2,7 @@ import SwiftUI
 import Darwin
 
 enum StudioPanel: String, Identifiable {
-    case brush = "Fineliner", symmetry = "Symmetry", canvas = "Canvas"
+    case brush = "Fineliner", symmetry = "Symmetry", layers = "Layers", canvas = "Canvas"
     var id: String { rawValue }
 }
 
@@ -15,24 +15,27 @@ struct StudioPanelView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                HStack {
-                    Text(panel.rawValue).font(.system(.title2, design: .serif))
-                    Spacer()
-                    Button { dismiss() } label: { StudioIcon(symbol: "xmark") }
-                        .accessibilityLabel("Close settings").accessibilityIdentifier("closePanel")
-                }
+        VStack(spacing: 0) {
+            HStack {
+                Text(panel.rawValue).font(.system(.title2, design: .serif))
+                Spacer()
+                Button { dismiss() } label: { StudioIcon(symbol: "xmark") }
+                    .accessibilityLabel("Close settings").accessibilityIdentifier("closePanel")
+            }.padding(.horizontal, 24).padding(.top, 12)
+            ScrollView {
                 if let document = model.document {
-                    switch panel {
-                    case .brush: brush(document)
-                    case .symmetry: symmetry(document)
-                    case .canvas: canvas
-                    }
+                    VStack(alignment: .leading, spacing: 24) {
+                        switch panel {
+                        case .brush: brush(document)
+                        case .symmetry: symmetry(document)
+                        case .canvas: canvas
+                        case .layers: StudioLayersView(model: model)
+                        }
+                    }.padding(24)
                 }
-            }.padding(24)
+            }
         }
-        .frame(idealWidth: 360, idealHeight: panel == .canvas ? 460 : 440)
+        .frame(idealWidth: 360, idealHeight: panel == .symmetry ? 560 : panel == .layers ? 520 : panel == .canvas ? 460 : 440)
         .presentationCompactAdaptation(.popover)
         .disabled(model.isDrawing || !model.canEdit)
     }
@@ -83,7 +86,7 @@ struct StudioPanelView: View {
         VStack(alignment: .leading, spacing: 20) {
             ZStack {
                 Circle().stroke(.secondary.opacity(0.15), lineWidth: 1)
-                SymmetryPreview(count: document.symmetry.repetitions)
+                SymmetryPreview(count: document.symmetry.guideRayCount)
                     .stroke(StudioStyle.copper, lineWidth: 1)
             }.frame(height: 100).accessibilityHidden(true)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
@@ -99,11 +102,15 @@ struct StudioPanelView: View {
                 }
             }
             Stepper(value: Binding(get: { document.symmetry.repetitions }, set: { model.setRepetitions($0) }), in: 1...64) {
-                Text("\(document.symmetry.repetitions) copies").monospacedDigit()
+                Text("\(document.symmetry.repetitions) sectors").monospacedDigit()
             }.font(.subheadline)
                 .accessibilityLabel("Radial copies")
                 .accessibilityValue("\(document.symmetry.repetitions)")
                 .accessibilityIdentifier("symmetryCopies")
+            Toggle("Mirror", isOn: Binding(get: { document.symmetry.mirror }, set: { model.setMirror($0) }))
+                .font(.subheadline).accessibilityIdentifier("mirrorToggle")
+            Text(document.symmetry.mirror ? "\(document.symmetry.instanceCount) copies · Reflected across the guides." : "Rotate each stroke around the center.")
+                .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("mirrorSummary")
             Toggle("Show guides", isOn: $model.guides).font(.subheadline)
             Text("Changes apply to your next stroke. Existing lines keep their symmetry.")
                 .font(.caption).foregroundStyle(.secondary)

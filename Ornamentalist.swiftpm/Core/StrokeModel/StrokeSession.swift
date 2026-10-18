@@ -9,8 +9,9 @@ struct StrokeSession {
     private let remainingSamples: Int
     private let remainingVertices: Int
 
-    init(brush: InkBrush, symmetry: SymmetryConfiguration, existingSamples: Int, existingVertices: Int) {
-        stroke = InkStroke(brush: brush, symmetry: symmetry)
+    init(brush: InkBrush, symmetry: SymmetryConfiguration, existingSamples: Int, existingVertices: Int,
+         layerID: UUID = DrawingLayer.legacyID) {
+        stroke = InkStroke(brush: brush, symmetry: symmetry, layerID: layerID)
         remainingSamples = min(DrawingLimits.strokeSamples, DrawingLimits.sampleCount - existingSamples)
         remainingVertices = min(DrawingLimits.strokeVertices, DrawingLimits.vertexCount - existingVertices)
     }

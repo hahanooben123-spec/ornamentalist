@@ -1,6 +1,10 @@
 # Verified build status — 18 October 2026
 
-## Current: 0.2.2 device compiler compatibility
+## Current: 0.3.0 Mirror and layers
+
+Mirror reflection, ordered layers, layer visibility/locking/naming/reordering/deletion, layer-aware input and rendering/export, schema 1/2 migration and structural Undo/Redo are implemented. Local grammar and package integrity checks pass. Apple compilation and the new regression tests are pending. See [the feature guide](MIRROR-OG-LAG.md). The user confirmed that 0.2.2 runs on the physical iPad; 0.3.0 still needs that confirmation.
+
+## Previous: 0.2.2 device compiler compatibility
 
 The physical iPad exposed an explicit `Ambiguous use of 'cos'` build error in StudioPanels. Version 0.2.2 removes mixed Double/CGFloat overload inference in the symmetry preview and related ornament. It also changes the unmutated Metal uniforms array to a constant.
 

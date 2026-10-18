@@ -40,6 +40,53 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(app.buttons["drawing-Untitled Drawing"].firstMatch.waitForExistence(timeout: 15))
     }
 
+    func testMirrorAndLayerManagementSurviveReopening() {
+        app.buttons["newDrawing"].firstMatch.tap()
+        XCTAssertTrue(app.textFields["drawingName"].waitForExistence(timeout: 5))
+        app.textFields["drawingName"].tap(); app.textFields["drawingName"].typeText("Mirror layers")
+        app.buttons["createDrawing"].tap()
+        XCTAssertTrue(app.buttons["panel-Symmetry"].waitForExistence(timeout: 15))
+        app.buttons["panel-Symmetry"].tap()
+        let mirror = app.switches["mirrorToggle"]
+        XCTAssertTrue(mirror.waitForExistence(timeout: 5))
+        if !mirror.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        mirror.tap(); XCTAssertEqual(mirror.value as? String, "1")
+        screenshot("11-Mirror")
+        app.buttons["closePanel"].tap()
+        app.buttons["panel-Layers"].tap()
+        XCTAssertTrue(app.buttons["addLayer"].waitForExistence(timeout: 5))
+        app.buttons["addLayer"].tap()
+        XCTAssertTrue(app.buttons["select-layer-Layer 2"].isSelected)
+        app.buttons["layer-options-Layer 2"].tap(); app.buttons["Rename"].tap()
+        let name = app.alerts.textFields.firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap(); name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7) + "Details")
+        app.alerts.buttons["Save"].tap()
+        XCTAssertTrue(app.buttons["select-layer-Details"].waitForExistence(timeout: 5))
+        app.buttons["visibility-Details"].tap()
+        XCTAssertEqual(app.buttons["visibility-Details"].value as? String, "Hidden")
+        app.buttons["visibility-Details"].tap()
+        app.buttons["lock-Details"].tap()
+        XCTAssertEqual(app.buttons["lock-Details"].value as? String, "Locked")
+        app.buttons["lock-Details"].tap()
+        app.buttons["layer-options-Details"].tap(); app.buttons["Move down"].tap()
+        screenshot("12-Layers")
+        app.buttons["layer-options-Details"].tap(); app.buttons["Delete layer"].tap()
+        app.alerts.buttons["Delete layer"].tap()
+        XCTAssertFalse(app.buttons["select-layer-Details"].exists)
+        app.buttons["closePanel"].tap(); app.buttons["undo"].tap()
+        app.buttons["panel-Layers"].tap()
+        XCTAssertTrue(app.buttons["select-layer-Details"].waitForExistence(timeout: 5))
+        app.buttons["closePanel"].tap(); app.buttons["gallery"].tap()
+        XCTAssertTrue(app.buttons["drawing-Mirror layers"].waitForExistence(timeout: 15))
+        app.buttons["drawing-Mirror layers"].tap()
+        XCTAssertTrue(app.buttons["panel-Layers"].waitForExistence(timeout: 10))
+        app.buttons["panel-Layers"].tap()
+        XCTAssertTrue(app.buttons["select-layer-Details"].isSelected)
+        app.buttons["closePanel"].tap(); app.buttons["panel-Symmetry"].tap()
+        XCTAssertEqual(app.switches["mirrorToggle"].value as? String, "1")
+    }
+
     func testStudioFlowAndScreenshots() {
         XCTAssertTrue(app.buttons["drawing-Solstice"].waitForExistence(timeout: 30), app.debugDescription)
         screenshot("01-Gallery")

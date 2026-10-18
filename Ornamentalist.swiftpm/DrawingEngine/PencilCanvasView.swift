@@ -111,7 +111,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
                             time: touch.timestamp)
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard active == nil, !pendingPreparation, let document = model.document, model.canEdit, renderer != nil,
+        guard active == nil, !pendingPreparation, let document = model.document, model.canDraw, renderer != nil,
               document.strokes.count < 20_000 else { return }
         let selected = touches.first(where: { $0.type == .pencil }) ??
             (model.fingerDrawing ? touches.first(where: { $0.type == .direct }) : nil)
@@ -126,7 +126,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         }
         drawingTouch = touch
         session = StrokeSession(brush: document.brush, symmetry: document.symmetry,
-                                existingSamples: model.usedSamples, existingVertices: model.usedVertices)
+                                existingSamples: model.usedSamples, existingVertices: model.usedVertices,
+                                layerID: document.activeLayerID)
         renderer?.begin(); model.setDrawing(true)
         // Navigation is frozen for the duration of a Pencil stroke: palms cannot move the canvas.
         if touch.type == .pencil { navigationGestures.forEach { $0.isEnabled = false } }

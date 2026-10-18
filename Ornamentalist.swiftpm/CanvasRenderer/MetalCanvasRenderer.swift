@@ -22,7 +22,10 @@ final class MetalCanvasRenderer {
     private var paper: [GPUChunk] = []
     private var guideKey: [Double] = []
     private var guideBuffers: [GPUChunk] = []
-    private var matrixCache: [SymmetryConfiguration: [SIMD4<Float>]] = [:]
+    private var matrixCache: [SymmetryConfiguration: MTLBuffer] = [:]
+    private var sceneStrokeIDs: [UUID] = []
+    private var sceneLayerIDs: [UUID] = []
+    private var sceneStrokes: [InkStroke] = []
     private(set) var allocatedVertexCount = 0
     private var sealedVertexCount = 0
     private var cpuFrameMilliseconds: [Double] = []
@@ -201,16 +204,17 @@ final class MetalCanvasRenderer {
         // Guides are cached, translucent, and BELOW the black artwork.
         if guides {
             let center = document.symmetry.center
-            let key = [center.x, center.y, Double(document.symmetry.repetitions), document.size.x,
+            let key = [center.x, center.y, Double(document.symmetry.repetitions), document.symmetry.mirror ? 1 : 0, document.size.x,
                        document.size.y, viewport.zoom, viewSize.x, viewSize.y]
             if guideKey != key {
                 let radius = max(document.size.x, document.size.y) * 1.5
                 let screenScale = hypot(transform.a, transform.b)
                 let brush = InkBrush(width: 0.7 / max(0.01, screenScale))
                 var mesh: [Point] = []
-                for matrix in document.symmetry.matrices {
+                for ray in 0..<document.symmetry.guideRayCount {
                     let a = StrokeSample(point: center, pressure: 1, altitude: 0, azimuth: 0, time: 0)
-                    var b = a; b.point = matrix.apply(center + Point(x: radius, y: 0))
+                    let angle = Double(ray) * 2 * Double.pi / Double(document.symmetry.guideRayCount)
+                    var b = a; b.point = center + Matrix.rotation(angle).apply(Point(x: radius, y: 0))
                     mesh += StrokeGeometry.segment(a, b, brush: brush)
                 }
                 guideBuffers = try chunks(mesh); guideKey = key
@@ -218,7 +222,13 @@ final class MetalCanvasRenderer {
             try encode(guideBuffers, symmetry: identity, transform: transform, size: viewSize,
                        canvas: document.size, color: SIMD4(0.1, 0.5, 0.55, 0.22), encoder: encoder)
         }
-        for stroke in document.strokes {
+        let strokeIDs = document.strokes.map(\.id)
+        let layerIDs = document.layers.filter(\.isVisible).map(\.id)
+        if sceneStrokeIDs != strokeIDs || sceneLayerIDs != layerIDs {
+            sceneStrokeIDs = strokeIDs; sceneLayerIDs = layerIDs
+            sceneStrokes = document.visibleStrokes
+        }
+        for stroke in sceneStrokes {
             try encode(cache[stroke.id] ?? [], symmetry: stroke.symmetry, transform: transform,
                        size: viewSize, canvas: document.size, color: SIMD4(0, 0, 0, 1), encoder: encoder)
         }
@@ -285,17 +295,24 @@ final class MetalCanvasRenderer {
             SIMD4(Float(canvas.x), Float(canvas.y), 0, 0), color
         ]
         if matrixCache[symmetry] == nil {
-            matrixCache[symmetry] = symmetry.matrices.flatMap { m in
+            let values: [SIMD4<Float>] = symmetry.matrices.flatMap { m in
                 [SIMD4(Float(m.a), Float(m.b), Float(m.c), Float(m.d)), SIMD4(Float(m.tx), Float(m.ty), 0, 0)]
             }
+            let buffer = values.withUnsafeBytes {
+                device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+            }
+            guard let buffer else { throw DocumentError.memoryLimit }
+            matrixCache[symmetry] = buffer
         }
         let matrices = matrixCache[symmetry]!
         uniforms.withUnsafeBytes { encoder.setVertexBytes($0.baseAddress!, length: $0.count, index: 1) }
-        matrices.withUnsafeBytes { encoder.setVertexBytes($0.baseAddress!, length: $0.count, index: 2) }
+        // 64 sectors + Mirror uses 128 transforms (4096 bytes), so use a buffer
+        // rather than the small inline setVertexBytes argument limit.
+        encoder.setVertexBuffer(matrices, offset: 0, index: 2)
         for chunk in chunks {
             encoder.setVertexBuffer(chunk.buffer, offset: 0, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: chunk.count,
-                                   instanceCount: symmetry.repetitions)
+                                   instanceCount: symmetry.instanceCount)
         }
     }
 

@@ -19,10 +19,22 @@ struct InkStroke: Codable, Identifiable, Equatable, Sendable {
     var brush = InkBrush()
     var symmetry = SymmetryConfiguration()
     var samples: [StrokeSample] = []
+    var layerID = DrawingLayer.legacyID
+}
+
+extension InkStroke {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        brush = try c.decode(InkBrush.self, forKey: .brush)
+        symmetry = try c.decode(SymmetryConfiguration.self, forKey: .symmetry)
+        samples = try c.decode([StrokeSample].self, forKey: .samples)
+        layerID = try c.decodeIfPresent(UUID.self, forKey: .layerID) ?? DrawingLayer.legacyID
+    }
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 2
+    var version = 3
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -31,9 +43,23 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     var symmetry = SymmetryConfiguration()
     var brush = InkBrush()
     var strokes: [InkStroke] = []
+    // Bottom to top; stroke storage remains chronological for input/history.
+    var layers = [DrawingLayer(id: DrawingLayer.legacyID)]
+    var activeLayerID = DrawingLayer.legacyID
+    var activeLayer: DrawingLayer? { layers.first { $0.id == activeLayerID } }
+    var canDrawOnActiveLayer: Bool { activeLayer.map { $0.isVisible && !$0.isLocked } ?? false }
+    var visibleStrokes: [InkStroke] {
+        let grouped = Dictionary(grouping: strokes, by: \.layerID)
+        return layers.filter(\.isVisible).flatMap { grouped[$0.id] ?? [] }
+    }
 
     func validate() throws {
-        guard (1...2).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...3).contains(version) else { throw DocumentError.unsupportedVersion }
+        let layerIDs = Set(layers.map(\.id))
+        guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
+              layerIDs.contains(activeLayerID), layers.allSatisfy({
+                  !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.name.count <= 80
+              }) else { throw DocumentError.invalidData }
         guard size.isFinite, size.x >= 64, size.y >= 64, size.x <= 8192, size.y <= 8192,
               title.count <= 200, strokes.count <= 20_000 else { throw DocumentError.invalidData }
         func validSymmetry(_ s: SymmetryConfiguration) -> Bool {
@@ -51,7 +77,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
         var ids = Set<UUID>()
         for stroke in strokes {
             total += stroke.samples.count
-            guard ids.insert(stroke.id).inserted, total <= DrawingLimits.sampleCount,
+            guard ids.insert(stroke.id).inserted, layerIDs.contains(stroke.layerID), total <= DrawingLimits.sampleCount,
                   !stroke.samples.isEmpty, stroke.samples.count <= DrawingLimits.strokeSamples,
                   validBrush(stroke.brush),
                   validSymmetry(stroke.symmetry) else { throw DocumentError.invalidData }
@@ -84,6 +110,14 @@ extension DrawingDocument {
         symmetry = try c.decode(SymmetryConfiguration.self, forKey: .symmetry)
         brush = try c.decode(InkBrush.self, forKey: .brush)
         strokes = try c.decode([InkStroke].self, forKey: .strokes)
+        if version >= 3 {
+            layers = try c.decode([DrawingLayer].self, forKey: .layers)
+            activeLayerID = try c.decode(UUID.self, forKey: .activeLayerID)
+        } else {
+            // Old drawings have no layers or reflection; keep their original ink.
+            layers = [DrawingLayer(id: DrawingLayer.legacyID)]
+            activeLayerID = DrawingLayer.legacyID
+        }
     }
 }
 

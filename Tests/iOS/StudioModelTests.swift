@@ -3,6 +3,33 @@ import XCTest
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testLayerEditsAreFrozenDuringStrokeAndLockBlocksDrawing() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder))
+        await model.create(); model.addLayer()
+        let id = try XCTUnwrap(model.document?.activeLayerID)
+        model.setDrawing(true)
+        model.deleteLayer(id); model.toggleLayerVisibility(id); model.toggleLayerLock(id); model.setMirror(true)
+        XCTAssertEqual(model.document?.layers.count, 2)
+        XCTAssertFalse(model.document?.symmetry.mirror ?? true)
+        XCTAssertTrue(model.document?.canDrawOnActiveLayer == true)
+        model.setDrawing(false); model.toggleLayerLock(id)
+        XCTAssertFalse(model.canDraw)
+        model.undo(); XCTAssertTrue(model.canDraw)
+        model.setMirror(true)
+        let s = StrokeSample(point: Point(x: 100, y: 120), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        let ink = InkStroke(symmetry: try XCTUnwrap(model.document?.symmetry), samples: [s], layerID: id)
+        model.append(ink); model.deleteLayer(id)
+        XCTAssertEqual(model.usedSamples, 0)
+        model.undo()
+        XCTAssertEqual(model.usedSamples, 1)
+        XCTAssertEqual(model.document?.strokes, [ink])
+        XCTAssertEqual(model.document?.activeLayerID, id)
+        let saved = await model.saveNow()
+        XCTAssertTrue(saved)
+    }
+
     func testShowcaseUsesValidReopenableDrawings() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

@@ -49,10 +49,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.2.2: studio visible; loading gallery")
+            print("Ornamentalist 0.3.0: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.2.2: gallery loading finished")
+            print("Ornamentalist 0.3.0: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -138,6 +138,14 @@ struct StudioView: View {
                 }
             }
             .overlay {
+                if !document.canDrawOnActiveLayer {
+                    Label(document.activeLayer?.isVisible == false ? "Layer hidden · Choose a visible layer" : "Layer locked · Unlock in Layers",
+                          systemImage: document.activeLayer?.isVisible == false ? "eye.slash" : "lock")
+                        .font(.subheadline).padding(16).studioSurface().allowsHitTesting(false)
+                        .accessibilityIdentifier("layerDrawingBlocked")
+                }
+            }
+            .overlay {
                 if model.isPreparing || model.busy || exporting {
                     ProgressView(exporting ? "Preparing export…" : model.isPreparing ? "Preparing drawing…" : "Saving drawing…")
                         .padding(24).studioSurface()
@@ -163,10 +171,10 @@ struct StudioView: View {
             Spacer(minLength: 0)
             HStack(spacing: 0) {
                 Button { model.undo() } label: { StudioIcon(symbol: "arrow.uturn.backward") }
-                    .disabled(document.strokes.isEmpty || controlsDisabled)
+                    .disabled(!model.canUndo || controlsDisabled)
                     .accessibilityLabel("Undo").accessibilityIdentifier("undo")
                 Button { model.redo() } label: { StudioIcon(symbol: "arrow.uturn.forward") }
-                    .disabled(model.redoStack.isEmpty || controlsDisabled)
+                    .disabled(!model.canRedo || controlsDisabled)
                     .accessibilityLabel("Redo").accessibilityIdentifier("redo")
             }
             Menu {
@@ -188,7 +196,9 @@ struct StudioView: View {
         HStack(spacing: 4) {
             dockButton(.brush, symbol: "pencil.tip", detail: "\(document.brush.width.formatted(.number.precision(.fractionLength(1)))) px")
             Divider().frame(height: 28).padding(.horizontal, 4)
-            dockButton(.symmetry, symbol: "circle.hexagongrid", detail: document.symmetry.repetitions == 1 ? "Off" : "×\(document.symmetry.repetitions)")
+            dockButton(.symmetry, symbol: "circle.hexagongrid", detail: document.symmetry.mirror ? "×\(document.symmetry.instanceCount) · Mirror" : document.symmetry.repetitions == 1 ? "Off" : "×\(document.symmetry.repetitions)")
+            Divider().frame(height: 28).padding(.horizontal, 4)
+            dockButton(.layers, symbol: "square.3.layers.3d", detail: document.activeLayer?.name)
             Divider().frame(height: 28).padding(.horizontal, 4)
             dockButton(.canvas, symbol: "hand.draw", detail: nil)
         }
@@ -209,9 +219,9 @@ struct StudioView: View {
                         Image(systemName: symbol).font(.system(size: 22, weight: .light))
                         VStack(alignment: .leading, spacing: 3) {
                             Text(item.rawValue).font(.subheadline.weight(.medium))
-                            if let detail { Text(detail).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
+                            if let detail { Text(detail).font(.caption.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1) }
                         }
-                    }.padding(.horizontal, 16)
+                    }.padding(.horizontal, 10)
                 }
             }
             .frame(minHeight: 48)

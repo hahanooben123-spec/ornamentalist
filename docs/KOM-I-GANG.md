@@ -11,6 +11,8 @@ Hvis du bruger GitHub i stedet for den lokale ZIP, ligger kildekoden i [dit repo
 
 ## Det vigtigste i appen
 
+I version 0.3.0 kan du bruge **Symmetry → Mirror** til spejling på begge sider af hjælpelinjerne og **Layers** til at oprette, vælge, skjule, låse, omdøbe, flytte og slette lag. [Se vejledningen til Mirror og lag](MIRROR-OG-LAG.md). Eksportér gamle tegninger som redigerbare projekter, før du erstatter din appkopi.
+
 - **Symmetry:** åbner et lille panel med hurtige valg og en præcis tæller fra 1 til 64. Antallet ændrer kun nye streger. **Show guides** slår hjælpelinjerne til eller fra.
 - **Fineliner:** stregbredde, trykfølsomhed og stabilisering. Vælg 0% for direkte bevægelse eller en højere værdi for mere udglatning.
 - **To fingre:** flyt, zoom og rotér lærredet. Pencil tegner; fingrene laver som standard ingen streger.
