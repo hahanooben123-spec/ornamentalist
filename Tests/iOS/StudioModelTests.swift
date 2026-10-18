@@ -5,6 +5,38 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testGalleryRepairsMissingPreviewsAndUpdatesClosedDrawing() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder)
+        let first = DrawingDocument(), second = DrawingDocument()
+        try await repository.save(first, generation: 1)
+        try await repository.save(second, generation: 1)
+        let model = StudioModel(repository: repository)
+        await model.refresh()
+        for _ in 0..<100 {
+            if model.projects.count == 2, model.projects.allSatisfy({ $0.thumbnail != nil }) { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(model.projects.count, 2)
+        for project in model.projects {
+            let data = try XCTUnwrap(project.thumbnail)
+            XCTAssertNotNil(UIImage(data: data))
+        }
+        let oldPreview = try XCTUnwrap(model.projects.first(where: { $0.id == first.id })?.thumbnail)
+        XCTAssertEqual(model.projects.first(where: { $0.id == first.id })?.modified, first.modified)
+        await model.open(first.id)
+        let input = StrokeSample(point: Point(x: 1024, y: 1024), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        model.append(InkStroke(brush: InkBrush(width: 160), samples: [input]))
+        await model.close()
+        for _ in 0..<100 {
+            if let data = model.projects.first(where: { $0.id == first.id })?.thumbnail, data != oldPreview { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertNotEqual(model.projects.first(where: { $0.id == first.id })?.thumbnail, oldPreview)
+        XCTAssertNil(model.error)
+    }
+
     func testConcurrentErrorsPreserveFirstAlertAndCanBeCopiedAfterDismissal() {
         let model = StudioModel()
         model.error = "First graphics failure"

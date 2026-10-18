@@ -53,6 +53,8 @@ final class StudioModel: ObservableObject {
     private var schedule = SaveSchedule()
     private var maintenance: Task<Void, Never>?
     private var thumbnailTask: Task<Void, Never>?
+    private var thumbnailRequest = UUID()
+    private var thumbnailRefreshIDs = Set<UUID>()
     private var saveRunning = false
     private var journalRunning = false
     private var lastCheckpoint = Date.distantPast
@@ -94,10 +96,14 @@ final class StudioModel: ObservableObject {
     }
     func stopMaintenance() { maintenance?.cancel(); maintenance = nil }
     func refresh() async {
-        do { projects = try await repository.list() }
+        do {
+            projects = try await repository.list()
+            prepareGalleryThumbnails()
+        }
         catch { self.error = error.localizedDescription }
     }
     private func adopt(_ d: DrawingDocument, recovered: Bool) {
+        thumbnailTask?.cancel(); thumbnailTask = nil; thumbnailRequest = UUID()
         opacityEditBefore = nil
         tool = .brush
         document = d; history = StrokeHistory()
@@ -390,28 +396,41 @@ final class StudioModel: ObservableObject {
         while saveRunning { try? await Task.sleep(nanoseconds: 10_000_000) }
         let closingGeneration = generation
         guard await saveNow(), generation == closingGeneration else { return }
-        let savedDrawing = document
+        if let id = document?.id { thumbnailRefreshIDs.insert(id) }
         document = nil; history = StrokeHistory(); captureActiveStroke = nil; rendererDiagnostics = nil
         await refresh()
-        if let savedDrawing { prepareThumbnail(savedDrawing) }
     }
 
-    private func prepareThumbnail(_ snapshot: DrawingDocument) {
-        // Disk durability gates closing. Replaceable previews must not block the gallery.
-        // Keep only the newest pending request; an in-flight Core Graphics render may finish.
-        thumbnailTask?.cancel()
+    private func prepareGalleryThumbnails() {
+        // Repair old/missing previews on gallery entry, not just the last closed
+        // project. Render serially off the main actor; never hold up closing.
+        guard document == nil, thumbnailTask == nil,
+              projects.contains(where: { $0.thumbnail == nil || thumbnailRefreshIDs.contains($0.id) }) else { return }
+        let request = UUID(); thumbnailRequest = request
         thumbnailTask = Task { [weak self] in
             guard let self else { return }
-            do {
-                let thumbnail = try await self.exportService.thumbnail(snapshot)
-                try Task.checkCancellation()
-                try await self.repository.storeThumbnail(thumbnail, id: snapshot.id, generation: snapshot.storageRevision)
-                if self.document == nil { await self.refresh() }
-            } catch is CancellationError {
-                // A newer preview superseded this request.
-            } catch {
-                if self.document == nil {
-                    self.error = "Drawing saved, but its preview could not be generated: \(error.localizedDescription)"
+            defer { if self.thumbnailRequest == request { self.thumbnailTask = nil } }
+            var attempted = Set<UUID>()
+            while !Task.isCancelled, self.document == nil, self.thumbnailRequest == request,
+                  let project = self.projects.first(where: {
+                      !attempted.contains($0.id) && ($0.thumbnail == nil || self.thumbnailRefreshIDs.contains($0.id))
+                  }) {
+                attempted.insert(project.id)
+                do {
+                    let (snapshot, _) = try await self.repository.open(project.id)
+                    try Task.checkCancellation()
+                    let thumbnail = try await self.exportService.thumbnail(snapshot)
+                    try Task.checkCancellation()
+                    try await self.repository.storeThumbnail(thumbnail, id: snapshot.id, generation: snapshot.storageRevision)
+                    let updated = try await self.repository.list()
+                    guard !Task.isCancelled, self.document == nil, self.thumbnailRequest == request else { return }
+                    self.thumbnailRefreshIDs.remove(project.id)
+                    self.projects = updated
+                } catch is CancellationError { return }
+                catch {
+                    if self.document == nil {
+                        self.error = "Drawing saved, but its preview could not be generated: \(error.localizedDescription)"
+                    }
                 }
             }
         }
