@@ -444,7 +444,11 @@ final class MetalCanvasRenderer {
         let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
                             width: width, height: height, mipmapped: false)
         if samples > 1 { info.textureType = .type2DMultisample; info.sampleCount = samples }
+        #if targetEnvironment(simulator)
+        info.storageMode = .private // Simulator requires private MSAA targets.
+        #else
         info.storageMode = transient && device.supportsFamily(.apple1) ? .memoryless : .private
+        #endif
         info.usage = transient ? [.renderTarget] : [.renderTarget, .shaderRead]
         guard let result = device.makeTexture(descriptor: info) else { throw DocumentError.memoryLimit }
         workingTextureAllocations += 1
@@ -480,7 +484,11 @@ final class MetalCanvasRenderer {
             let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float_stencil8,
                 width: target.width, height: target.height, mipmapped: false)
             if sampleCount > 1 { info.textureType = .type2DMultisample; info.sampleCount = sampleCount }
+            #if targetEnvironment(simulator)
+            info.storageMode = .private // Includes combined depth/stencil in Simulator.
+            #else
             info.storageMode = device.supportsFamily(.apple1) ? .memoryless : .private
+            #endif
             info.usage = .renderTarget
             guard let stencil = device.makeTexture(descriptor: info) else { throw DocumentError.memoryLimit }
             coverageStencil = stencil; workingTextureAllocations += 1
