@@ -3,6 +3,7 @@ import SwiftUI
 @MainActor
 struct StudioLayersView: View {
     @ObservedObject var model: StudioModel
+    @Environment(\.dismiss) private var dismiss
     @State private var renaming: DrawingLayer?
     @State private var deleting: DrawingLayer?
     @State private var layerName = ""
@@ -27,7 +28,7 @@ struct StudioLayersView: View {
                                 .accessibilityIdentifier("layerOpacityValue")
                         }.font(.subheadline)
                         Slider(value: Binding(get: { layer.opacity }, set: { model.setLayerOpacity(layer.id, value: $0) }),
-                               in: 0...1, onEditingChanged: { editing in
+                               in: 0...1, step: 0.01, onEditingChanged: { editing in
                             if editing { model.beginLayerOpacityEdit() } else { model.finishLayerOpacityEdit() }
                         }).accessibilityLabel("Layer opacity").accessibilityIdentifier("layerOpacity")
                         Text(layer.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -90,7 +91,10 @@ struct StudioLayersView: View {
             Menu {
                 Button("Duplicate layer", systemImage: "square.on.square") { model.duplicateLayer(layer.id) }
                     .disabled(document.layers.count >= LayerManager.maximumLayers)
-                Button("Merge down", systemImage: "arrow.down.square") { Task { await model.mergeLayerDown(layer.id) } }
+                Button("Merge down", systemImage: "arrow.down.square") {
+                    dismiss()
+                    Task { await model.mergeLayerDown(layer.id) }
+                }
                     .disabled(!LayerManager.canMergeDown(layer.id, in: document))
                 Divider()
                 Button("Rename", systemImage: "pencil") { layerName = layer.name; renaming = layer }

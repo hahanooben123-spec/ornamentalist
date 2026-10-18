@@ -64,10 +64,15 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(app.buttons["select-layer-Layer 1 copy"].isSelected)
         screenshot("18-Layer-thumbnails-duplicate")
         app.buttons["layer-options-Layer 1 copy"].tap(); app.buttons["Merge down"].tap()
-        let removed = NSPredicate(format: "exists == false")
-        expectation(for: removed, evaluatedWith: app.buttons["select-layer-Layer 1 copy"])
+        let closed = NSPredicate(format: "exists == false")
+        expectation(for: closed, evaluatedWith: app.buttons["closePanel"])
         waitForExpectations(timeout: 20)
-        XCTAssertTrue(app.buttons["select-layer-Layer 1"].exists)
+        let ready = NSPredicate(format: "enabled == true")
+        expectation(for: ready, evaluatedWith: app.buttons["panel-Layers"])
+        waitForExpectations(timeout: 20)
+        app.buttons["panel-Layers"].tap()
+        XCTAssertTrue(app.buttons["select-layer-Layer 1"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["select-layer-Layer 1 copy"].exists)
         screenshot("19-Merged-layer")
         app.buttons["closePanel"].tap(); app.buttons["undo"].tap()
         app.buttons["panel-Layers"].tap()
@@ -91,6 +96,8 @@ final class StudioUITests: XCTestCase {
         app.buttons["panel-Layers"].tap(); app.buttons["addLayer"].tap()
         let opacity = app.sliders["layerOpacity"]
         XCTAssertTrue(opacity.waitForExistence(timeout: 5)); opacity.adjust(toNormalizedSliderPosition: 0.4)
+        // Read the committed value after the final drag event and panel dismissal.
+        app.buttons["closePanel"].tap(); app.buttons["panel-Layers"].tap()
         let percentage = app.staticTexts["layerOpacityValue"].label
         XCTAssertNotEqual(percentage, "100%")
         app.buttons["visibility-Layer 2"].tap()
