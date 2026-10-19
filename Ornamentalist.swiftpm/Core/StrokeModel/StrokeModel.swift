@@ -30,7 +30,7 @@ extension StrokeSample {
 }
 
 enum StrokeOperation: String, Codable, Sendable { case ink, erase }
-enum StudioTool: String, Sendable { case brush, eraser, eyedropper }
+enum StudioTool: String, Sendable { case brush, eraser, eyedropper, fill }
 
 struct InkStroke: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()

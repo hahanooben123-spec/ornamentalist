@@ -2,6 +2,24 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class CoreTests: XCTestCase {
+    func testFillStopsAtOutlineAndSupportsSymmetrySeeds() {
+        var rgba = [UInt8](repeating: 255, count: 5 * 3 * 4)
+        for y in 0..<3 {
+            let i = (y * 5 + 2) * 4
+            rgba[i] = 0; rgba[i + 1] = 0; rgba[i + 2] = 0
+        }
+        let left = FillRegion.mask(rgba: rgba, width: 5, height: 3, seeds: [(0, 1)])
+        XCTAssertEqual(left.filter { $0 != 0 }.count, 6)
+        XCTAssertEqual(left[4], 0)
+        let both = FillRegion.mask(rgba: rgba, width: 5, height: 3, seeds: [(0, 1), (4, 1), (-1, 0)])
+        XCTAssertEqual(both.filter { $0 != 0 }.count, 12)
+        XCTAssertEqual(both[2], 0)
+    }
+    func testFillUsesFourConnectedRegionsAndRejectsInvalidBuffers() {
+        let rgba: [UInt8] = [255,255,255,255, 0,0,0,255, 0,0,0,255, 255,255,255,255]
+        XCTAssertEqual(FillRegion.mask(rgba: rgba, width: 2, height: 2, seeds: [(0,0)]), [255,0,0,0])
+        XCTAssertTrue(FillRegion.mask(rgba: [], width: 2, height: 2, seeds: [(0,0)]).isEmpty)
+    }
     func testViewportSnapshotCornersTrackZoomRotationAndPan() {
         let size = Point(x: 800, y: 600), canvas = Point(x: 2048, y: 2048)
         var source = Viewport(); source.zoom = 1.3; source.rotation = 0.4; source.pan = Point(x: 17, y: -23)

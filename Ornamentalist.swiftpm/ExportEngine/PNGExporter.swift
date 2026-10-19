@@ -147,6 +147,50 @@ enum PNGExporter {
 }
 
 actor ExportService {
+    func filledRegion(_ document: DrawingDocument, point: Point) throws -> LayerRaster {
+        try Task.checkCancellation()
+        let width = Int(document.size.x), height = Int(document.size.y)
+        guard width >= 64, height >= 64, width <= 2048, height <= 2048 else { throw DocumentError.mergeSize }
+        let data = try PNGExporter.data(document: document, transparent: false)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw DocumentError.graphics }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = pixels.withUnsafeMutableBytes { bytes -> Bool in
+            guard let context = CGContext(data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: 1, y: -1)
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { throw DocumentError.graphics }
+        let seeds = document.symmetry.matrices.map { matrix -> (Int, Int) in
+            let p = matrix.apply(point)
+            return (Int(p.x.rounded(.down)), Int(p.y.rounded(.down)))
+        }
+        let mask = FillRegion.mask(rgba: pixels, width: width, height: height, seeds: seeds)
+        try Task.checkCancellation()
+        let color = document.color
+        let alpha = document.brush.opacity
+        let red = UInt8((color.red * alpha * 255).rounded())
+        let green = UInt8((color.green * alpha * 255).rounded())
+        let blue = UInt8((color.blue * alpha * 255).rounded())
+        let opacity = UInt8((alpha * 255).rounded())
+        for i in mask.indices {
+            let offset = i * 4, included = mask[i] != 0
+            pixels[offset] = included ? red : 0; pixels[offset + 1] = included ? green : 0
+            pixels[offset + 2] = included ? blue : 0; pixels[offset + 3] = included ? opacity : 0
+        }
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let output = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+              let png = UIImage(cgImage: output).pngData() else { throw DocumentError.graphics }
+        let raster = LayerRaster(png: png, width: width, height: height)
+        try raster.validate(canvas: document.size)
+        return raster
+    }
     private struct PreviewIdentity: Hashable {
         let document: UUID
         let layer: UUID

@@ -1,5 +1,36 @@
 import Foundation
 
+/// Four-connected region selection in an RGBA8 reference image. Marks each
+/// pixel when queued so a large open region cannot grow an unbounded queue.
+enum FillRegion {
+    static func mask(rgba: [UInt8], width: Int, height: Int, seeds: [(Int, Int)], tolerance: Int = 24) -> [UInt8] {
+        guard width > 0, height > 0, width <= 2048, height <= 2048,
+              rgba.count == width * height * 4 else { return [] }
+        var selected = [UInt8](repeating: 0, count: width * height)
+        for (x, y) in seeds where x >= 0 && y >= 0 && x < width && y < height {
+            let start = y * width + x
+            guard selected[start] == 0 else { continue }
+            let target = Array(rgba[(start * 4)..<(start * 4 + 4)])
+            func matches(_ index: Int) -> Bool {
+                let offset = index * 4
+                return (0..<4).allSatisfy { abs(Int(rgba[offset + $0]) - Int(target[$0])) <= tolerance }
+            }
+            var queue = [start], head = 0
+            selected[start] = 255
+            while head < queue.count {
+                let pixel = queue[head]; head += 1
+                let column = pixel % width
+                for next in [column > 0 ? pixel - 1 : -1, column + 1 < width ? pixel + 1 : -1,
+                             pixel >= width ? pixel - width : -1, pixel + width < width * height ? pixel + width : -1]
+                    where next >= 0 && selected[next] == 0 {
+                    if matches(next) { selected[next] = 255; queue.append(next) }
+                }
+            }
+        }
+        return selected
+    }
+}
+
 struct RasterPlacement: Codable, Equatable, Hashable, Sendable {
     var center: Point
     var scale = 1.0

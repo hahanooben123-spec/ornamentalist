@@ -5,6 +5,33 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testFillPreservesInkAndCanUndoRedo() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder)
+        var drawing = DrawingDocument(); drawing.size = Point(x: 64, y: 64)
+        drawing.symmetry.repetitions = 1
+        drawing.color = InkColor(red: 1, green: 0, blue: 0)
+        drawing.brush.width = 4; drawing.brush.pressureEnabled = false
+        drawing.strokes = [InkStroke(brush: drawing.brush, symmetry: drawing.symmetry, samples: [
+            StrokeSample(point: Point(x: 0, y: 20), pressure: 1, altitude: 1, azimuth: 0, time: 1),
+            StrokeSample(point: Point(x: 64, y: 20), pressure: 1, altitude: 1, azimuth: 0, time: 2)
+        ])]
+        try await repository.save(drawing, generation: 1)
+        let model = StudioModel(repository: repository)
+        await model.open(drawing.id)
+        await model.fill(at: Point(x: 10, y: 8))
+        let filled = try XCTUnwrap(model.document)
+        XCTAssertEqual(filled.layers.count, 2)
+        XCTAssertEqual(filled.strokes, drawing.strokes)
+        XCTAssertEqual(filled.activeLayerID, drawing.activeLayerID)
+        let top = try PNGExporter.sample(document: filled, point: Point(x: 10, y: 8))
+        let bottom = try PNGExporter.sample(document: filled, point: Point(x: 10, y: 50))
+        XCTAssertLessThan(top.green, 0.1)
+        XCTAssertGreaterThan(bottom.green, 0.9)
+        model.undo(); XCTAssertEqual(model.document?.layers.count, 1)
+        model.redo(); XCTAssertEqual(model.document?.layers, filled.layers)
+    }
     func testLinerDefaultsMigrateOnceWithoutChangingSavedInkOrLaterChoices() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "Ornamentalist-liner-default-\(UUID())"

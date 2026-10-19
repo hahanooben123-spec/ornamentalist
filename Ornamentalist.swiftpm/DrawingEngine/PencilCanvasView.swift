@@ -214,11 +214,11 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             return
         }
         hoverPoint = nil; updateBrushCursor()
-        if model.tool == .eyedropper, model.canEdit, active == nil,
+        if (model.tool == .eyedropper || model.tool == .fill), model.canEdit, active == nil,
            let touch = touches.first(where: { $0.type == .pencil }) ?? touches.first(where: { $0.type == .direct }) {
             if touch.type == .pencil {
                 let picked = point(touch)
-                Task { await model.pickColor(at: picked) }
+                Task { await model.applyTapTool(at: picked) }
             } else {
                 // Wait for release: a second finger may turn this into history
                 // or navigation rather than a color selection.
@@ -265,7 +265,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         if let touch = colorTouch, touches.contains(touch) {
             colorTouch = nil
             let picked = point(touch)
-            Task { await model.pickColor(at: picked) }
+            Task { await model.applyTapTool(at: picked) }
             return
         }
         guard let touch = drawingTouch, touches.contains(touch) else { return }
@@ -367,7 +367,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         updateBrushCursor()
     }
     private func updateBrushCursor() {
-        let hidden = !model.showBrushCursor || model.tool == .eyedropper || !model.canDraw
+        let hidden = !model.showBrushCursor || model.tool == .eyedropper || model.tool == .fill || !model.canDraw
         accessibilityValue = "Strokes: \(model.document?.strokes.count ?? 0)"
         brushCursor.isHidden = hidden; cursorHalo.isHidden = hidden
         guard !hidden, bounds.width > 0, bounds.height > 0 else { return }

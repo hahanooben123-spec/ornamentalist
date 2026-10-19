@@ -498,6 +498,30 @@ final class StudioModel: ObservableObject {
             busy = false; setColor(color); tool = .brush
         } catch { busy = false; self.error = error.localizedDescription }
     }
+    func applyTapTool(at point: Point) async {
+        if tool == .fill { await fill(at: point) }
+        else if tool == .eyedropper { await pickColor(at: point) }
+    }
+    func fill(at point: Point) async {
+        finishLayerOpacityEdit()
+        guard canDraw, !isDrawing, let before = document, point.isFinite,
+              (0..<before.size.x).contains(point.x), (0..<before.size.y).contains(point.y),
+              before.brush.opacity > 0 else { return }
+        guard before.layers.count < LayerManager.maximumLayers else { error = DocumentError.memoryLimit.localizedDescription; return }
+        busy = true; defer { busy = false }
+        do {
+            let raster = try await exportService.filledRegion(before, point: point)
+            guard document?.id == before.id,
+                  let index = before.layers.firstIndex(where: { $0.id == before.activeLayerID }) else { return }
+            var after = before
+            var layer = DrawingLayer(); layer.name = "Fill \(after.layers.count + 1)"; layer.raster = raster
+            after.layers.insert(layer, at: index)
+            // Keep the linework active so another fill stays underneath it.
+            try after.validate()
+            history.recordLayerChange(from: before, to: after)
+            document = after; changed()
+        } catch { self.error = error.localizedDescription }
+    }
     func beginLayerOpacityEdit() {
         guard canEdit, !isDrawing, opacityEditBefore == nil else { return }
         opacityEditBefore = document

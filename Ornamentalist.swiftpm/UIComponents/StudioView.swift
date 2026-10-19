@@ -167,8 +167,9 @@ struct StudioView: View {
                 }
             }
             .overlay {
-                if model.tool == .eyedropper {
-                    Label("Tap artwork to pick a color", systemImage: "eyedropper")
+                if model.tool == .eyedropper || model.tool == .fill {
+                    Label(model.tool == .fill ? "Tap an area to fill · Creates a layer below your linework" : "Tap artwork to pick a color",
+                          systemImage: model.tool == .fill ? "paintbucket" : "eyedropper")
                         .font(.subheadline).padding(16).studioSurface().allowsHitTesting(false)
                         .accessibilityIdentifier("eyedropperHint")
                 } else if !document.canDrawOnActiveLayer {
@@ -251,11 +252,13 @@ struct StudioView: View {
                     Button("Brush", systemImage: "pencil.tip") { model.selectTool(.brush) }
                     Button("Eraser", systemImage: "eraser") { model.selectTool(.eraser) }
                     Button("Eyedropper", systemImage: "eyedropper") { model.selectTool(.eyedropper) }
-                } label: { StudioIcon(symbol: model.tool == .brush ? "pencil.tip" : model.tool == .eraser ? "eraser" : "eyedropper") }
+                    Button("Fill", systemImage: "paintbucket") { model.selectTool(.fill) }
+                } label: { StudioIcon(symbol: model.tool == .brush ? "pencil.tip" : model.tool == .eraser ? "eraser" : model.tool == .fill ? "paintbucket" : "eyedropper") }
                     .disabled(controlsDisabled).accessibilityLabel("Drawing tools")
             } else {
                 toolButton(.eraser, symbol: "eraser", label: "Eraser")
                 toolButton(.eyedropper, symbol: "eyedropper", label: "Eyedropper")
+                toolButton(.fill, symbol: "paintbucket", label: "Fill")
             }
             dockButton(.layers, symbol: "square.3.layers.fill", detail: nil)
             Button { panel = panel == .colors ? nil : .colors } label: {
