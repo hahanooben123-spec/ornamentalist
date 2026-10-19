@@ -28,6 +28,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: studio.mandala.prototype
+        DEVELOPMENT_TEAM: K2TYPDPPZJ
+        CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: '0.11.2'
         CURRENT_PROJECT_VERSION: '35'
