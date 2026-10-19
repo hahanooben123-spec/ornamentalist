@@ -19,7 +19,7 @@ struct LayerPreview: View {
         ZStack {
             TransparencyGrid()
             if let image { Image(uiImage: image).resizable().scaledToFit() }
-        }.frame(width: 44, height: 44)
+        }.frame(width: 50, height: 50)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(.secondary.opacity(0.25)))
             .accessibilityHidden(true)

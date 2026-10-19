@@ -14,26 +14,27 @@ struct StudioLayersView: View {
             if let document = model.document {
                 let grouped = Dictionary(grouping: document.strokes, by: \.layerID)
                 HStack {
-                    Text("\(document.layers.count) / \(LayerManager.maximumLayers)")
+                    Text("\(document.layers.count) of \(LayerManager.maximumLayers) layers")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Add layer", systemImage: "plus") { model.addLayer() }
-                        .font(.subheadline).frame(minHeight: 44)
+                        .font(.caption.weight(.semibold)).frame(minHeight: 44)
                         .disabled(document.layers.count >= LayerManager.maximumLayers)
                         .accessibilityIdentifier("addLayer")
                 }
                 if let layer = document.activeLayer {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
-                            Text("Layer opacity"); Spacer()
+                            Text("Opacity"); Spacer()
                             Text("\(Int((layer.opacity * 100).rounded()))%").monospacedDigit()
                                 .accessibilityIdentifier("layerOpacityValue")
-                        }.font(.subheadline)
+                        }.font(.caption.weight(.medium)).foregroundStyle(.secondary)
                         Slider(value: Binding(get: { layer.opacity }, set: { model.setLayerOpacity(layer.id, value: $0) }),
                                in: 0...1, step: 0.01, onEditingChanged: { editing in
                             if editing { model.beginLayerOpacityEdit() } else { model.finishLayerOpacityEdit() }
                         }).accessibilityLabel("Layer opacity").accessibilityIdentifier("layerOpacity")
-                    }.padding(8).background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                    }.padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
                 }
                 ForEach(Array(document.layers.reversed())) { layer in
                     row(layer, in: document, strokes: grouped[layer.id] ?? [])
@@ -61,26 +62,30 @@ struct StudioLayersView: View {
     private func row(_ layer: DrawingLayer, in document: DrawingDocument, strokes: [InkStroke]) -> some View {
         HStack(spacing: 2) {
             Button { model.selectLayer(layer.id) } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     LayerPreview(model: model, document: document, layer: layer, strokeIDs: strokes.map(\.id))
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(layer.name).font(.subheadline.weight(.medium)).lineLimit(1)
-                        Text(layer.isVisible ? "\(Int((layer.opacity * 100).rounded()))%" : "Hidden")
+                        Text(layer.name).font(.system(size: 13, weight: layer.id == document.activeLayerID ? .semibold : .medium)).lineLimit(1)
+                        Text(!layer.isVisible ? "Hidden" : layer.isLocked ? "Locked" : "\(Int((layer.opacity * 100).rounded()))%")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
-                }.frame(minHeight: 48).contentShape(Rectangle())
+                }.frame(minHeight: 54).contentShape(Rectangle())
             }
             .buttonStyle(.plain).accessibilityLabel("Select \(layer.name)")
             .accessibilityIdentifier("select-layer-\(layer.name)")
             .accessibilityAddTraits(layer.id == document.activeLayerID ? .isSelected : [])
             Button { model.toggleLayerVisibility(layer.id) } label: {
-                StudioIcon(symbol: layer.isVisible ? "eye" : "eye.slash")
+                Image(systemName: layer.isVisible ? "eye" : "eye.slash")
+                    .font(.system(size: 14, weight: .regular)).frame(width: 44, height: 44)
+                    .foregroundStyle(layer.isVisible ? Color.secondary : StudioStyle.copper)
             }.accessibilityLabel("Visibility of \(layer.name)")
                 .accessibilityValue(layer.isVisible ? "Visible" : "Hidden")
                 .accessibilityIdentifier("visibility-\(layer.name)")
             Button { model.toggleLayerLock(layer.id) } label: {
-                StudioIcon(symbol: layer.isLocked ? "lock.fill" : "lock.open")
+                Image(systemName: layer.isLocked ? "lock.fill" : "lock.open")
+                    .font(.system(size: 12, weight: .regular)).frame(width: 44, height: 44)
+                    .foregroundStyle(layer.isLocked ? StudioStyle.copper : Color.secondary.opacity(0.45))
             }.accessibilityLabel("Lock \(layer.name)")
                 .accessibilityValue(layer.isLocked ? "Locked" : "Unlocked")
                 .accessibilityIdentifier("lock-\(layer.name)")
@@ -105,11 +110,20 @@ struct StudioLayersView: View {
                     .disabled(document.layers.first?.id == layer.id)
                 Button("Delete layer", systemImage: "trash", role: .destructive) { deleting = layer }
                     .disabled(document.layers.count == 1)
-            } label: { StudioIcon(symbol: "ellipsis") }
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 15, weight: .medium))
+                    .frame(width: 44, height: 44).foregroundStyle(.secondary)
+            }
                 .accessibilityLabel("Options for \(layer.name)").accessibilityIdentifier("layer-options-\(layer.name)")
         }
-        .padding(.leading, 6).padding(.vertical, 2)
-        .background(layer.id == document.activeLayerID ? StudioStyle.copper.opacity(0.12) : Color.secondary.opacity(0.05),
-                    in: RoundedRectangle(cornerRadius: 14))
+        .padding(.leading, 10).padding(.vertical, 5)
+        .background(layer.id == document.activeLayerID ? StudioStyle.copper.opacity(0.09) : Color.secondary.opacity(0.025),
+                    in: RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .leading) {
+            if layer.id == document.activeLayerID {
+                Capsule().fill(StudioStyle.copper).frame(width: 3, height: 28).padding(.leading, 2)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }

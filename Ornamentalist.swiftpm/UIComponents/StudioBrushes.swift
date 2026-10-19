@@ -230,28 +230,40 @@ private final class VerticalSliderContainer: UIView {
 struct StudioBrushRail: View {
     @ObservedObject var model: StudioModel
     let sliderHeight: CGFloat
+    @State private var editingSize = false
+    @State private var editingOpacity = false
     var body: some View {
         let brush = model.inputBrush
-        VStack(spacing: 8) {
-            Image(systemName: model.tool == .eraser ? "eraser" : "pencil.tip").font(.title3)
+        VStack(spacing: 6) {
+            Image(systemName: model.tool == .eraser ? "eraser" : model.tool == .fill ? "paintbucket" : "pencil.tip")
+                .font(.system(size: 14, weight: .medium)).foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            Text("Size").font(.caption2)
+            Text(brush.usesPressureDensity ? "Area" : "Size").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
             Text(brush.width.formatted(.number.precision(.fractionLength(1))))
-                .font(.caption.monospacedDigit()).accessibilityIdentifier("railSizeValue")
+                .font(.system(size: 11, weight: .semibold).monospacedDigit()).accessibilityIdentifier("railSizeValue")
+                .frame(width: 44, height: 20)
+                .foregroundStyle(editingSize ? StudioStyle.copper : Color.secondary)
+                .background(editingSize ? StudioStyle.copper.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
             VerticalBrushSlider(value: Binding(get: { sqrt((brush.width - 0.5) / 159.5) },
-                set: { model.setInputWidth(0.5 + $0 * $0 * 159.5) }), label: "Quick brush size", identifier: "railSize") {
-                    model.brushPreviewRequested?($0)
+                set: { model.setInputWidth(0.5 + $0 * $0 * 159.5) }), label: "Quick brush size", identifier: "railSize") { editing in
+                    withAnimation(.easeOut(duration: 0.15)) { editingSize = editing }
+                    model.brushPreviewRequested?(editing)
                 }.frame(width: 44, height: sliderHeight)
-            Divider().padding(.vertical, 4)
-            Text("Opacity").font(.caption2)
+            Divider().padding(.horizontal, 6).padding(.vertical, 4)
+            Text("Opacity").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
             Text("\((brush.opacity * 100).formatted(.number.precision(.fractionLength(1))))%")
-                .font(.caption.monospacedDigit()).accessibilityIdentifier("railOpacityValue")
+                .font(.system(size: 11, weight: .semibold).monospacedDigit()).accessibilityIdentifier("railOpacityValue")
+                .frame(width: 44, height: 20)
+                .foregroundStyle(editingOpacity ? StudioStyle.copper : Color.secondary)
+                .background(editingOpacity ? StudioStyle.copper.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
             VerticalBrushSlider(value: Binding(get: { sqrt(brush.opacity) },
-                set: { model.setInputOpacity($0 * $0) }), label: "Quick brush opacity", identifier: "railOpacity") { _ in }
+                set: { model.setInputOpacity($0 * $0) }), label: "Quick brush opacity", identifier: "railOpacity") { editing in
+                    withAnimation(.easeOut(duration: 0.15)) { editingOpacity = editing }
+                }
                 .frame(width: 44, height: sliderHeight)
         }
-        .padding(.horizontal, 8).padding(.vertical, 14).frame(width: 68)
-        .studioSurface()
+        .padding(.horizontal, 6).padding(.vertical, 12).frame(width: 56)
+        .studioControlSurface()
         .disabled(model.isDrawing || !model.canEdit || model.tool == .eyedropper)
         .accessibilityElement(children: .contain).accessibilityIdentifier("brushRail")
         .onDisappear { model.brushPreviewRequested?(false) }

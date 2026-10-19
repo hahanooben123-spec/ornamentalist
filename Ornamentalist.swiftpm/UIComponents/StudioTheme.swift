@@ -98,6 +98,11 @@ struct StudioLayersIcon: View {
 }
 
 extension View {
+    func studioControlSurface() -> some View {
+        self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+    }
     func studioSurface() -> some View {
         self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))

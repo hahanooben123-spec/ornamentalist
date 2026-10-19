@@ -54,10 +54,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.11.1: studio visible; loading gallery")
+            print("Ornamentalist 0.11.2: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.11.1: gallery loading finished")
+            print("Ornamentalist 0.11.2: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -201,33 +201,34 @@ struct StudioView: View {
                             Button { model.redo() } label: { StudioIcon(symbol: "arrow.uturn.forward") }
                                 .disabled(!model.canRedo || controlsDisabled)
                                 .accessibilityLabel("Redo").accessibilityIdentifier("redo")
-                        }.studioSurface()
+                        }.studioControlSurface().foregroundStyle(.primary)
                     }
                     Spacer(minLength: 12)
                     if layersVisible && panel == nil {
                         VStack(spacing: 0) {
                             HStack {
-                                Text("Layers").font(.system(.title3, design: .serif))
+                                Text("Layers").font(.system(size: 15, weight: .semibold))
                                 Spacer()
                                 Button { layersVisible = false } label: { StudioIcon(symbol: "chevron.right") }
                                     .accessibilityLabel("Collapse layers").accessibilityIdentifier("closePanel")
-                            }.padding(.horizontal, 14).padding(.top, 4)
+                            }.padding(.leading, 16).padding(.trailing, 4).padding(.top, 4)
+                            Divider().padding(.horizontal, 12)
                             ScrollView {
                                 StudioLayersView(model: model, onMerge: { layersVisible = false })
                                     .padding(8)
                             }
                         }
-                        .frame(width: min(300, geometry.size.width * 0.36),
-                               height: min(190 + CGFloat(model.document?.layers.count ?? 1) * 60,
+                        .frame(width: min(320, max(260, geometry.size.width * 0.40)),
+                               height: min(190 + CGFloat(model.document?.layers.count ?? 1) * 66,
                                            max(200, geometry.size.height - 96)))
-                        .studioSurface()
+                        .studioControlSurface()
                         .frame(maxHeight: .infinity, alignment: .top)
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("layersSidebar")
                         .disabled(controlsDisabled)
                     }
                 }
-                .padding(.leading, 8).padding(.top, 64).padding(.bottom, 8)
+                .padding(.horizontal, 10).padding(.top, 64).padding(.bottom, 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .disabled(exporting)
             }
@@ -243,9 +244,12 @@ struct StudioView: View {
                 else { Text("Gallery").font(.subheadline).padding(.horizontal, 12).frame(minHeight: 44) }
             }
                 .disabled(controlsDisabled).accessibilityLabel("Gallery").accessibilityIdentifier("gallery")
-            dockButton(.canvas, symbol: "wrench", detail: nil)
-            dockButton(.symmetry, symbol: "circle.hexagongrid", detail: nil)
+            HStack(spacing: 0) {
+                dockButton(.canvas, symbol: "wrench", detail: nil)
+                dockButton(.symmetry, symbol: "circle.hexagongrid", detail: nil)
+            }
             Spacer(minLength: 0)
+            HStack(spacing: 0) {
             dockButton(.brush, symbol: "paintbrush.pointed", detail: nil)
             if horizontalSizeClass == .compact {
                 Menu {
@@ -260,6 +264,9 @@ struct StudioView: View {
                 toolButton(.eyedropper, symbol: "eyedropper", label: "Eyedropper")
                 toolButton(.fill, symbol: "paintbucket", label: "Fill")
             }
+            }.padding(2)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+            Divider().frame(height: 24).padding(.horizontal, horizontalSizeClass == .compact ? 2 : 6)
             dockButton(.layers, symbol: "square.3.layers.fill", detail: nil)
             Button { panel = panel == .colors ? nil : .colors } label: {
                 Circle().fill(document.color.swiftUIColor)
@@ -270,6 +277,8 @@ struct StudioView: View {
                 .popover(isPresented: Binding(get: { panel == .colors }, set: { if !$0 && panel == .colors { panel = nil } })) {
                     StudioPanelView(panel: .colors, model: model, appearance: $appearance) {}.tint(StudioStyle.copper)
                 }
+            Spacer(minLength: 0)
+            Divider().frame(height: 24).padding(.horizontal, horizontalSizeClass == .compact ? 2 : 6)
             Menu {
                 Button("Insert photo", systemImage: "photo.on.rectangle") { panel = nil; photoPicker = true }
                 Button("Insert image file", systemImage: "doc.badge.plus") { panel = nil; importingImage = true; importing = true }
@@ -293,7 +302,8 @@ struct StudioView: View {
                     .disabled(controlsDisabled).accessibilityLabel("Hide studio controls").accessibilityIdentifier("enterZen")
             }
         }
-        .padding(.horizontal, horizontalSizeClass == .compact ? 4 : 10).padding(.vertical, 6)
+        .padding(.horizontal, horizontalSizeClass == .compact ? 4 : 12).padding(.vertical, 6)
+        .foregroundStyle(.primary)
         .background(.regularMaterial)
         .overlay(alignment: .bottom) { Divider() }
         .disabled(controlsDisabled)
@@ -304,7 +314,8 @@ struct StudioView: View {
             panel = nil; model.selectTool(model.tool == tool ? .brush : tool)
         } label: {
             StudioIcon(symbol: symbol)
-                .background(model.tool == tool ? StudioStyle.copper.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 12))
+                .foregroundStyle(model.tool == tool ? StudioStyle.copper : Color.primary)
+                .background(model.tool == tool ? StudioStyle.copper.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
         }.disabled(controlsDisabled).accessibilityLabel(label).accessibilityIdentifier("tool-\(tool.rawValue)")
             .accessibilityAddTraits(model.tool == tool ? .isSelected : [])
     }
@@ -336,7 +347,8 @@ struct StudioView: View {
                 if item == .layers { StudioLayersIcon() }
                 else { StudioIcon(symbol: symbol) }
             }
-            .background((panel == item || item == .layers && layersVisible && panel == nil) ? StudioStyle.copper.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 15))
+            .foregroundStyle((panel == item || item == .brush && model.tool == .brush || item == .layers && layersVisible && panel == nil) ? StudioStyle.copper : Color.primary)
+            .background((panel == item || item == .brush && model.tool == .brush || item == .layers && layersVisible && panel == nil) ? StudioStyle.copper.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
             .contentShape(Rectangle())
         }
         .buttonStyle(StudioPressStyle()).accessibilityLabel(item.rawValue).accessibilityValue(detail ?? "")
