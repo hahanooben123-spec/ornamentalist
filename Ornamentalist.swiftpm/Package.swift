@@ -9,7 +9,7 @@ let package = Package(
         .iOSApplication(
             name: "Ornamentalist",
             targets: ["Ornamentalist"],
-            bundleIdentifier: "studio.mandala.prototype",
+            bundleIdentifier: "studie.mandala.prototype",
             teamIdentifier: "K2TYPDPPZJ",
             displayVersion: "0.11.2",
             bundleVersion: "35",

@@ -1,6 +1,6 @@
 # First TestFlight upload from iPad
 
-Team ID: `K2TYPDPPZJ`. Bundle ID: `studio.mandala.prototype`.
+Team ID: `K2TYPDPPZJ`. Bundle ID: `studie.mandala.prototype`.
 
 Apple supports uploading app playgrounds directly from Swift Playgrounds on
 iPad. This is our first-upload path; no GitHub API key or Mac is required.
