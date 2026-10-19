@@ -24,6 +24,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private var synchronizedDisplay: CanvasDisplayState?
     private(set) var synchronizationRedraws = 0
     private var drawingTouch: UITouch?
+    private var holdOrigin: Point?
+    private var lastMotionTime = 0.0
     private var colorTouch: UITouch?
     private var preview: [BrushVertex] = []
     private var navigationGestures: [UIGestureRecognizer] = []
@@ -238,6 +240,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         guard (0...document.size.x).contains(p.x), (0...document.size.y).contains(p.y) else { return }
         guard model.usedSamples < DrawingLimits.sampleCount else { report(DocumentError.sampleLimit); return }
         drawingTouch = touch
+        holdOrigin = p; lastMotionTime = touch.timestamp
         session = StrokeSession(brush: model.tool == .eraser ? model.eraserBrush : document.brush, symmetry: document.symmetry,
                                 existingSamples: model.usedSamples, existingVertices: model.usedVertices,
                                 layerID: document.activeLayerID, color: document.color, operation: model.tool == .eraser ? .erase : .ink,
@@ -280,6 +283,11 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     private func ingest(_ touch: UITouch, event: UIEvent?) {
         guard session != nil else { return }
+        let currentPoint = point(touch)
+        if let origin = holdOrigin,
+           (currentPoint - origin).length * hypot(canvasMatrix.a, canvasMatrix.b) > 4 {
+            holdOrigin = currentPoint; lastMotionTime = touch.timestamp
+        }
         cursorCanvasPoint = point(touch)
         updateBrushCursor()
         do {
@@ -296,14 +304,17 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     private func finishStroke(rebuild: Bool = false) {
         guard let completed = session else { return }
-        let stroke = completed.finishedStroke()
+        let original = completed.finishedStroke()
+        let held = model.shapeCorrection && !rebuild && drawingTouch.map { $0.timestamp - lastMotionTime >= 0.6 } == true
+        let correction = held ? StrokeGeometry.correctedShape(original) : nil
+        let stroke = correction ?? original
         session = nil; drawingTouch = nil; preview = []
-        if rebuild { renderer?.cancel() }
+        if rebuild || correction != nil { renderer?.cancel() }
         else {
             do { try renderer?.commit(stroke) } catch { renderer?.cancel(); report(error) }
         }
         model.setDrawing(false)
-        if !stroke.samples.isEmpty { model.append(stroke, estimatedVertices: completed.estimatedStorageCost) }
+        if !stroke.samples.isEmpty { model.append(stroke, estimatedVertices: correction == nil ? completed.estimatedStorageCost : nil) }
         navigationGestures.forEach { $0.isEnabled = true }
         updateBrushCursor()
         setNeedsDisplay()

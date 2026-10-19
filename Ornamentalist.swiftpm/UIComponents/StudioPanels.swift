@@ -96,6 +96,20 @@ struct StudioPanelView: View {
             }.accessibilityIdentifier("fitCanvas")
             Divider()
             Toggle("Draw with finger", isOn: $model.fingerDrawing).font(.subheadline)
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Hold for line or circle", isOn: $model.shapeCorrection).font(.subheadline)
+                Text("Draw a line or circle, hold still for 0.6 seconds, then lift to correct it.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Parallel copy · \(Int(model.parallelDistance)) px").font(.subheadline)
+                Slider(value: $model.parallelDistance, in: -80...80, step: 1)
+                    .accessibilityLabel("Parallel copy distance")
+                Button("Copy last stroke in parallel", systemImage: "line.3.horizontal") { model.addParallelCopy() }
+                    .disabled(!model.canDraw || model.document?.strokes.last(where: { $0.layerID == model.document?.activeLayerID && $0.operation == .ink }) == nil || abs(model.parallelDistance) < 1)
+                Text("Copies the last ink stroke on the active layer. Negative distance changes sides. Undo removes the copy.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Show Pencil cursor", isOn: Binding(get: { model.showBrushCursor }, set: { model.setShowBrushCursor($0) }))
                     .font(.subheadline).accessibilityIdentifier("showBrushCursor")

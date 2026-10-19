@@ -45,6 +45,8 @@ final class StudioModel: ObservableObject {
     @Published var recoveryNotice = false
     @Published var guides = true
     @Published var fingerDrawing = false
+    @Published var shapeCorrection = false
+    @Published var parallelDistance = 12.0
     @Published private(set) var showBrushCursor = true
     @Published var resetViewToken = UUID()
     @Published private(set) var tool = StudioTool.brush
@@ -331,6 +333,14 @@ final class StudioModel: ObservableObject {
     func setMirror(_ enabled: Bool) {
         guard canEdit, !isDrawing, document != nil else { return }
         document?.symmetry.mirror = enabled; changed()
+    }
+    func addParallelCopy() {
+        guard canDraw, !isDrawing, let d = document,
+              let source = d.strokes.last(where: { $0.layerID == d.activeLayerID && $0.operation == .ink }),
+              let copy = StrokeGeometry.parallelCopy(source, distance: parallelDistance) else { return }
+        var candidate = d; candidate.strokes.append(copy)
+        do { try candidate.validate(); append(copy) }
+        catch { self.error = error.localizedDescription }
     }
     func selectLayer(_ id: UUID) {
         finishLayerOpacityEdit()

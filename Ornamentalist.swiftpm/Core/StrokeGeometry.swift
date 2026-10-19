@@ -3,6 +3,69 @@ import Foundation
 /// Triangles are renderer independent. Quadratic midpoint interpolation is causal:
 /// only the uncommitted tail changes when another sample arrives.
 enum StrokeGeometry {
+    /// Recognize only an unambiguous line or nearly closed circle. Other
+    /// strokes stay unchanged; input timing and symmetry remain intact.
+    static func correctedShape(_ stroke: InkStroke) -> InkStroke? {
+        guard stroke.operation == .ink, stroke.samples.count >= 6,
+              let first = stroke.samples.first, let last = stroke.samples.last else { return nil }
+        let points = stroke.samples.map(\.point)
+        let delta = last.point - first.point, span = delta.length
+        var positions: [Point] = []
+        if span > 12 {
+            let error = points.map { abs(delta.x * ($0.y - first.point.y) - delta.y * ($0.x - first.point.x)) / span }.max() ?? 0
+            let length = zip(points, points.dropFirst()).reduce(0.0) { $0 + ($1.1 - $1.0).length }
+            if error <= max(2, span * 0.035), length <= span * 1.15 {
+                positions = (0...16).map { first.point + delta * (Double($0) / 16) }
+            }
+        }
+        if positions.isEmpty, points.count >= 16 {
+            let lowX = points.map(\.x).min()!, highX = points.map(\.x).max()!
+            let lowY = points.map(\.y).min()!, highY = points.map(\.y).max()!
+            let width = highX - lowX, height = highY - lowY
+            let radius = (width + height) * 0.25
+            let center = Point(x: (lowX + highX) * 0.5, y: (lowY + highY) * 0.5)
+            guard radius > 8, min(width, height) / max(width, height) > 0.8,
+                  span < radius * 0.4 else { return nil }
+            let radialError = points.reduce(0.0) { $0 + abs(($1 - center).length - radius) } / Double(points.count)
+            guard radialError < radius * 0.1 else { return nil }
+            let start = atan2(first.point.y - center.y, first.point.x - center.x)
+            let winding = zip(points, points.dropFirst()).reduce(0.0) {
+                let a = $1.0 - center, b = $1.1 - center
+                return $0 + atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y)
+            }
+            guard abs(winding) > .pi * 1.7 else { return nil }
+            positions = (0...128).map { index in
+                let angle = start + (winding < 0 ? -1.0 : 1.0) * Double(index) * 2 * .pi / 128
+                return center + Point(x: cos(angle), y: sin(angle)) * radius
+            }
+        }
+        guard !positions.isEmpty else { return nil }
+        var result = stroke
+        let pressure = stroke.samples.reduce(0.0) { $0 + $1.pressure } / Double(stroke.samples.count)
+        result.samples = positions.enumerated().map { index, point in
+            var sample = first; sample.point = point; sample.pressure = pressure; sample.radiusScale = 1
+            sample.time = first.time + max(0.01, last.time - first.time) * Double(index) / Double(positions.count - 1)
+            return sample
+        }
+        return result
+    }
+
+    /// Constant-distance normal offset. Closed curves retain a shared endpoint.
+    static func parallelCopy(_ stroke: InkStroke, distance: Double) -> InkStroke? {
+        guard distance.isFinite, abs(distance) >= 1, abs(distance) <= 100,
+              stroke.samples.count >= 2, stroke.operation == .ink else { return nil }
+        var result = stroke; result.geometrySeed = stroke.seedID; result.id = UUID()
+        let points = stroke.samples.map(\.point)
+        let closed = points.count > 3 && (points[0] - points[points.count - 1]).length < 0.01
+        for index in points.indices {
+            let previous = index == 0 ? (closed ? points[points.count - 2] : points[0]) : points[index - 1]
+            let next = index == points.count - 1 ? (closed ? points[1] : points[index]) : points[index + 1]
+            let tangent = next - previous
+            guard tangent.length > 0.00001 else { continue }
+            result.samples[index].point = points[index] + Point(x: -tangent.y, y: tangent.x) * (distance / tangent.length)
+        }
+        return result
+    }
     static func disk(_ p: StrokeSample, brush: InkBrush) -> [Point] {
         let r = p.radius(brush: brush)
         let sides = brush.diskSides

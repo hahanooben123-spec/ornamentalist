@@ -2,6 +2,26 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class CoreTests: XCTestCase {
+    func testShapeCorrectionRecognizesLineAndCircleAndParallelCopyKeepsSymmetry() throws {
+        var stroke = InkStroke()
+        stroke.samples = (0...20).map { i in
+            StrokeSample(point: Point(x: Double(i) * 5, y: i % 2 == 0 ? 0 : 1), pressure: 1, altitude: 1, azimuth: 0, time: Double(i))
+        }
+        let line = try XCTUnwrap(StrokeGeometry.correctedShape(stroke))
+        XCTAssertTrue(line.samples.allSatisfy { $0.point.y == 0 })
+        let parallel = try XCTUnwrap(StrokeGeometry.parallelCopy(line, distance: 12))
+        XCTAssertTrue(parallel.samples.allSatisfy { abs($0.point.y - 12) < 0.001 })
+        XCTAssertNotEqual(parallel.id, line.id)
+        XCTAssertEqual(parallel.symmetry, line.symmetry)
+        stroke.samples = (0...64).map { i in
+            let angle = Double(i) * 2 * Double.pi / 64
+            return StrokeSample(point: Point(x: 100 + cos(angle) * 50, y: 100 + sin(angle) * 50), pressure: 1, altitude: 1, azimuth: 0, time: Double(i))
+        }
+        let circle = try XCTUnwrap(StrokeGeometry.correctedShape(stroke))
+        XCTAssertEqual(circle.samples.count, 129)
+        for sample in circle.samples { XCTAssertEqual((sample.point - Point(x: 100, y: 100)).length, 50, accuracy: 0.001) }
+        XCTAssertLessThan((circle.samples.first!.point - circle.samples.last!.point).length, 0.001)
+    }
     func testFillStopsAtOutlineAndSupportsSymmetrySeeds() {
         var rgba = [UInt8](repeating: 255, count: 5 * 3 * 4)
         for y in 0..<3 {
