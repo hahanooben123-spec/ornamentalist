@@ -75,6 +75,8 @@ actor DocumentRepository {
     private var savedGenerations: [UUID: Int] = [:]
     private let saveDelayNanoseconds: UInt64
     private var primarySnapshot: DrawingDocument?
+    private var primaryAppendLineage: UUID?
+    private(set) var prefixComparisons = 0
     private var journalBaseRevisions: [UUID: Int] = [:]
     private(set) var lastCheckpointBytes = 0
 
@@ -120,7 +122,7 @@ actor DocumentRepository {
         guard data.count <= DrawingLimits.encodedBytes else { throw DocumentError.oversized }
         return data
     }
-    func save(_ document: DrawingDocument, generation: Int) async throws {
+    func save(_ document: DrawingDocument, generation: Int, appendLineage: UUID? = nil) async throws {
         if saveDelayNanoseconds > 0 { try await Task.sleep(nanoseconds: saveDelayNanoseconds) }
         guard !isDeleted(document.id) else { return }
         if let saved = savedGenerations[document.id], generation < saved { return }
@@ -132,33 +134,46 @@ actor DocumentRepository {
         }
         try data.write(to: target, options: .atomic)
         savedGenerations[document.id] = generation
-        var saved = document; saved.storageRevision = generation; primarySnapshot = saved
+        var saved = document; saved.storageRevision = generation; primarySnapshot = saved; primaryAppendLineage = appendLineage
         // Revisions make a crash between primary write and journal deletion safe.
         try? FileManager.default.removeItem(at: file(document.id, suffix: "journal"))
         try? FileManager.default.removeItem(at: file(document.id, suffix: "journalbase"))
         journalBaseRevisions.removeValue(forKey: document.id)
         try? writeIndex(document, bytes: data.count)
     }
+    /// A model-owned lineage survives only appending immutable strokes. Other callers
+    /// retain the defensive deep comparison; the token is never loaded from a file.
+    private func matchesPrefix(_ base: DrawingDocument, _ document: DrawingDocument, appendLineage: UUID?) -> Bool {
+        guard base.id == document.id, document.strokes.count >= base.strokes.count else { return false }
+        if let appendLineage, appendLineage == primaryAppendLineage,
+           primarySnapshot?.id == base.id, primarySnapshot?.storageRevision == base.storageRevision { return true }
+        prefixComparisons += 1
+        let matches = zip(base.strokes, document.strokes).allSatisfy { $0 == $1 }
+        if matches, let appendLineage {
+            primarySnapshot = base; primaryAppendLineage = appendLineage
+        }
+        return matches
+    }
     /// Atomic rolling journal, including confirmed input from an unfinished stroke.
-    func autosave(_ document: DrawingDocument, generation: Int) async throws {
+    func autosave(_ document: DrawingDocument, generation: Int, appendLineage: UUID? = nil) async throws {
         let base = primarySnapshot?.id == document.id ? primarySnapshot : (try? decode(file(document.id)))
         if let base, document.strokes.count >= base.strokes.count,
            document.strokes.count - base.strokes.count < 64,
-           zip(base.strokes, document.strokes).allSatisfy({ $0 == $1 }),
+           matchesPrefix(base, document, appendLineage: appendLineage),
            document.strokes.dropFirst(base.strokes.count).reduce(0, { $0 + $1.samples.count }) < 20_000 {
             primarySnapshot = base
-            try checkpoint(document, generation: generation)
-        } else { try await save(document, generation: generation) }
+            try checkpoint(document, generation: generation, appendLineage: appendLineage)
+        } else { try await save(document, generation: generation, appendLineage: appendLineage) }
     }
-    func checkpoint(_ document: DrawingDocument, generation: Int) throws {
+    func checkpoint(_ document: DrawingDocument, generation: Int, appendLineage: UUID? = nil) throws {
         guard !isDeleted(document.id) else { return }
         if let saved = savedGenerations[document.id], generation < saved { return }
         let base: DrawingDocument?
         if primarySnapshot?.id == document.id { base = primarySnapshot }
-        else { base = try? decode(file(document.id)); primarySnapshot = base }
+        else { base = try? decode(file(document.id)); primarySnapshot = base; primaryAppendLineage = nil }
         let data: Data
         if let base, document.strokes.count >= base.strokes.count,
-           zip(base.strokes, document.strokes).allSatisfy({ $0 == $1 }) {
+           matchesPrefix(base, document, appendLineage: appendLineage) {
             if journalBaseRevisions[document.id] != base.storageRevision {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 try Data(contentsOf: file(document.id)).write(to: file(document.id, suffix: "journalbase"), options: .atomic)
@@ -190,7 +205,7 @@ actor DocumentRepository {
             return (journal, true)
         }
         if let primary = validPrimary {
-            primarySnapshot = primary
+            primarySnapshot = primary; primaryAppendLineage = nil
             savedGenerations[id] = max(savedGenerations[id] ?? 0, primary.storageRevision)
             return (primary, false)
         }

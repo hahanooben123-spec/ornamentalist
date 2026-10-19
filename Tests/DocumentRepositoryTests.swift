@@ -2,6 +2,31 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class DocumentRepositoryTests: XCTestCase {
+    func testAppendLineageSkipsPrefixScanAndStructuralChangeStillSavesExactly() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DocumentRepository(directory: directory)
+        let lineage = UUID()
+        let sample = StrokeSample(point: Point(x: 30, y: 40), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+        var drawing = DrawingDocument(); drawing.strokes = [InkStroke(samples: [sample])]
+        try await store.save(drawing, generation: 1, appendLineage: lineage)
+        drawing.strokes.append(InkStroke(samples: [sample]))
+        try await store.autosave(drawing, generation: 2, appendLineage: lineage)
+        let comparisons = await store.prefixComparisons
+        XCTAssertEqual(comparisons, 0)
+        let restart = DocumentRepository(directory: directory)
+        let appended = try await restart.open(drawing.id)
+        XCTAssertEqual(appended.0.strokes, drawing.strokes)
+        // A structural edit retains the ID but changes existing ink.
+        drawing.strokes[0].samples[0].point.x = 100
+        try await store.autosave(drawing, generation: 3, appendLineage: UUID())
+        let scanned = await store.prefixComparisons
+        XCTAssertGreaterThan(scanned, 0)
+        let reopened = try await DocumentRepository(directory: directory).open(drawing.id)
+        XCTAssertEqual(reopened.0.strokes, drawing.strokes)
+        XCTAssertEqual(reopened.0.storageRevision, 3)
+    }
+
     func testCompressionChecksIntegrityBoundsAndLegacyJSON() throws {
         let original = Data(String(repeating: "editable drawing samples ", count: 4000).utf8)
         let packed = try DrawingStorageCodec.pack(original)

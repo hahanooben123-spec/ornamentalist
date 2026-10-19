@@ -54,6 +54,8 @@ final class StudioModel: ObservableObject {
     var canEdit: Bool { !busy && !isPreparing && !isTransforming && !isNavigating }
     let repository: DocumentRepository
     private let exportService = ExportService()
+    private let previewService = ExportService()
+    private var appendLineage = UUID()
     // Canvas exposes confirmed ink only; no predicted points enter a checkpoint.
     var captureActiveStroke: (() -> InkStroke?)?
     var rendererDiagnostics: (() -> String)?
@@ -235,6 +237,7 @@ final class StudioModel: ObservableObject {
             adopted.brush.pressureGain = 2.5
             rememberBrush(adopted.brush)
         }
+        appendLineage = UUID()
         document = adopted; history = StrokeHistory()
         preferredBrushPreset = adopted.brush.preset
         preferences?.set(preferredBrushPreset.rawValue, forKey: "activeBrushPreset")
@@ -312,7 +315,7 @@ final class StudioModel: ObservableObject {
         // Completion of confirmed input may occur during deactivation.
         guard !busy, var d = document,
               d.layers.contains(where: { $0.id == stroke.layerID && $0.isVisible && !$0.isLocked }) else { return }
-        history.recordNewStroke(stroke, in: &d); document = d; changed()
+        history.recordNewStroke(stroke, in: &d); document = d; changed(appending: true)
         usedSamples += stroke.samples.count
         usedVertices += estimatedVertices ?? BrushGeometry.estimatedStorageCost(stroke)
     }
@@ -378,7 +381,7 @@ final class StudioModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func layerThumbnail(_ snapshot: DrawingDocument, id: UUID) async throws -> Data {
-        try await exportService.layerThumbnail(snapshot, id: id)
+        try await previewService.layerThumbnail(snapshot, id: id)
     }
     func insertImage(_ data: Data) async {
         guard canEdit, !isDrawing, !isTransforming, let before = document else { return }
@@ -633,7 +636,8 @@ final class StudioModel: ObservableObject {
         if tool == .eraser { eraserBrush = brush; rememberEraser() }
         else { document?.brush = brush; changed() }
     }
-    private func changed() {
+    private func changed(appending: Bool = false) {
+        if !appending { appendLineage = UUID() }
         document?.version = 17; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
@@ -661,13 +665,14 @@ final class StudioModel: ObservableObject {
         guard let snapshot = document else { return true }
         guard !saveRunning, !isDrawing else { return false }
         saveRunning = true; defer { saveRunning = false }
+        let lineage = appendLineage
         let requestedGeneration = generation
         writeSequence += 1
         let sequence = writeSequence
         saveStatus = "Saving…"
         do {
-            if incremental { try await repository.autosave(snapshot, generation: sequence) }
-            else { try await repository.save(snapshot, generation: sequence) }
+            if incremental { try await repository.autosave(snapshot, generation: sequence, appendLineage: lineage) }
+            else { try await repository.save(snapshot, generation: sequence, appendLineage: lineage) }
             guard document?.id == snapshot.id else { return false }
             nextSaveAttempt = 0; reportedSaveFailure = false
             if generation == requestedGeneration {
@@ -696,7 +701,7 @@ final class StudioModel: ObservableObject {
         writeSequence += 1
         let sequence = writeSequence
         do {
-            try await repository.checkpoint(snapshot, generation: sequence)
+            try await repository.checkpoint(snapshot, generation: sequence, appendLineage: appendLineage)
             lastCheckpointSampleCount = active.samples.count; lastCheckpoint = Date()
             lastCheckpointStrokeID = active.id
         } catch { saveStatus = "Recovery save failed"; self.error = error.localizedDescription }
@@ -732,13 +737,14 @@ final class StudioModel: ObservableObject {
                 do {
                     let (snapshot, _) = try await self.repository.open(project.id)
                     try Task.checkCancellation()
-                    let thumbnail = try await self.exportService.thumbnail(snapshot)
+                    let thumbnail = try await self.previewService.thumbnail(snapshot)
                     try Task.checkCancellation()
                     try await self.repository.storeThumbnail(thumbnail, id: snapshot.id, generation: snapshot.storageRevision)
-                    let updated = try await self.repository.list()
                     guard !Task.isCancelled, self.document == nil, self.thumbnailRequest == request else { return }
                     self.thumbnailRefreshIDs.remove(project.id)
-                    self.projects = updated
+                    if let index = self.projects.firstIndex(where: { $0.id == project.id }) {
+                        self.projects[index].thumbnail = thumbnail
+                    }
                 } catch is CancellationError { return }
                 catch {
                     if self.document == nil {

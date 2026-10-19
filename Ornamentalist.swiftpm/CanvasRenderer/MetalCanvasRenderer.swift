@@ -65,6 +65,8 @@ final class MetalCanvasRenderer {
     private let singlePipeline: MTLRenderPipelineState
     private let compositePipeline: MTLRenderPipelineState
     private let restoreSamplesPipeline: MTLRenderPipelineState
+    private let restoreTileSamplesPipeline: MTLRenderPipelineState
+    private let restoreTileColorPipeline: MTLRenderPipelineState
     private let restoreColorPipeline: MTLRenderPipelineState
     private let clearCoveragePipeline: MTLRenderPipelineState
     private let clearRegionPipeline: MTLRenderPipelineState
@@ -92,6 +94,14 @@ final class MetalCanvasRenderer {
     private(set) var incrementalLayerUpdates = 0
     private(set) var liveConfirmedVertexDraws = 0
     private(set) var renderCacheBytes = 0
+    private var liveSourceBounds = CGRect.null
+    private var liveWorkStroke: UUID?
+    private var liveWorkBounds = CGRect.null
+    private var liveTile: MTLTexture?
+    private var liveTileMSAA: MTLTexture?
+    private var liveTileStencil: MTLTexture?
+    private(set) var partialLiveRestores = 0
+    private(set) var streamedSubmissions = 0
     private var liveRevision = 0
     private var uploadedLiveRevision = -1
     private var uploadedLive: [GPUChunk] = []
@@ -101,6 +111,7 @@ final class MetalCanvasRenderer {
     private var cache: [UUID: [GPUChunk]] = [:]
     private var registered: Set<UUID> = []
     private var cacheOrder: [UUID] = []
+    private var preparationPins = Set<UUID>()
     private let geometryBudget: Int
     private var strokeBounds: [UUID: CGRect] = [:]
     private(set) var localTileUpdates = 0
@@ -146,7 +157,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = allocatedGeometryBytes + sealed.reduce(0) { $0 + $1.buffer.length } + scratch.count * 16
-        return "Ornamentalist 0.11.4\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nZoom preview frames: \(navigationPreviewFrames)\nZoom preview texture: \((navigationTexture.map { $0.width * $0.height * 4 } ?? 0) / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.11.5\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nPartial live restores: \(partialLiveRestores)\nStreamed submissions: \(streamedSubmissions)\nZoom preview frames: \(navigationPreviewFrames)\nZoom preview texture: \((navigationTexture.map { $0.width * $0.height * 4 } ?? 0) / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -215,6 +226,10 @@ final class MetalCanvasRenderer {
         restoreColorPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.fragmentFunction = library.makeFunction(name: "restoreSamplesFragment")
         restoreSamplesPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.fragmentFunction = library.makeFunction(name: "restoreTileSamplesFragment")
+        restoreTileSamplesPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.fragmentFunction = library.makeFunction(name: "restoreTileColorFragment")
+        restoreTileColorPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.fragmentFunction = nil
         attachment.writeMask = []
         clearCoveragePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
@@ -303,9 +318,14 @@ final class MetalCanvasRenderer {
         cache[id] = nil; cacheOrder.removeAll { $0 == id }
         let bytes = buffers.reduce(0) { $0 + $1.buffer.length }
         var current = allocatedGeometryBytes
-        while current + bytes > geometryBudget, let oldest = cacheOrder.first {
+        while current + bytes > geometryBudget {
+            guard let oldest = cacheOrder.first(where: { !preparationPins.contains($0) }) else {
+                // Stream this one stroke without caching it until an upcoming
+                // warm stroke has been consumed; do not evict that future work.
+                registered.insert(id); recountBuffers(); return
+            }
             current -= cache[oldest]?.reduce(0) { $0 + $1.buffer.length } ?? 0
-            cache[oldest] = nil; cacheOrder.removeFirst()
+            cache[oldest] = nil; cacheOrder.removeAll { $0 == oldest }
         }
         cache[id] = buffers; cacheOrder.append(id); registered.insert(id)
         recountBuffers()
@@ -367,6 +387,7 @@ final class MetalCanvasRenderer {
         resetInputBuffers()
     }
     private func resetInputBuffers() {
+        liveSourceBounds = .null; liveWorkStroke = nil; liveWorkBounds = .null
         sealed.removeAll(); sealedVertexCount = 0; sealedStorageUnits = 0; scratch.removeAll(keepingCapacity: true)
         liveRevision += 1; uploadedLive.removeAll(); uploadedLiveRevision = -1
         uploadedPrediction.removeAll(); predictionBuffers.removeAll()
@@ -380,6 +401,7 @@ final class MetalCanvasRenderer {
             throw DocumentError.geometryLimit
         }
         for p in points {
+            liveSourceBounds = liveSourceBounds.union(CGRect(x: p.point.x, y: p.point.y, width: 0, height: 0))
             scratch.append(packedVertex(p))
             if scratch.count == chunkSize {
                 let next = try chunk(scratch)
@@ -758,6 +780,7 @@ final class MetalCanvasRenderer {
         clearLayerCaches(); workTexture = nil; workMultisample = nil; coverageStencil = nil
         let resolved = try texture(width: width, height: height)
         let multisample: MTLTexture?
+        liveWorkStroke = nil
         if sampleCount > 1 { multisample = try texture(width: width, height: height, samples: sampleCount, transient: true) }
         else { multisample = nil }
         workTexture = resolved; workMultisample = multisample
@@ -961,22 +984,41 @@ final class MetalCanvasRenderer {
                             active: nil, preview: [], guides: false, layerOnly: layer.id, strokes: [])
         } catch { encoder.endEncoding(); throw error }
         encoder.endEncoding(); try await submit(first)
-        for stroke in document.strokes where stroke.layerID == layer.id {
+        var pending: MTLCommandBuffer?
+        var batchCount = 0, batchBytes = 0
+        for stroke in sceneLayerStrokes[layer.id] ?? [] {
+            try Task.checkCancellation()
             guard sceneDocumentID == document.id, sceneRevision == revision else { throw CancellationError() }
-            if cache[stroke.id] == nil {
+            let strokeBuffers: [GPUChunk]
+            if let existing = cache[stroke.id] { strokeBuffers = existing }
+            else {
                 let points = await Task.detached(priority: .userInitiated) { BrushGeometry.mesh(stroke) }.value
                 try Task.checkCancellation()
-                retain(try chunks(points), for: stroke.id); geometryRebuilds += 1
+                strokeBuffers = try chunks(points)
+                retain(strokeBuffers, for: stroke.id); geometryRebuilds += 1
             }
-            guard let command = queue.makeCommandBuffer(), let ink = command.makeRenderCommandEncoder(
+            if pending == nil { pending = queue.makeCommandBuffer() }
+            guard let command = pending, let ink = command.makeRenderCommandEncoder(
                 descriptor: try geometryPass(target, load: .load)) else { throw DocumentError.graphics }
             do {
-                try encodeScene(encoder: ink, document: document, viewport: viewport, viewSize: viewSize,
-                                active: nil, preview: [], guides: false, layerOnly: layer.id,
-                                strokes: [stroke], includeRaster: false)
+                committedStrokeDraws += 1
+                beginStroke(stroke, encoder: ink)
+                try encode(strokeBuffers, symmetry: stroke.symmetry,
+                           transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size),
+                           size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: ink)
             } catch { ink.endEncoding(); throw error }
-            ink.endEncoding(); try await submit(command)
+            ink.endEncoding(); preparationPins.remove(stroke.id)
+            batchCount += 1
+            batchBytes += strokeBuffers.reduce(0) { $0 + $1.buffer.length }
+            // Encoded buffers remain owned by this command even if the LRU evicts
+            // them. Submit bounded batches rather than wait after every stroke.
+            if batchCount >= 4 || batchBytes >= 2 * 1024 * 1024 {
+                try await submit(command); streamedSubmissions += 1
+                pending = nil; batchCount = 0; batchBytes = 0
+            }
         }
+        if let pending { try await submit(pending); streamedSubmissions += 1 }
+
     }
 
     private func prepareScene(document: DrawingDocument, viewport: Viewport, viewSize: Point,
@@ -987,7 +1029,10 @@ final class MetalCanvasRenderer {
         guard let barrier = queue.makeCommandBuffer() else { throw DocumentError.graphics }
         try await submit(barrier)
         guard sceneDocumentID == document.id, sceneRevision == revision else { throw CancellationError() }
-        clearLayerCaches(); cache.removeAll(); cacheOrder.removeAll(); recountBuffers()
+        clearLayerCaches()
+        let visible = Set(document.layers.filter { $0.isVisible && $0.opacity > 0 }.map(\.id))
+        preparationPins = Set(document.strokes.filter { visible.contains($0.layerID) && cache[$0.id] != nil }.map(\.id))
+        defer { preparationPins.removeAll() }
         try configureSurface(document: document, viewport: viewport, viewSize: viewSize, width: width, height: height)
         let index = document.layers.firstIndex { $0.id == (focus ?? document.activeLayerID) } ?? 0
         // Persistent MSAA is necessary between submissions. A memoryless target
@@ -1033,6 +1078,7 @@ final class MetalCanvasRenderer {
         let key = layers.map { LayerCompositeKey(paint: paintKey($0), opacity: $0.opacity) }
         guard !layers.isEmpty else { return (nil, key) }
         if previous == key, let target { return (target, key) }
+        liveWorkStroke = nil
         guard let work = workTexture else { throw DocumentError.graphics }
         let result = try target ?? texture(width: work.width, height: work.height)
         if let previous, target != nil, previous.map({ $0.paint.id }) == key.map({ $0.paint.id }),
@@ -1064,7 +1110,7 @@ final class MetalCanvasRenderer {
             }
         }
         for (index, layer) in layers.enumerated() {
-            let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
+            let (pass, region) = try livePass(active, preview: preview, document: document, viewport: viewport, viewSize: viewSize, work: work)
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
             do {
                 try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,
@@ -1081,6 +1127,7 @@ final class MetalCanvasRenderer {
                                     document: DrawingDocument, viewport: Viewport, viewSize: Point) throws {
         let key = paintKey(layer)
         if activeKey == key, activeTexture != nil { return }
+        liveWorkStroke = nil
         guard let work = workTexture else { throw DocumentError.graphics }
         let target = try activeTexture ?? texture(width: work.width, height: work.height, samples: sampleCount)
         let incremental: Bool
@@ -1130,6 +1177,76 @@ final class MetalCanvasRenderer {
         activeLiveID = nil; activeLiveVertices = 0; pendingLiveCommit = nil
     }
 
+    private func liveRegion(_ active: InkStroke, preview: [BrushVertex], document: DrawingDocument,
+                            viewport: Viewport, viewSize: Point, work: MTLTexture) -> CGRect? {
+        let reuse = liveWorkStroke == active.id
+        var source = liveSourceBounds
+        for vertex in preview { source = source.union(CGRect(x: vertex.point.x, y: vertex.point.y, width: 0, height: 0)) }
+        let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
+        var screen = CGRect.null
+        for matrix in active.symmetry.matrices { screen = screen.union(transformed(transformed(source, by: matrix), by: transform)) }
+        let sx = Double(work.width) / viewSize.x, sy = Double(work.height) / viewSize.y
+        let pixels = CGRect(x: screen.minX * sx, y: screen.minY * sy,
+                            width: screen.width * sx, height: screen.height * sy).insetBy(dx: -3, dy: -3)
+        // Include prior predictions so a moving/shrinking tail leaves no ghosts.
+        liveWorkBounds = liveWorkBounds.union(pixels)
+        let clipped = liveWorkBounds.intersection(CGRect(x: 0, y: 0, width: work.width, height: work.height)).integral
+        liveWorkStroke = active.id
+        guard reuse, !clipped.isNull, !clipped.isEmpty, clipped.width <= 1024, clipped.height <= 1024,
+              clipped.width * clipped.height < Double(work.width * work.height) * 0.5 else { return nil }
+        return clipped
+    }
+
+    private func renderLiveTile(_ active: InkStroke, preview: [BrushVertex], region: CGRect,
+                                command: MTLCommandBuffer, document: DrawingDocument, viewport: Viewport,
+                                viewSize: Point, base: MTLTexture, work: MTLTexture) throws {
+        // A small resolved tile replaces only the dirty rectangle in the full
+        // resolved layer. MSAA remains memoryless; no full-screen MSAA history
+        // needs to be loaded or stored just to update a short stroke.
+        let side = max(region.width, region.height) <= 512 ? 512 : 1024
+        if liveTile == nil || liveTile!.width < side {
+            liveTile = nil; liveTileMSAA = nil; liveTileStencil = nil
+            liveTile = try texture(width: side, height: side)
+            if sampleCount > 1 { liveTileMSAA = try texture(width: side, height: side, samples: sampleCount, transient: true) }
+        }
+        guard let tile = liveTile else { throw DocumentError.graphicsMemory }
+        let target = liveTileMSAA ?? tile
+        // Keep independent stencil attachments: switching between full layer and
+        // small tile must not allocate a replacement stencil on every input event.
+        let fullStencil = coverageStencil; coverageStencil = liveTileStencil
+        let pass: MTLRenderPassDescriptor
+        do { pass = try geometryPass(target, resolve: liveTileMSAA == nil ? nil : tile) }
+        catch { liveTileStencil = coverageStencil; coverageStencil = fullStencil; throw error }
+        liveTileStencil = coverageStencil; coverageStencil = fullStencil
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
+        do {
+            encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: Int(region.width), height: Int(region.height)))
+            encoder.setRenderPipelineState(sampleCount > 1 ? restoreTileSamplesPipeline : restoreTileColorPipeline)
+            encoder.setFragmentTexture(base, index: 0)
+            var origin = SIMD2<UInt32>(UInt32(region.minX), UInt32(region.minY))
+            encoder.setFragmentBytes(&origin, length: MemoryLayout<SIMD2<UInt32>>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+            let scale = Matrix(a: Double(work.width) / viewSize.x, d: Double(work.height) / viewSize.y)
+            let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size).followed(by: scale)
+                .followed(by: .translation(Point(x: -region.minX, y: -region.minY)))
+            let size = Point(x: Double(tile.width), y: Double(tile.height))
+            if usesUniformOpacity(active) {
+                try encodeLive(active, preview: preview, transform: transform, viewSize: size, canvas: document.size, encoder: encoder)
+            } else {
+                encoder.setRenderPipelineState(active.operation == .erase ? erasePipeline : pipeline)
+                try encode(predictionBuffers, symmetry: active.symmetry, transform: transform, size: size,
+                           canvas: document.size, color: inkColor(active), brush: active.brush, encoder: encoder)
+            }
+        } catch { encoder.endEncoding(); throw error }
+        encoder.endEncoding()
+        guard let blit = command.makeBlitCommandEncoder() else { throw DocumentError.graphics }
+        blit.copy(from: tile, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                  sourceSize: MTLSize(width: Int(region.width), height: Int(region.height), depth: 1),
+                  to: work, destinationSlice: 0, destinationLevel: 0,
+                  destinationOrigin: MTLOrigin(x: Int(region.minX), y: Int(region.minY), z: 0))
+        blit.endEncoding(); partialLiveRestores += 1
+    }
+
     /// Keep per-sample committed coverage: restoring a resolved bitmap here would
     /// change soft ink/eraser edges when a new stroke overlaps older MSAA samples.
     private func renderLiveLayer(_ active: InkStroke, preview: [BrushVertex], command: MTLCommandBuffer,
@@ -1141,6 +1258,11 @@ final class MetalCanvasRenderer {
             // committed layers, then cover each live sample once across the
             // confirmed mesh and prediction. Opaque/stamped ink keeps its
             // incremental confirmed-prefix path below.
+            if let region = liveRegion(active, preview: preview, document: document, viewport: viewport, viewSize: viewSize, work: work) {
+                try renderLiveTile(active, preview: preview, region: region, command: command, document: document,
+                                   viewport: viewport, viewSize: viewSize, base: base, work: work)
+                return work
+            }
             let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
             liveRestorePasses += 1
@@ -1169,7 +1291,12 @@ final class MetalCanvasRenderer {
             stable.endEncoding()
             liveConfirmedVertexDraws += confirmed - activeLiveVertices; activeLiveVertices = confirmed
         }
-        let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
+        if let region = liveRegion(active, preview: preview, document: document, viewport: viewport, viewSize: viewSize, work: work) {
+                try renderLiveTile(active, preview: preview, region: region, command: command, document: document,
+                                   viewport: viewport, viewSize: viewSize, base: base, work: work)
+                return work
+            }
+            let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
         liveRestorePasses += 1
         do {
@@ -1188,6 +1315,7 @@ final class MetalCanvasRenderer {
     }
 
     private func resolveActiveLayer(command: MTLCommandBuffer) throws -> MTLTexture {
+        liveWorkStroke = nil
         guard let base = activeTexture, let work = workTexture else { throw DocumentError.graphics }
         guard sampleCount > 1 else { return base }
         let pass = targetPass(base, load: .load, resolve: work)
@@ -1265,12 +1393,14 @@ final class MetalCanvasRenderer {
     }
 
     private func clearLayerCaches() {
+        liveWorkStroke = nil; liveWorkBounds = .null
         lowerTexture = nil; upperTexture = nil; activeTexture = nil
         lowerKey = nil; upperKey = nil; activeKey = nil; renderCacheBytes = 0
         activeLiveID = nil; activeLiveVertices = 0; pendingLiveCommit = nil
     }
 
     func handleMemoryPressure() {
+        liveTile = nil; liveTileMSAA = nil; liveTileStencil = nil
         cancelViewportNavigation(); lastFrameDocument = nil; lastFrameViewport = nil
         clearLayerCaches()
         cache.removeAll(); cacheOrder.removeAll(); recountBuffers()
@@ -1335,6 +1465,7 @@ final class MetalCanvasRenderer {
                          active: InkStroke? = nil, preview: [BrushVertex] = [], guides: Bool = false,
                          reference: Bool = false) async throws -> [UInt8] {
         guard width > 0, height > 0, width <= 2048, height <= 2048 else { throw DocumentError.invalidData }
+        if reference { liveWorkStroke = nil }
         if isPreparingScene { await preparationTask?.value }
         updateScene(document); sceneRevision = nil
         let viewSize = Point(x: Double(width), y: Double(height))
@@ -1511,6 +1642,14 @@ final class MetalCanvasRenderer {
                                        constant float &opacity [[buffer(0)]]) {
         constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::nearest);
         return layer.sample(s, in.uv) * opacity;
+    }
+    fragment float4 restoreTileSamplesFragment(CompositeOutput in [[stage_in]],
+        texture2d_ms<float> image [[texture(0)]], constant uint2 &origin [[buffer(0)]], uint sample [[sample_id]]) {
+        return image.read(uint2(in.position.xy) + origin, sample);
+    }
+    fragment float4 restoreTileColorFragment(CompositeOutput in [[stage_in]],
+        texture2d<float> image [[texture(0)]], constant uint2 &origin [[buffer(0)]]) {
+        return image.read(uint2(in.position.xy) + origin);
     }
     fragment float4 restoreSamplesFragment(CompositeOutput in [[stage_in]],
                                            texture2d_ms<float, access::read> layer [[texture(0)]],

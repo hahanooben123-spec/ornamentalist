@@ -5,6 +5,14 @@ import ImageIO
 /// prediction, UI chrome, or screenshot is involved. 2048 square in Phase 1.
 enum PNGExporter {
     static func data(document: DrawingDocument, transparent: Bool, maximumSide: Double? = nil, region: CGRect? = nil) throws -> Data {
+        let rendered = try image(document: document, transparent: transparent, maximumSide: maximumSide, region: region)
+        try Task.checkCancellation()
+        guard let data = rendered.pngData() else { throw DocumentError.graphics }
+        try Task.checkCancellation()
+        return data
+    }
+    static func image(document: DrawingDocument, transparent: Bool, maximumSide: Double? = nil, region: CGRect? = nil) throws -> UIImage {
+        try Task.checkCancellation()
         try document.validate()
         let bounds = CGRect(x: 0, y: 0, width: document.size.x, height: document.size.y)
         let region = region ?? bounds
@@ -30,8 +38,8 @@ enum PNGExporter {
 
         }
         if let failure { throw failure }
-        guard let data = image.pngData() else { throw DocumentError.graphics }
-        return data
+        try Task.checkCancellation()
+        return image
     }
     static func rasterImage(_ raster: LayerRaster) throws -> CGImage {
         guard let source = CGImageSourceCreateWithData(raster.png as CFData, nil),
@@ -42,6 +50,7 @@ enum PNGExporter {
     static func paintDocument(_ document: DrawingDocument, in context: CGContext) throws {
         let grouped = Dictionary(grouping: document.strokes, by: \.layerID)
         for layer in document.layers where layer.isVisible && layer.opacity > 0 {
+            try Task.checkCancellation()
             context.saveGState()
             context.setAlpha(CGFloat(layer.opacity))
             context.beginTransparencyLayer(auxiliaryInfo: nil)
@@ -59,7 +68,11 @@ enum PNGExporter {
                     context.endTransparencyLayer(); context.restoreGState(); throw error
                 }
             }
-            for stroke in grouped[layer.id] ?? [] { paint(stroke, in: context) }
+            do {
+                for stroke in grouped[layer.id] ?? [] { try paintCancellable(stroke, in: context) }
+            } catch {
+                context.endTransparencyLayer(); context.restoreGState(); throw error
+            }
             context.endTransparencyLayer(); context.restoreGState()
         }
     }
@@ -86,6 +99,10 @@ enum PNGExporter {
         return InkColor(red: Double(bytes[0]) / 255, green: Double(bytes[1]) / 255, blue: Double(bytes[2]) / 255)
     }
     static func paint(_ stroke: InkStroke, in context: CGContext) {
+        try? paintCancellable(stroke, in: context)
+    }
+    static func paintCancellable(_ stroke: InkStroke, in context: CGContext) throws {
+        try Task.checkCancellation()
         context.saveGState()
         defer { context.restoreGState() }
         if stroke.operation == .erase { context.setBlendMode(.destinationOut) }
@@ -99,9 +116,15 @@ enum PNGExporter {
                         alpha: stroke.brush.dabOpacity * BrushGeometry.coverage(radius: Double(radius), softness: stroke.brush.effectiveSoftness)).cgColor
             }
             let gradient = soft ? CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations) : nil
-            let dabs = BrushGeometry.dabs(stroke)
+            var state = BrushStampState(id: stroke.seedID), dabs: [BrushDab] = []
+            for (index, sample) in stroke.samples.enumerated() {
+                if index % 64 == 0 { try Task.checkCancellation() }
+                dabs += state.advance(sample, brush: stroke.brush)
+            }
             for matrix in stroke.symmetry.matrices {
+                try Task.checkCancellation()
                 context.saveGState()
+                defer { context.restoreGState() }
                 context.concatenate(CGAffineTransform(a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d,
                                                       tx: matrix.tx, ty: matrix.ty))
                 // The clip is expressed in this symmetry copy's local coordinates.
@@ -110,7 +133,9 @@ enum PNGExporter {
                 let margin = max(abs(pixel.width), abs(pixel.height)) * 2
                 let clip = context.boundingBoxOfClipPath.insetBy(dx: -margin, dy: -margin)
                 context.setFillColor(fill)
-                for dab in dabs where dab.radius > 0 && dab.opacity > 0 {
+                for (index, dab) in dabs.enumerated() {
+                    if index % 128 == 0 { try Task.checkCancellation() }
+                    guard dab.radius > 0, dab.opacity > 0 else { continue }
                     let extent = dab.radius * max(1, dab.aspect)
                     guard clip.intersects(CGRect(x: dab.center.x - extent, y: dab.center.y - extent,
                                                   width: extent * 2, height: extent * 2)) else { continue }
@@ -140,7 +165,6 @@ enum PNGExporter {
                     }
                     context.restoreGState()
                 }
-                context.restoreGState()
             }
             return
         }
@@ -153,11 +177,14 @@ enum PNGExporter {
             context.beginTransparencyLayer(auxiliaryInfo: nil)
         }
         context.setFillColor(UIColor(red: ink.red, green: ink.green, blue: ink.blue, alpha: 1).cgColor)
+        defer { if isolated { context.endTransparencyLayer() } }
         let vertices = StrokeGeometry.mesh(stroke)
+        try Task.checkCancellation()
         // Build the source path once; Core Graphics applies each symmetry transform.
         // Separate copy fills preserve the original translucent/eraser compositing.
         let path = CGMutablePath()
         for i in stride(from: 0, to: vertices.count, by: 3) {
+            if i % 1023 == 0 { try Task.checkCancellation() }
             let a = vertices[i], b = vertices[i + 1], c = vertices[i + 2]
             path.move(to: CGPoint(x: a.x, y: a.y))
             path.addLine(to: CGPoint(x: b.x, y: b.y))
@@ -165,13 +192,14 @@ enum PNGExporter {
             path.closeSubpath()
         }
         for matrix in stroke.symmetry.matrices {
+            try Task.checkCancellation()
             context.saveGState()
             context.concatenate(CGAffineTransform(a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d,
                                                   tx: matrix.tx, ty: matrix.ty))
             context.addPath(path); context.fillPath()
             context.restoreGState()
         }
-        if isolated { context.endTransparencyLayer() }
+        try Task.checkCancellation()
     }
 
 }
@@ -181,9 +209,7 @@ actor ExportService {
         try Task.checkCancellation()
         let width = Int(document.size.x), height = Int(document.size.y)
         guard width >= 64, height >= 64, width <= 2048, height <= 2048 else { throw DocumentError.mergeSize }
-        let data = try PNGExporter.data(document: document, transparent: false)
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw DocumentError.graphics }
+        guard let image = try PNGExporter.image(document: document, transparent: false).cgImage else { throw DocumentError.graphics }
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         let rendered = pixels.withUnsafeMutableBytes { bytes -> Bool in
             guard let context = CGContext(data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8,

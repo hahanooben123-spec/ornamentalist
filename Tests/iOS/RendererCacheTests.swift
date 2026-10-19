@@ -4,6 +4,37 @@ import MetalKit
 
 final class RendererCacheTests: XCTestCase {
     @MainActor
+    func testPartialLiveRestorePreservesPredictionOpacityAndEraser() async throws {
+        var document = fixture(copies: 2); document.symmetry.mirror = true
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(document.strokes, layers: document.layers)
+        for preset in [BrushPreset.fineliner, .softShader, .dotShader] {
+            for operation in [StrokeOperation.ink, .erase] {
+                var brush = preset.makeBrush(); brush.width = 10; brush.opacity = 0.4
+                renderer.begin()
+                var session = StrokeSession(brush: brush, symmetry: document.symmetry,
+                    existingSamples: 0, existingVertices: 0, layerID: document.activeLayerID, operation: operation)
+                let before = renderer.partialLiveRestores
+                var last: [UInt8] = [], preview: [BrushVertex] = []
+                for i in 0..<4 {
+                    let sample = StrokeSample(point: Point(x: 72 + Double(i) * 3, y: 40 + Double(i)),
+                        pressure: 1, altitude: 1, azimuth: 0, time: Double(i))
+                    try renderer.append(session.append(sample))
+                    var prediction = sample; prediction.time += 0.01; prediction.point.y += i == 1 ? 15 : 1
+                    preview = session.preview(predictions: [prediction])
+                    last = try await renderer.renderOffscreen(document: document, viewport: Viewport(), width: 256, height: 256,
+                        active: session.stroke, preview: preview)
+                }
+                XCTAssertGreaterThan(renderer.partialLiveRestores, before)
+                let expected = try await renderer.renderOffscreen(document: document, viewport: Viewport(), width: 256, height: 256,
+                    active: session.stroke, preview: preview, reference: true)
+                assertPixels(last, expected)
+                renderer.cancel()
+            }
+        }
+    }
+
+    @MainActor
     func testViewportPreviewTransformsImageWithoutReplayingGeometry() async throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal unavailable") }
         let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 256, height: 256, mipmapped: false)
@@ -54,6 +85,7 @@ final class RendererCacheTests: XCTestCase {
         XCTAssertTrue(renderer.hasBuffers(for: drawing.strokes, layers: drawing.layers))
         let image = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 128, height: 128)
         XCTAssertGreaterThan(renderer.geometryRebuilds, 0)
+        XCTAssertLessThan(renderer.streamedSubmissions, drawing.strokes.count)
         XCTAssertLessThanOrEqual(renderer.allocatedGeometryBytes, 8 * 1024 * 1024)
         let reference = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 128, height: 128, reference: true)
         assertPixels(image, reference)

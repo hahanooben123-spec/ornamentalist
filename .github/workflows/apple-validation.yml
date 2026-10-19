@@ -56,6 +56,18 @@ jobs:
           -test-timeouts-enabled YES -default-test-execution-time-allowance 45
           -maximum-test-execution-time-allowance 90
           CODE_SIGNING_ALLOWED=NO
+      - name: Verify incremental live rendering and geometry batches
+        timeout-minutes: 3
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -derivedDataPath DerivedData -resultBundlePath OptimizationTests.xcresult
+          -only-testing:OrnamentalistTests/RendererCacheTests/testPartialLiveRestorePreservesPredictionOpacityAndEraser
+          -only-testing:OrnamentalistTests/RendererCacheTests/testEvictedGeometryStreamsBackWithoutChangingInkOrBlockingNewStrokes
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 30
+          -maximum-test-execution-time-allowance 45
+          CODE_SIGNING_ALLOWED=NO
       - name: Verify zoom preview and liner migration
         timeout-minutes: 4
         run: >-
@@ -131,4 +143,5 @@ jobs:
             MetalSmoke.xcresult
             ZoomTests.xcresult
             ExportTests.xcresult
+            OptimizationTests.xcresult
           if-no-files-found: ignore

@@ -15,6 +15,7 @@ struct StudioView: View {
     @AppStorage("studioAppearance") private var appearance = "system"
     @State private var shareFile: ShareFile?
     @State private var exporting = false
+    @State private var exportTask: Task<Void, Never>?
     @State private var importing = false
     @State private var importingImage = false
     @State private var photoPicker = false
@@ -54,10 +55,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.11.4: studio visible; loading gallery")
+            print("Ornamentalist 0.11.5: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.11.4: gallery loading finished")
+            print("Ornamentalist 0.11.5: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -366,33 +367,42 @@ struct StudioView: View {
     private func exportProject() {
         guard let document = model.document else { return }
         exporting = true
-        Task {
-            defer { exporting = false }
+        exportTask = Task {
+            defer { exporting = false; exportTask = nil }
             do {
                 guard await model.saveNow() else { return }
                 let url = try await model.repository.exportProject(model.document ?? document)
+                try Task.checkCancellation()
                 shareFile = ShareFile(url: url)
-            } catch { model.error = error.localizedDescription }
+            } catch is CancellationError { }
+            catch { model.error = error.localizedDescription }
         }
     }
 
     private func exportPNG(transparent: Bool) {
         guard let document = model.document else { return }
         exporting = true
-        Task {
-            defer { exporting = false }
+        exportTask = Task {
+            defer { exporting = false; exportTask = nil }
             do {
                 let url = try await exportService.png(document, transparent: transparent)
+                try Task.checkCancellation()
                 shareFile = ShareFile(url: url)
-            } catch { model.error = error.localizedDescription }
+            } catch is CancellationError { }
+            catch { model.error = error.localizedDescription }
         }
     }
     private func exportTile() {
         guard let document = model.document else { return }
         exporting = true
-        Task {
-            defer { exporting = false }
-            do { shareFile = ShareFile(url: try await exportService.tilePNG(document)) }
+        exportTask = Task {
+            defer { exporting = false; exportTask = nil }
+            do {
+                let url = try await exportService.tilePNG(document)
+                try Task.checkCancellation()
+                shareFile = ShareFile(url: url)
+            }
+            catch is CancellationError { }
             catch { model.error = error.localizedDescription }
         }
     }

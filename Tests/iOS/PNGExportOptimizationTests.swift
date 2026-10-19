@@ -3,6 +3,28 @@ import UIKit
 @testable import Ornamentalist
 
 final class PNGExportOptimizationTests: XCTestCase {
+    func testCanceledExportDoesNotProduceAnImage() async {
+        let task = Task { () -> Bool in
+            withUnsafeCurrentTask { $0?.cancel() }
+            do {
+                _ = try PNGExporter.data(document: DrawingDocument(), transparent: true)
+                return false
+            } catch is CancellationError { return true }
+            catch { return false }
+        }
+        let canceled = await task.value
+        XCTAssertTrue(canceled)
+    }
+    func testDirectFillPixelsMatchPNGDecodedPixels() throws {
+        var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+        document.symmetry = SymmetryConfiguration(repetitions: 2, center: Point(x: 64, y: 64), mirror: true)
+        var brush = BrushPreset.softShader.makeBrush(); brush.width = 30; brush.opacity = 0.3
+        document.strokes = [InkStroke(brush: brush, symmetry: document.symmetry,
+            samples: [StrokeSample(point: Point(x: 80, y: 45), pressure: 0.6, altitude: 0.8, azimuth: 0, time: 0)])]
+        let direct = try XCTUnwrap(PNGExporter.image(document: document, transparent: false).cgImage)
+        let encoded = try XCTUnwrap(UIImage(data: PNGExporter.data(document: document, transparent: false))?.cgImage)
+        XCTAssertEqual(try bytes(direct), try bytes(encoded))
+    }
     func testOptimizedPainterPreservesMirroredBrushesAndErasers() throws {
         for preset in BrushPreset.allCases {
             for operation in [StrokeOperation.ink, .erase] {
