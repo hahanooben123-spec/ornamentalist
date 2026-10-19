@@ -45,6 +45,17 @@ jobs:
           -derivedDataPath DerivedData
           -only-testing:OrnamentalistTests
           CODE_SIGNING_ALLOWED=NO
+      - name: Verify PNG export pixel parity
+        timeout-minutes: 3
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -derivedDataPath DerivedData -resultBundlePath ExportTests.xcresult
+          -only-testing:OrnamentalistTests/PNGExportOptimizationTests
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 45
+          -maximum-test-execution-time-allowance 90
+          CODE_SIGNING_ALLOWED=NO
       - name: Verify zoom preview and liner migration
         timeout-minutes: 4
         run: >-
@@ -119,4 +130,5 @@ jobs:
             ModelTests.xcresult
             MetalSmoke.xcresult
             ZoomTests.xcresult
+            ExportTests.xcresult
           if-no-files-found: ignore

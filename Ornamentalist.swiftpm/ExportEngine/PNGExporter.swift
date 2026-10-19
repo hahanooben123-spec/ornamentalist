@@ -4,13 +4,16 @@ import ImageIO
 /// Exports document-space triangles through Core Graphics. No viewport, guides,
 /// prediction, UI chrome, or screenshot is involved. 2048 square in Phase 1.
 enum PNGExporter {
-    static func data(document: DrawingDocument, transparent: Bool, maximumSide: Double? = nil) throws -> Data {
+    static func data(document: DrawingDocument, transparent: Bool, maximumSide: Double? = nil, region: CGRect? = nil) throws -> Data {
         try document.validate()
+        let bounds = CGRect(x: 0, y: 0, width: document.size.x, height: document.size.y)
+        let region = region ?? bounds
+        guard !region.isEmpty, bounds.contains(region) else { throw DocumentError.invalidData }
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1 // Exact pixel dimensions, independent of the iPad screen scale.
         format.opaque = !transparent
-        let scale = maximumSide.map { min(1, $0 / max(document.size.x, document.size.y)) } ?? 1
-        let size = CGSize(width: document.size.x * scale, height: document.size.y * scale)
+        let scale = maximumSide.map { min(1, $0 / max(region.width, region.height)) } ?? 1
+        let size = CGSize(width: region.width * scale, height: region.height * scale)
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         var failure: Error?
         let image = renderer.image { output in
@@ -20,6 +23,7 @@ enum PNGExporter {
                 context.fill(CGRect(origin: .zero, size: size))
             }
             context.scaleBy(x: scale, y: scale)
+            context.translateBy(x: -region.minX, y: -region.minY)
             context.clip(to: CGRect(x: 0, y: 0, width: document.size.x, height: document.size.y))
             context.setFillColor(UIColor.black.cgColor)
             do { try paintDocument(document, in: context) } catch { failure = error }
@@ -87,30 +91,51 @@ enum PNGExporter {
         if stroke.operation == .erase { context.setBlendMode(.destinationOut) }
         let ink = stroke.color
         if stroke.brush.usesStamps {
+            let soft = stroke.brush.effectiveSoftness > 0
+            let fill = UIColor(red: ink.red, green: ink.green, blue: ink.blue, alpha: stroke.brush.opacity).cgColor
             let locations: [CGFloat] = (0...32).map { CGFloat($0) / 32 }
             let colors = locations.map { radius in
                 UIColor(red: ink.red, green: ink.green, blue: ink.blue,
                         alpha: stroke.brush.dabOpacity * BrushGeometry.coverage(radius: Double(radius), softness: stroke.brush.effectiveSoftness)).cgColor
             }
-            let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations)
+            let gradient = soft ? CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations) : nil
             let dabs = BrushGeometry.dabs(stroke)
             for matrix in stroke.symmetry.matrices {
                 context.saveGState()
                 context.concatenate(CGAffineTransform(a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d,
                                                       tx: matrix.tx, ty: matrix.ty))
-                for dab in dabs where dab.radius > 0 {
+                // The clip is expressed in this symmetry copy's local coordinates.
+                // Keep a device-pixel margin for antialiasing at the canvas edge.
+                let pixel = context.convertToUserSpace(CGSize(width: 1, height: 1))
+                let margin = max(abs(pixel.width), abs(pixel.height)) * 2
+                let clip = context.boundingBoxOfClipPath.insetBy(dx: -margin, dy: -margin)
+                context.setFillColor(fill)
+                for dab in dabs where dab.radius > 0 && dab.opacity > 0 {
+                    let extent = dab.radius * max(1, dab.aspect)
+                    guard clip.intersects(CGRect(x: dab.center.x - extent, y: dab.center.y - extent,
+                                                  width: extent * 2, height: extent * 2)) else { continue }
+                    if !soft && dab.aspect == 1 {
+                        // Circular dots need no individual coordinate-system stack.
+                        // Preserve separate fills: translucent dots must accumulate.
+                        context.setAlpha(CGFloat(dab.opacity))
+                        context.fillEllipse(in: CGRect(x: dab.center.x - dab.radius, y: dab.center.y - dab.radius,
+                                                       width: dab.radius * 2, height: dab.radius * 2))
+                        continue
+                    }
                     context.saveGState()
-                    if dab.opacity < 1 { context.setAlpha(CGFloat(dab.opacity)) }
+                    context.setAlpha(CGFloat(dab.opacity))
                     context.translateBy(x: dab.center.x, y: dab.center.y)
                     context.rotate(by: dab.angle)
                     context.scaleBy(x: dab.radius, y: dab.radius * dab.aspect)
-                    if stroke.brush.effectiveSoftness > 0 {
+                    if soft {
+                        // A radial gradient has no coverage outside this square.
+                        // Bound the shading operation rather than shade the whole canvas per dab.
+                        context.clip(to: CGRect(x: -1, y: -1, width: 2, height: 2))
                         if let gradient {
                             context.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0,
                                                        endCenter: .zero, endRadius: 1, options: [])
                         }
                     } else {
-                        context.setFillColor(UIColor(red: ink.red, green: ink.green, blue: ink.blue, alpha: stroke.brush.opacity).cgColor)
                         context.fillEllipse(in: CGRect(x: -1, y: -1, width: 2, height: 2))
                     }
                     context.restoreGState()
@@ -129,17 +154,22 @@ enum PNGExporter {
         }
         context.setFillColor(UIColor(red: ink.red, green: ink.green, blue: ink.blue, alpha: 1).cgColor)
         let vertices = StrokeGeometry.mesh(stroke)
-        // A single union fill keeps the original opaque fineliner free of seams.
+        // Build the source path once; Core Graphics applies each symmetry transform.
+        // Separate copy fills preserve the original translucent/eraser compositing.
+        let path = CGMutablePath()
+        for i in stride(from: 0, to: vertices.count, by: 3) {
+            let a = vertices[i], b = vertices[i + 1], c = vertices[i + 2]
+            path.move(to: CGPoint(x: a.x, y: a.y))
+            path.addLine(to: CGPoint(x: b.x, y: b.y))
+            path.addLine(to: CGPoint(x: c.x, y: c.y))
+            path.closeSubpath()
+        }
         for matrix in stroke.symmetry.matrices {
-            let path = CGMutablePath()
-            for i in stride(from: 0, to: vertices.count, by: 3) {
-                let a = matrix.apply(vertices[i]), b = matrix.apply(vertices[i+1]), c = matrix.apply(vertices[i+2])
-                path.move(to: CGPoint(x: a.x, y: a.y))
-                path.addLine(to: CGPoint(x: b.x, y: b.y))
-                path.addLine(to: CGPoint(x: c.x, y: c.y))
-                path.closeSubpath()
-            }
+            context.saveGState()
+            context.concatenate(CGAffineTransform(a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d,
+                                                  tx: matrix.tx, ty: matrix.ty))
             context.addPath(path); context.fillPath()
+            context.restoreGState()
         }
         if isolated { context.endTransparencyLayer() }
     }
@@ -280,12 +310,11 @@ actor ExportService {
     }
     func tilePNG(_ document: DrawingDocument) throws -> URL {
         guard document.symmetry.tileCount > 0 else { throw DocumentError.invalidData }
-        let png = try PNGExporter.data(document: document, transparent: true)
         let size = document.symmetry.tileSize
-        guard let source = CGImageSourceCreateWithData(png as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-              let tile = image.cropping(to: CGRect(x: 0, y: 0, width: size.x, height: size.y)),
-              let output = UIImage(cgImage: tile).pngData() else { throw DocumentError.graphics }
+        // Render only the requested tile, at its original pixel resolution.
+        // Avoid rendering/compressing the full repeated canvas, decoding and compressing it again.
+        let output = try PNGExporter.data(document: document, transparent: true,
+                                         region: CGRect(x: 0, y: 0, width: size.x, height: size.y))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("OrnamentalistExports", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent("Ornamentalist-Tile-\(document.id.uuidString).png")
