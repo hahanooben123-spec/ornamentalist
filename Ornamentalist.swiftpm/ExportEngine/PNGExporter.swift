@@ -278,4 +278,18 @@ actor ExportService {
         try data.write(to: url, options: .atomic)
         return url
     }
+    func tilePNG(_ document: DrawingDocument) throws -> URL {
+        guard document.symmetry.tileCount > 0 else { throw DocumentError.invalidData }
+        let png = try PNGExporter.data(document: document, transparent: true)
+        let size = document.symmetry.tileSize
+        guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let tile = image.cropping(to: CGRect(x: 0, y: 0, width: size.x, height: size.y)),
+              let output = UIImage(cgImage: tile).pngData() else { throw DocumentError.graphics }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("OrnamentalistExports", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("Ornamentalist-Tile-\(document.id.uuidString).png")
+        try output.write(to: url, options: .atomic)
+        return url
+    }
 }

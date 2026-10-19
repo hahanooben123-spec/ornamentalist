@@ -146,7 +146,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = allocatedGeometryBytes + sealed.reduce(0) { $0 + $1.buffer.length } + scratch.count * 16
-        return "Ornamentalist 0.10.2\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nZoom preview frames: \(navigationPreviewFrames)\nZoom preview texture: \((navigationTexture.map { $0.width * $0.height * 4 } ?? 0) / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.11.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nZoom preview frames: \(navigationPreviewFrames)\nZoom preview texture: \((navigationTexture.map { $0.width * $0.height * 4 } ?? 0) / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -612,12 +612,23 @@ final class MetalCanvasRenderer {
         if guides {
             let center = document.symmetry.center
             let key = [center.x, center.y, Double(document.symmetry.repetitions), document.symmetry.mirror ? 1 : 0, document.size.x,
-                       document.size.y, viewport.zoom, viewSize.x, viewSize.y]
+                       document.size.y, viewport.zoom, viewSize.x, viewSize.y, Double(document.symmetry.tileCount)]
             if guideKey != key {
                 let radius = max(document.size.x, document.size.y) * 1.5
                 let screenScale = hypot(transform.a, transform.b)
                 let brush = InkBrush(width: 0.7 / max(0.01, screenScale))
                 var mesh: [Point] = []
+                if document.symmetry.tileCount > 0 {
+                    let count = document.symmetry.tileCount, step = document.symmetry.tileSize
+                    for i in 0...count {
+                        let a = StrokeSample(point: Point(x: Double(i) * step.x, y: 0), pressure: 1, altitude: 0, azimuth: 0, time: 0)
+                        var b = a; b.point.y = document.size.y
+                        mesh += StrokeGeometry.segment(a, b, brush: brush)
+                        let c = StrokeSample(point: Point(x: 0, y: Double(i) * step.y), pressure: 1, altitude: 0, azimuth: 0, time: 0)
+                        var d = c; d.point.x = document.size.x
+                        mesh += StrokeGeometry.segment(c, d, brush: brush)
+                    }
+                }
                 for ray in 0..<document.symmetry.guideRayCount {
                     let a = StrokeSample(point: center, pressure: 1, altitude: 0, azimuth: 0, time: 0)
                     let angle = Double(ray) * 2 * Double.pi / Double(document.symmetry.guideRayCount)

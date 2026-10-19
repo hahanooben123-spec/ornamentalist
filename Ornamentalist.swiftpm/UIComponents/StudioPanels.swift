@@ -47,11 +47,18 @@ struct StudioPanelView: View {
 
     private func symmetry(_ document: DrawingDocument) -> some View {
         VStack(alignment: .leading, spacing: 20) {
+            Picker("Pattern", selection: Binding(get: { document.symmetry.tileCount }, set: { model.setTileCount($0) })) {
+                Text("Radial").tag(0); Text("Tiles 2×2").tag(2); Text("Tiles 4×4").tag(4)
+            }.pickerStyle(.segmented)
+            if document.symmetry.tileCount > 0 {
+                Text("Draw in any cell; strokes repeat across the grid. Use a new drawing for a seamless pattern. Export a tile from the export menu.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             ZStack {
                 Circle().stroke(.secondary.opacity(0.15), lineWidth: 1)
                 SymmetryPreview(count: document.symmetry.guideRayCount)
                     .stroke(StudioStyle.copper, lineWidth: 1)
-            }.frame(height: 100).accessibilityHidden(true)
+            }.frame(height: 100).accessibilityHidden(true).opacity(document.symmetry.tileCount > 0 ? 0.2 : 1)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
                 ForEach([1, 4, 6, 8, 12, 16, 24, 32], id: \.self) { count in
                     Button { model.setRepetitions(count) } label: {
@@ -64,14 +71,17 @@ struct StudioPanelView: View {
                         .accessibilityAddTraits(document.symmetry.repetitions == count ? .isSelected : [])
                 }
             }
+            .disabled(document.symmetry.tileCount > 0)
             Stepper(value: Binding(get: { document.symmetry.repetitions }, set: { model.setRepetitions($0) }), in: 1...64) {
                 Text("\(document.symmetry.repetitions) sectors").monospacedDigit()
             }.font(.subheadline)
                 .accessibilityLabel("Radial copies")
                 .accessibilityValue("\(document.symmetry.repetitions)")
                 .accessibilityIdentifier("symmetryCopies")
+                .disabled(document.symmetry.tileCount > 0)
             Toggle("Mirror", isOn: Binding(get: { document.symmetry.mirror }, set: { model.setMirror($0) }))
                 .font(.subheadline).accessibilityIdentifier("mirrorToggle")
+                .disabled(document.symmetry.tileCount > 0)
             Text(document.symmetry.mirror ? "\(document.symmetry.instanceCount) copies · Reflected across the guides." : "Rotate each stroke around the center.")
                 .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("mirrorSummary")
             Toggle("Show guides", isOn: $model.guides).font(.subheadline)
@@ -128,7 +138,7 @@ struct StudioPanelView: View {
                 .font(.subheadline).frame(minHeight: 44)
             Button("About Ornamentalist", systemImage: "info.circle") { showingAbout = true }
                 .font(.subheadline).frame(minHeight: 44).accessibilityIdentifier("canvasAbout")
-            Text("Ornamentalist 0.10.2").font(.caption).foregroundStyle(.secondary)
+            Text("Ornamentalist 0.11.0").font(.caption).foregroundStyle(.secondary)
                 .accessibilityIdentifier("appVersion")
         }
     }

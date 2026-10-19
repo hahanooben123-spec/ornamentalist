@@ -2,6 +2,25 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class CoreTests: XCTestCase {
+    func testTileSymmetryRepeatsAcrossCanvasAndRoundTrips() throws {
+        var d = DrawingDocument(); d.symmetry.tileCount = 4; d.symmetry.tileCanvas = d.size
+        try d.validate()
+        XCTAssertEqual(d.symmetry.instanceCount, d.symmetry.matrices.count)
+        XCTAssertEqual(d.symmetry.instanceCount, 121)
+        let point = Point(x: 100, y: 120)
+        let visible = d.symmetry.matrices.map { $0.apply(point) }.filter {
+            (0..<d.size.x).contains($0.x) && (0..<d.size.y).contains($0.y)
+        }
+        XCTAssertEqual(visible.count, 16)
+        XCTAssertTrue(visible.contains(Point(x: 1636, y: 1656)))
+        let copy = try JSONDecoder().decode(DrawingDocument.self, from: JSONEncoder().encode(d))
+        XCTAssertEqual(copy.symmetry, d.symmetry)
+        d.symmetry.tileCount = 1000
+        XCTAssertThrowsError(try d.validate())
+        let legacy = try JSONDecoder().decode(SymmetryConfiguration.self,
+            from: Data("{\"repetitions\":8,\"center\":{\"x\":1024,\"y\":1024}}".utf8))
+        XCTAssertEqual(legacy.tileCount, 0); XCTAssertEqual(legacy.matrices.count, 8)
+    }
     func testShapeCorrectionRecognizesLineAndCircleAndParallelCopyKeepsSymmetry() throws {
         var stroke = InkStroke()
         stroke.samples = (0...20).map { i in

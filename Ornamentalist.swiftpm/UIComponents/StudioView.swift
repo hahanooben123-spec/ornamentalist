@@ -54,10 +54,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.10.2: studio visible; loading gallery")
+            print("Ornamentalist 0.11.0: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.10.2: gallery loading finished")
+            print("Ornamentalist 0.11.0: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -280,6 +280,8 @@ struct StudioView: View {
                 Divider()
                 Button("PNG · White paper", systemImage: "photo") { exportPNG(transparent: false) }
                 Button("PNG · Transparent", systemImage: "square.dashed") { exportPNG(transparent: true) }
+                Button("PNG · Pattern tile", systemImage: "square.grid.3x3") { exportTile() }
+                    .disabled(document.symmetry.tileCount == 0)
                 Button("Editable project", systemImage: "doc") { exportProject() }
                 Divider()
                 Button("Hide studio controls", systemImage: "arrow.up.left.and.arrow.down.right") { panel = nil; zen = true }
@@ -371,6 +373,15 @@ struct StudioView: View {
                 let url = try await exportService.png(document, transparent: transparent)
                 shareFile = ShareFile(url: url)
             } catch { model.error = error.localizedDescription }
+        }
+    }
+    private func exportTile() {
+        guard let document = model.document else { return }
+        exporting = true
+        Task {
+            defer { exporting = false }
+            do { shareFile = ShareFile(url: try await exportService.tilePNG(document)) }
+            catch { model.error = error.localizedDescription }
         }
     }
 }
