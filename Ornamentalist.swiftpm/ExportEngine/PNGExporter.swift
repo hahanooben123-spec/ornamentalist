@@ -20,8 +20,8 @@ enum PNGExporter {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1 // Exact pixel dimensions, independent of the iPad screen scale.
         format.opaque = !transparent
-        let scale = maximumSide.map { min(1, $0 / max(region.width, region.height)) } ?? 1
-        let size = CGSize(width: region.width * scale, height: region.height * scale)
+        let scale: Double = maximumSide.map { min(1.0, $0 / max(Double(region.width), Double(region.height))) } ?? 1.0
+        let size = CGSize(width: Double(region.width) * scale, height: Double(region.height) * scale)
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         var failure: Error?
         let image = renderer.image { output in
