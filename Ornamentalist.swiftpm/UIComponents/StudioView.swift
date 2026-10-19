@@ -54,10 +54,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.11.2: studio visible; loading gallery")
+            print("Ornamentalist 0.11.3: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.11.2: gallery loading finished")
+            print("Ornamentalist 0.11.3: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -402,7 +402,12 @@ struct StudioView: View {
 private struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        // Save to Photos expects a native image, while editable projects must
+        // remain files. Never offer a project JSON as an image.
+        if url.pathExtension.lowercased() == "png", let image = UIImage(contentsOfFile: url.path) {
+            return UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        }
+        return UIActivityViewController(activityItems: [url], applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

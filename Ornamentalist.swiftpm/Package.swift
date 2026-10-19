@@ -11,12 +11,13 @@ let package = Package(
             targets: ["Ornamentalist"],
             bundleIdentifier: "studie.mandala.prototype",
             teamIdentifier: "K2TYPDPPZJ",
-            displayVersion: "0.11.2",
-            bundleVersion: "35",
+            displayVersion: "0.11.3",
+            bundleVersion: "36",
             appIcon: .asset("AppIcon"),
             accentColor: .presetColor(.teal),
             supportedDeviceFamilies: [.pad],
-            supportedInterfaceOrientations: [.portrait, .portraitUpsideDown(.when(deviceFamilies: [.pad])), .landscapeLeft, .landscapeRight]
+            supportedInterfaceOrientations: [.portrait, .portraitUpsideDown(.when(deviceFamilies: [.pad])), .landscapeLeft, .landscapeRight],
+            additionalInfoPlistContentFilePath: "Resources/AppInfo.plist"
         )
     ],
     targets: [
