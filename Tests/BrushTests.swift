@@ -2,6 +2,48 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class BrushTests: XCTestCase {
+    func testPressureDensityChangesDotCountWithoutChangingSize() throws {
+        var brush = BrushPreset.dotShader.makeBrush()
+        brush.dotSize = 2.4; brush.stabilizationEnabled = false
+        brush.pressureEnabled = true // Density mode must still keep the footprint fixed.
+        let seed = UUID(uuidString: "12345678-1234-1234-1234-123456789012")!
+        func stroke(_ pressure: Double) -> InkStroke {
+            let samples = (0...30).map { index -> StrokeSample in
+                var value = sample(Double(index) * 8, time: Double(index))
+                value.pressure = pressure
+                return value
+            }
+            return InkStroke(id: seed, brush: brush, samples: samples)
+        }
+        let light = BrushGeometry.dabs(stroke(0.15)), firm = BrushGeometry.dabs(stroke(1))
+        XCTAssertGreaterThan(light.count, 0)
+        XCTAssertGreaterThan(firm.count, light.count * 2)
+        XCTAssertTrue(firm.allSatisfy { abs($0.radius - 1.2) < 0.000001 })
+        XCTAssertTrue(light.allSatisfy { firm.contains($0) })
+        XCTAssertEqual(brush.radius(pressure: 0.1), brush.radius(pressure: 1))
+        XCTAssertTrue(BrushGeometry.dabs(stroke(0)).isEmpty)
+        let original = stroke(0.6)
+        let reopened = try JSONDecoder().decode(InkStroke.self, from: JSONEncoder().encode(original))
+        XCTAssertEqual(BrushGeometry.mesh(original), BrushGeometry.mesh(reopened))
+        XCTAssertLessThanOrEqual(BrushGeometry.mesh(original).count, StrokeGeometry.estimatedVertexCount(original))
+    }
+    func testPressureDensityLiveMeshMatchesReplayAndLegacyDotsStayLegacy() throws {
+        var brush = BrushPreset.dotShader.makeBrush(); brush.stabilizationEnabled = false
+        var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(mirror: true), existingSamples: 0, existingVertices: 0)
+        var live: [BrushVertex] = []
+        for index in 0...30 {
+            var value = sample(Double(index) * 8, time: Double(index))
+            value.pressure = Double(index) / 30
+            live += try session.append(value)
+        }
+        XCTAssertEqual(live, BrushGeometry.mesh(session.finishedStroke()))
+        let legacy = Data(#"{"width":70,"preset":"dotShader","pressureEnabled":false,"density":0.65}"#.utf8)
+        let decoded = try JSONDecoder().decode(InkBrush.self, from: legacy)
+        XCTAssertFalse(decoded.usesPressureDensity)
+        XCTAssertEqual(BrushStampState.dabsPerStamp(decoded), 13)
+        var document = DrawingDocument(); document.brush = brush; document.version = 16
+        XCTAssertThrowsError(try document.validate())
+    }
     func testInkLinerPresetsDefaultToFullEnabledStabilization() {
         for preset in BrushPreset.allCases {
             let brush = preset.makeBrush()
@@ -293,6 +335,7 @@ final class BrushTests: XCTestCase {
     }
     func testStippleDensityAndSeedAreStable() {
         var b = BrushPreset.dotShader.makeBrush()
+        b.pressureDensity = nil // The legacy dot layout must remain unchanged.
         let id = UUID(), samples = [sample(50)]
         b.density = 0.1
         let light = InkStroke(id: id, brush: b, samples: samples)
@@ -358,7 +401,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 16); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 17); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }

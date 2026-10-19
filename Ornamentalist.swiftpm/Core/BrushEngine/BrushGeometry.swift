@@ -45,11 +45,11 @@ struct BrushStampState: Sendable {
         return Double((x ^ (x >> 31)) >> 11) / 9007199254740992.0
     }
     static func dabsPerStamp(_ brush: InkBrush) -> Int {
-        brush.preset.scattered ? max(1, Int((brush.density * 20).rounded())) : 1
+        brush.preset.scattered ? max(1, Int((brush.density * (brush.usesPressureDensity ? 48 : 20)).rounded())) : 1
     }
     private func dabs(_ sample: StrokeSample, brush: InkBrush, ordinal: UInt64, distance: Double) -> [BrushDab] {
         let radius = brush.radius(pressure: sample.pressure)
-        let tilt = brush.tiltShading * max(0, min(1, 1 - sample.altitude / (.pi / 2)))
+        let tilt = brush.usesPressureDensity ? 0 : brush.tiltShading * max(0, min(1, 1 - sample.altitude / (.pi / 2)))
         let spreadScale = 1 + tilt * 0.8
         let tiltAngle = sample.azimuth
         if !brush.preset.scattered {
@@ -58,12 +58,18 @@ struct BrushStampState: Sendable {
                              angle: tilt > 0 ? tiltAngle : (brush.preset == .flatMarker ? -.pi / 4 : 0),
                              opacity: brush.falloffOpacity(distance: distance))]
         }
-        return (0..<Self.dabsPerStamp(brush)).map { dot in
-            let key = ordinal &* 32 &+ UInt64(dot)
+        return (0..<Self.dabsPerStamp(brush)).compactMap { dot -> BrushDab? in
+            let key = ordinal &* (brush.usesPressureDensity ? 64 : 32) &+ UInt64(dot)
             let angle = random(key, 1) * 2 * Double.pi
             let u = random(key, 2)
             // Center-weighted dots for a feathered stipple shadow.
-            let spread = brush.preset == .dotShader ? u * u : sqrt(u)
+            let spread = brush.preset == .dotShader && !brush.usesPressureDensity ? u * u : sqrt(u)
+            if brush.usesPressureDensity {
+                // A deterministic acceptance threshold changes dot count,
+                // never dot size or darkness. Feather the cloud at its edge.
+                let probability = brush.densityResponse(pressure: sample.pressure) * pow(1 - u, 1.5)
+                guard random(key, 4) < probability else { return nil }
+            }
             let offset = Point(x: cos(angle) * spreadScale, y: sin(angle) / spreadScale) * (radius * spread)
             let center = sample.point + (tilt > 0 ? Matrix.rotation(tiltAngle).apply(offset) : offset)
             let base: Double
@@ -73,7 +79,7 @@ struct BrushStampState: Sendable {
             case .hatching: base = 0.25
             default: base = 0.045
             }
-            return BrushDab(center: center, radius: max(0.28, radius * base * (0.65 + random(key, 3) * 0.7)),
+            return BrushDab(center: center, radius: brush.usesPressureDensity ? brush.dotSize * 0.5 : max(0.28, radius * base * (0.65 + random(key, 3) * 0.7)),
                             aspect: brush.preset == .hatching ? 0.12 : 1,
                             angle: brush.preset == .hatching ? -.pi / 4 : 0,
                             opacity: brush.falloffOpacity(distance: distance))

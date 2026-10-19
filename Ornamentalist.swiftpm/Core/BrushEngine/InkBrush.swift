@@ -11,6 +11,12 @@ struct InkBrush: Codable, Equatable, Sendable {
     var normalizedOpacity = false
     var spacing = 0.2
     var density = 0.5
+    var pressureDensity: Bool?
+    var dotSize = 1.5
+    var usesPressureDensity: Bool { preset == .dotShader && pressureDensity == true }
+    func densityResponse(pressure: Double) -> Double {
+        pow(max(0, min(1, pressure * pressureGain)), pressureCurve)
+    }
     var adaptiveStabilization = false
     var pressureCurve = 0.5
     var pressureGain = 1.0
@@ -37,10 +43,11 @@ struct InkBrush: Codable, Equatable, Sendable {
         width.isFinite && (0.5...160).contains(width) && stabilization.isFinite &&
         (0...1).contains(stabilization) && (1...2).contains(geometryVersion) &&
         opacity.isFinite && (0...1).contains(opacity) &&
-        spacing.isFinite && (0.06...4).contains(spacing) && density.isFinite && (0.05...1).contains(density)
+        spacing.isFinite && (0.06...4).contains(spacing) && density.isFinite && (0.05...1).contains(density) &&
+        dotSize.isFinite && (0.5...8).contains(dotSize)
     }
     func radius(pressure: Double) -> Double {
-        guard pressureEnabled else { return width * 0.5 }
+        guard pressureEnabled && !usesPressureDensity else { return width * 0.5 }
         return width * (minimumSize + (1 - minimumSize) * pow(max(0, min(1, pressure * pressureGain)), pressureCurve)) * 0.5
     }
     /// Soft dabs overlap several times per brush diameter. Normalize their
@@ -70,6 +77,8 @@ extension InkBrush {
         normalizedOpacity = try c.decodeIfPresent(Bool.self, forKey: .normalizedOpacity) ?? false
         spacing = try c.decodeIfPresent(Double.self, forKey: .spacing) ?? 0.2
         density = try c.decodeIfPresent(Double.self, forKey: .density) ?? 0.5
+        pressureDensity = try c.decodeIfPresent(Bool.self, forKey: .pressureDensity)
+        dotSize = try c.decodeIfPresent(Double.self, forKey: .dotSize) ?? 1.5
         adaptiveStabilization = try c.decodeIfPresent(Bool.self, forKey: .adaptiveStabilization) ?? false
         pressureCurve = try c.decodeIfPresent(Double.self, forKey: .pressureCurve) ?? 0.5
         pressureGain = try c.decodeIfPresent(Double.self, forKey: .pressureGain) ?? 1
@@ -124,7 +133,7 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .dots, .fineDots: return "Separate dots along your stroke. Tap for a single dot."
         case .stippleLight, .stippleDense: return "Scattered dots. Layer strokes to build a darker shade."
-        case .dotShader: return "A soft cloud of dots, denser toward the center."
+        case .dotShader: return "Light pressure makes sparse dots; firmer pressure builds density. Dot size stays fixed when pressure density is enabled."
         case .softShader, .airbrush: return "Soft edges. Build tone with overlapping passes."
         case .hatching: return "Small parallel marks for engraved shading."
         default: return "Changes apply to your next stroke. Existing marks keep their brush."
@@ -143,7 +152,7 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .fineDots: b.width = 2; b.spacing = 3
         case .stippleLight: b.width = 36; b.spacing = 0.4; b.density = 0.25
         case .stippleDense: b.width = 48; b.spacing = 0.3; b.density = 0.85
-        case .dotShader: b.width = 70; b.spacing = 0.3; b.density = 0.65
+        case .dotShader: b.width = 70; b.spacing = 0.12; b.density = 0.85; b.pressureDensity = true
         case .graphite: b.width = 18; b.opacity = 0.3; b.spacing = 0.2; b.density = 0.75
         case .charcoal: b.width = 42; b.opacity = 0.2; b.spacing = 0.22; b.density = 0.65
         case .hatching: b.width = 36; b.opacity = 0.65; b.spacing = 0.65; b.density = 0.4
@@ -151,6 +160,7 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         b.adaptiveStabilization = true
         if family == .ink { b.stabilization = 1; b.stabilizationEnabled = true }
         b.pressureGain = 2.5
+        if self == .dotShader { b.pressureGain = 1; b.pressureCurve = 1 }
         if self == .brushPen { b.minimumSize = 0.03; b.taperStart = 0.6; b.taperEnd = 0.8 }
         if b.usesStamps { b.tiltShading = 0.7 }
         if softness > 0 { b.normalizedOpacity = true }

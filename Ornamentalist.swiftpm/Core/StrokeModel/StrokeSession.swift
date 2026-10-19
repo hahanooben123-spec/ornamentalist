@@ -71,7 +71,7 @@ struct StrokeSession {
         let nextFollower = follower + (next - follower) * alpha
         smoothPosition = next; smoothFollower = nextFollower
         result.point = next * 1.5 - nextFollower * 0.5
-        if stroke.brush.pressureEnabled {
+        if stroke.brush.pressureEnabled || stroke.brush.usesPressureDensity {
             let pressureAlpha = 1 - exp(-dt / 0.01)
             result.pressure = previous.pressure + (sample.pressure - previous.pressure) * pressureAlpha
         }

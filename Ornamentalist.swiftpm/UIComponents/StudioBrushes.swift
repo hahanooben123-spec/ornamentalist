@@ -13,6 +13,10 @@ struct StudioBrushesView: View {
                 Text(brush.preset.name).font(.headline).accessibilityIdentifier("selectedBrush")
                 BrushSwatch(brush: brush).frame(height: 72)
                     .background(.white, in: RoundedRectangle(cornerRadius: 14))
+                if brush.usesPressureDensity {
+                    HStack { Text("Light pressure"); Spacer(); Text("Firm pressure") }
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 Text(brush.preset.hint).font(.caption).foregroundStyle(.secondary)
             }
             Picker("Brush family", selection: $family) {
@@ -42,7 +46,7 @@ struct StudioBrushesView: View {
             }
             Divider()
             VStack(alignment: .leading, spacing: 10) {
-                valueLabel("Size", value: "\(brush.width.formatted(.number.precision(.fractionLength(1)))) px")
+                valueLabel(brush.usesPressureDensity ? "Shading area" : "Size", value: "\(brush.width.formatted(.number.precision(.fractionLength(1)))) px")
                 Slider(value: Binding(get: { brush.width }, set: { model.setInputWidth($0) }), in: 0.5...160,
                        onEditingChanged: { model.brushPreviewRequested?($0) })
                     .accessibilityLabel("Line width")
@@ -66,6 +70,19 @@ struct StudioBrushesView: View {
                         .accessibilityLabel("Brush opacity")
             }
             if brush.usesStamps {
+                if brush.preset == .dotShader {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Pressure controls density", isOn: Binding(get: { brush.usesPressureDensity }, set: { model.setDotResponse(pressureDensity: $0) }))
+                            .font(.subheadline).accessibilityIdentifier("pressureDensity")
+                        if brush.usesPressureDensity {
+                            valueLabel("Dot size", value: "\(brush.dotSize.formatted(.number.precision(.fractionLength(1)))) px")
+                            Slider(value: Binding(get: { brush.dotSize }, set: { model.setDotResponse(size: $0) }), in: 0.5...8, step: 0.1)
+                                .accessibilityLabel("Dot size").accessibilityIdentifier("dotSize")
+                            Text("Pressure changes the number of dots. Dot size and shading area stay fixed; tilt is ignored in this mode.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 VStack(alignment: .leading, spacing: 8) {
                     valueLabel("Edge softness", value: "\(Int(brush.effectiveSoftness * 100))%")
                     Slider(value: Binding(get: { brush.effectiveSoftness }, set: { model.setPenResponse(softness: $0) }), in: 0...1)
@@ -89,14 +106,16 @@ struct StudioBrushesView: View {
                     }
                 }
             }
-            Toggle("Pressure sensitivity", isOn: Binding(get: { brush.pressureEnabled }, set: { model.setPressure($0) }))
-                .font(.subheadline)
-            if brush.pressureEnabled {
+            if !brush.usesPressureDensity {
+                Toggle("Pressure sensitivity", isOn: Binding(get: { brush.pressureEnabled }, set: { model.setPressure($0) }))
+                    .font(.subheadline)
+            }
+            if brush.pressureEnabled || brush.usesPressureDensity {
                 VStack(alignment: .leading, spacing: 8) {
                     valueLabel("Pencil sensitivity", value: "\(brush.pressureGain.formatted(.number.precision(.fractionLength(1))))×")
                     Slider(value: Binding(get: { brush.pressureGain }, set: { model.setPenResponse(gain: $0) }), in: 1...5)
                         .accessibilityLabel("Pencil pressure sensitivity")
-                    Text("Higher sensitivity reaches full size with a lighter touch.").font(.caption).foregroundStyle(.secondary)
+                    Text(brush.usesPressureDensity ? "Higher sensitivity reaches full density with a lighter touch." : "Higher sensitivity reaches full size with a lighter touch.").font(.caption).foregroundStyle(.secondary)
                     valueLabel("Pressure curve", value: brush.pressureCurve.formatted(.number.precision(.fractionLength(2))))
                     Slider(value: Binding(get: { brush.pressureCurve }, set: { model.setPenResponse(curve: $0) }), in: 0.2...3)
                     Text("Lower values need less pressure. Higher values need a firmer touch.").font(.caption).foregroundStyle(.secondary)
@@ -104,14 +123,17 @@ struct StudioBrushesView: View {
                         var path = Path()
                         for i in 0...40 {
                             let t = Double(i) / 40
-                            let diameter = brush.minimumSize + (1 - brush.minimumSize) * pow(min(1, t * brush.pressureGain), brush.pressureCurve)
+                            let response = brush.densityResponse(pressure: t)
+                            let diameter = brush.usesPressureDensity ? response : brush.minimumSize + (1 - brush.minimumSize) * response
                             let p = CGPoint(x: size.width * t, y: size.height * (1 - diameter))
                             if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
                         }
                         context.stroke(path, with: .color(StudioStyle.copper), lineWidth: 2)
-                    }.frame(height: 52).accessibilityLabel("Pressure to brush size curve")
-                    valueLabel("Minimum size", value: "\(Int(brush.minimumSize * 100))%")
-                    Slider(value: Binding(get: { brush.minimumSize }, set: { model.setPenResponse(minimum: $0) }), in: 0...1)
+                    }.frame(height: 52).accessibilityLabel(brush.usesPressureDensity ? "Pressure to dot density curve" : "Pressure to brush size curve")
+                    if !brush.usesPressureDensity {
+                        valueLabel("Minimum size", value: "\(Int(brush.minimumSize * 100))%")
+                        Slider(value: Binding(get: { brush.minimumSize }, set: { model.setPenResponse(minimum: $0) }), in: 0...1)
+                    }
                 }
             }
             if !brush.usesStamps {
@@ -122,7 +144,7 @@ struct StudioBrushesView: View {
                     Slider(value: Binding(get: { brush.taperEnd }, set: { model.setPenResponse(end: $0) }), in: 0...2)
                     Text("Taper length follows brush size. The ending is applied when Pencil lifts.").font(.caption).foregroundStyle(.secondary)
                 }
-            } else {
+            } else if !brush.usesPressureDensity {
                 VStack(alignment: .leading, spacing: 8) {
                     valueLabel("Tilt shading", value: "\(Int(brush.tiltShading * 100))%")
                     Slider(value: Binding(get: { brush.tiltShading }, set: { model.setPenResponse(tilt: $0) }), in: 0...1)

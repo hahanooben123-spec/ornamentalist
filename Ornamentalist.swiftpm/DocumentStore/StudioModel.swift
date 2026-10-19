@@ -391,7 +391,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 16
+            after.layers[index].raster = raster; after.version = 17
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -439,7 +439,7 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.layers[index].raster?.placement = p; after.version = 16
+            after.layers[index].raster?.placement = p; after.version = 17
             do {
                 try after.validate()
                 if before.layers != after.layers {
@@ -576,7 +576,13 @@ final class StudioModel: ObservableObject {
     func setBrush(_ preset: BrushPreset) {
         guard canEdit, !isDrawing, document != nil else { return }
         if let current = document?.brush { brushSettings[current.preset] = current }
-        document?.brush = brushSettings[preset] ?? preset.makeBrush(); changed()
+        var selected = brushSettings[preset] ?? preset.makeBrush()
+        // Upgrade the selected brush only. Brushes embedded in old strokes
+        // retain their original geometry, including their legacy random seed.
+        if preset == .dotShader, selected.pressureDensity == nil {
+            selected.pressureDensity = true; selected.pressureGain = 1; selected.pressureCurve = 1
+        }
+        document?.brush = selected; changed()
         preferredBrushPreset = preset
         preferences?.set(preset.rawValue, forKey: "activeBrushPreset")
         tool = .brush
@@ -592,6 +598,13 @@ final class StudioModel: ObservableObject {
     func setDensity(_ value: Double) {
         guard value.isFinite else { return }
         editInputBrush { $0.density = max(0.05, min(1, value)) }
+    }
+    func setDotResponse(pressureDensity: Bool? = nil, size: Double? = nil) {
+        guard inputBrush.preset == .dotShader else { return }
+        editInputBrush {
+            if let pressureDensity { $0.pressureDensity = pressureDensity }
+            if let size, size.isFinite { $0.dotSize = max(0.5, min(8, size)) }
+        }
     }
     func setPressure(_ enabled: Bool) {
         editInputBrush { $0.pressureEnabled = enabled }
@@ -621,7 +634,7 @@ final class StudioModel: ObservableObject {
         else { document?.brush = brush; changed() }
     }
     private func changed() {
-        document?.version = 16; document?.modified = Date()
+        document?.version = 17; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"
