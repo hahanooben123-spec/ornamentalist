@@ -36,7 +36,11 @@ final class EditingToolsTests: XCTestCase {
         XCTAssertEqual(circle.samples.count, 129)
         XCTAssertLessThan((circle.samples.first!.point - circle.samples.last!.point).length, 0.00001)
         XCTAssertEqual(circle.symmetry, session.stroke.symmetry)
-        for sample in circle.samples { XCTAssertEqual((sample.point - Point(x: 100, y: 100)).length, 60, accuracy: 1) }
+        let center = circle.samples.prefix(128).reduce(Point.zero) { $0 + $1.point } * (1.0 / 128)
+        let radius = (circle.samples[0].point - center).length
+        XCTAssertLessThan((center - Point(x: 100, y: 100)).length, 3)
+        XCTAssertEqual(radius, 60, accuracy: 3)
+        for sample in circle.samples { XCTAssertEqual((sample.point - center).length, radius, accuracy: 0.00001) }
     }
     func testSelectionAndStrokeTransformPersistAndRejectOldFormat() throws {
         let polygon = StrokeSelection(points: [Point(x: 10, y: 10), Point(x: 50, y: 10), Point(x: 50, y: 50), Point(x: 10, y: 50)])

@@ -226,7 +226,8 @@ actor ExportService {
             guard let context = CGContext(data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8,
                 bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
-            context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: 1, y: -1)
+            // Copy CGImage rows directly: flipping here mirrors the tapped seed
+            // vertically and can flood the outside of a small closed shape.
             context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
