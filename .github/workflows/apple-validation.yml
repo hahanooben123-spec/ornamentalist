@@ -78,6 +78,7 @@ jobs:
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath OptimizationTests.xcresult
+          -only-testing:OrnamentalistTests/EditingToolsNativeTests/testTileMirrorRotationsAndTransformedInkMatchMetalAndPNG
           -only-testing:OrnamentalistTests/EditingToolsNativeTests/testSelectionAndWholeStrokeTransformMatchMetalAndPNG
           -only-testing:OrnamentalistTests/RendererCacheTests/testPartialLiveRestorePreservesPredictionOpacityAndEraser
           -only-testing:OrnamentalistTests/RendererCacheTests/testEvictedGeometryStreamsBackWithoutChangingInkOrBlockingNewStrokes

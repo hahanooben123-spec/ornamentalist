@@ -130,7 +130,14 @@ enum PNGExporter {
                 if index % 64 == 0 { try Task.checkCancellation() }
                 dabs += state.advance(sample, brush: stroke.brush)
             }
-            for matrix in stroke.symmetry.matrices {
+            var sourceBounds = CGRect.null
+            if stroke.symmetry.tileCount > 0 && stroke.symmetry.tileSymmetry {
+                for dab in dabs {
+                    let extent = dab.radius * max(1, dab.aspect) * 1.5
+                    sourceBounds = sourceBounds.union(CGRect(x: dab.center.x - extent, y: dab.center.y - extent, width: extent * 2, height: extent * 2))
+                }
+            }
+            for matrix in stroke.symmetry.matrices(for: sourceBounds, clip: context.boundingBoxOfClipPath.insetBy(dx: -2, dy: -2)) {
                 try Task.checkCancellation()
                 context.saveGState()
                 defer { context.restoreGState() }
@@ -201,7 +208,9 @@ enum PNGExporter {
             path.addLine(to: CGPoint(x: c.x, y: c.y))
             path.closeSubpath()
         }
-        for matrix in stroke.symmetry.matrices {
+        let sourceBounds = stroke.symmetry.tileCount > 0 && stroke.symmetry.tileSymmetry
+            ? SymmetryConfiguration.bounds(of: vertices, padding: 2) : CGRect.null
+        for matrix in stroke.symmetry.matrices(for: sourceBounds, clip: context.boundingBoxOfClipPath.insetBy(dx: -2, dy: -2)) {
             try Task.checkCancellation()
             context.saveGState()
             context.concatenate(CGAffineTransform(a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d,
@@ -232,7 +241,7 @@ actor ExportService {
             return true
         }
         guard rendered else { throw DocumentError.graphics }
-        let seeds = document.symmetry.matrices.map { matrix -> (Int, Int) in
+        let seeds = document.symmetry.matrices(for: CGRect(x: point.x - 0.01, y: point.y - 0.01, width: 0.02, height: 0.02)).map { matrix -> (Int, Int) in
             let p = matrix.apply(point)
             return (Int(p.x.rounded(.down)), Int(p.y.rounded(.down)))
         }
@@ -248,7 +257,7 @@ actor ExportService {
                     bitmapInfo: CGImageAlphaInfo.none.rawValue) else { throw DocumentError.graphics }
                 context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: 1, y: -1)
                 context.setShouldAntialias(false); context.setFillColor(gray: 1, alpha: 1)
-                for matrix in document.symmetry.matrices {
+                for matrix in document.symmetry.matrices(for: SymmetryConfiguration.bounds(of: selection.points, padding: 1)) {
                     try Task.checkCancellation()
                     context.beginPath()
                     for (i, point) in selection.points.enumerated() {

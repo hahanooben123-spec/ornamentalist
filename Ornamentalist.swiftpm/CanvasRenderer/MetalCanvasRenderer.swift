@@ -6,6 +6,7 @@ private struct GPUChunk {
     var offset = 0
     var compactStamp = false
     var fadedStamp = false
+    var sourceBounds = CGRect.null
     var storageUnits: Int { compactStamp ? count / 3 : count }
     var byteOffset: Int { compactStamp ? offset / 6 * 32 : offset * 16 }
 }
@@ -133,6 +134,12 @@ final class MetalCanvasRenderer {
     private var guideKey: [Double] = []
     private var guideBuffers: [GPUChunk] = []
     private var matrixCache: [SymmetryConfiguration: MTLBuffer] = [:]
+    private struct TileMatrixKey: Hashable {
+        let symmetry: SymmetryConfiguration
+        let bounds: [Double]
+        let clip: [Double]
+    }
+    private var tileMatrixCache: [TileMatrixKey: (MTLBuffer, Int)] = [:]
     private var sceneLayerStrokes: [UUID: [InkStroke]] = [:]
     private var scenePaintKeys: [UUID: LayerPaintKey] = [:]
     private var sceneDocumentID: UUID?
@@ -259,6 +266,13 @@ final class MetalCanvasRenderer {
 
     private func chunk(_ points: [SIMD4<Float>]) throws -> GPUChunk {
         guard !points.isEmpty else { throw DocumentError.graphics }
+        var lowX = points[0].x, highX = lowX, lowY = points[0].y, highY = lowY
+        for point in points.dropFirst() {
+            lowX = min(lowX, point.x); highX = max(highX, point.x)
+            lowY = min(lowY, point.y); highY = max(highY, point.y)
+        }
+        let bounds = CGRect(x: Double(lowX) - 1, y: Double(lowY) - 1,
+                            width: Double(highX - lowX) + 2, height: Double(highY - lowY) + 2)
         if compactStamps, points.count.isMultiple(of: 6), points[0].z < 0, points[0].w < 0 {
             let local: [SIMD2<Float>] = [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, -1), SIMD2(1, 1), SIMD2(-1, 1)]
             let stamps = points.indices.allSatisfy { i in
@@ -283,14 +297,14 @@ final class MetalCanvasRenderer {
                     device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
                 }
                 guard let buffer else { throw DocumentError.graphicsMemory }
-                return GPUChunk(buffer: buffer, count: points.count, compactStamp: true, fadedStamp: faded)
+                return GPUChunk(buffer: buffer, count: points.count, compactStamp: true, fadedStamp: faded, sourceBounds: bounds)
             }
         }
         let buffer = points.withUnsafeBytes { bytes in
             device.makeBuffer(bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared)
         }
         guard let buffer else { throw DocumentError.graphicsMemory }
-        return GPUChunk(buffer: buffer, count: points.count)
+        return GPUChunk(buffer: buffer, count: points.count, sourceBounds: bounds)
     }
     private func chunks(_ points: [BrushVertex]) throws -> [GPUChunk] {
         var result: [GPUChunk] = []
@@ -745,7 +759,7 @@ final class MetalCanvasRenderer {
         for chunk in chunks {
             if skip >= chunk.count { skip -= chunk.count; continue }
             result.append(GPUChunk(buffer: chunk.buffer, count: chunk.count - skip, offset: chunk.offset + skip,
-                                   compactStamp: chunk.compactStamp, fadedStamp: chunk.fadedStamp))
+                                   compactStamp: chunk.compactStamp, fadedStamp: chunk.fadedStamp, sourceBounds: chunk.sourceBounds))
             skip = 0
         }
         return result
@@ -866,7 +880,8 @@ final class MetalCanvasRenderer {
                                              width: radius * 2, height: radius * 2))
             }
             var mirrored = CGRect.null
-            for matrix in stroke.symmetry.matrices { mirrored = mirrored.union(transformed(transformed(bounds, by: matrix), by: stroke.transform ?? .init())) }
+            let target = SymmetryConfiguration.bounds(CGRect(x: 0, y: 0, width: document.size.x, height: document.size.y), transformedBy: (stroke.transform ?? .init()).inverse)
+            for matrix in stroke.symmetry.matrices(for: bounds, clip: target) { mirrored = mirrored.union(transformed(transformed(bounds, by: matrix), by: stroke.transform ?? .init())) }
             strokeBounds[stroke.id] = mirrored
         }
         scenePaintKeys = Dictionary(uniqueKeysWithValues: document.layers.map { layer in
@@ -1184,7 +1199,7 @@ final class MetalCanvasRenderer {
         for vertex in preview { source = source.union(CGRect(x: vertex.point.x, y: vertex.point.y, width: 0, height: 0)) }
         let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
         var screen = CGRect.null
-        for matrix in active.symmetry.matrices { screen = screen.union(transformed(transformed(source, by: matrix), by: transform)) }
+        for matrix in active.symmetry.matrices(for: source) { screen = screen.union(transformed(transformed(source, by: matrix), by: transform)) }
         let sx = Double(work.width) / viewSize.x, sy = Double(work.height) / viewSize.y
         let pixels = CGRect(x: screen.minX * sx, y: screen.minY * sy,
                             width: screen.width * sx, height: screen.height * sy).insetBy(dx: -3, dy: -3)
@@ -1404,7 +1419,7 @@ final class MetalCanvasRenderer {
         cancelViewportNavigation(); lastFrameDocument = nil; lastFrameViewport = nil
         clearLayerCaches()
         cache.removeAll(); cacheOrder.removeAll(); recountBuffers()
-        matrixCache.removeAll(); rasterQuads.removeAll(); guideBuffers.removeAll(); guideKey.removeAll()
+        matrixCache.removeAll(); tileMatrixCache.removeAll(); rasterQuads.removeAll(); guideBuffers.removeAll(); guideKey.removeAll()
         // Recover through the bounded streaming path on the next frame.
         cacheBudget = 160 * 1024 * 1024
     }
@@ -1580,17 +1595,37 @@ final class MetalCanvasRenderer {
         var selectionBounds = SIMD4<Float>(polygon.map(\.x).min()!, polygon.map(\.y).min()!,
                                           polygon.map(\.x).max()!, polygon.map(\.y).max()!)
         encoder.setFragmentBytes(&selectionBounds, length: MemoryLayout<SIMD4<Float>>.stride, index: 3)
-        if matrixCache[symmetry] == nil {
-            let values: [SIMD4<Float>] = symmetry.matrices.flatMap { m in
-                [SIMD4(Float(m.a), Float(m.b), Float(m.c), Float(m.d)), SIMD4(Float(m.tx), Float(m.ty), 0, 0)]
+        let matrices: MTLBuffer
+        let instanceCount: Int
+        if symmetry.tileCount > 0 && symmetry.tileSymmetry {
+            let bounds = chunks.reduce(CGRect.null) { $0.union($1.sourceBounds) }
+            guard !bounds.isNull else { return }
+            let clip = SymmetryConfiguration.bounds(CGRect(x: 0, y: 0, width: canvas.x, height: canvas.y), transformedBy: strokeTransform.inverse)
+            let key = TileMatrixKey(symmetry: symmetry,
+                bounds: [Double(bounds.minX), Double(bounds.minY), Double(bounds.maxX), Double(bounds.maxY)],
+                clip: [Double(clip.minX), Double(clip.minY), Double(clip.maxX), Double(clip.maxY)])
+            if let cached = tileMatrixCache[key] { matrices = cached.0; instanceCount = cached.1 }
+            else {
+                let transforms = symmetry.matrices(for: bounds, clip: clip)
+                guard !transforms.isEmpty else { return }
+                let values: [SIMD4<Float>] = transforms.flatMap { m in
+                    [SIMD4(Float(m.a), Float(m.b), Float(m.c), Float(m.d)), SIMD4(Float(m.tx), Float(m.ty), 0, 0)]
+                }
+                guard let buffer = values.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) }) else { throw DocumentError.graphicsMemory }
+                if tileMatrixCache.count >= 128 { tileMatrixCache.removeAll() }
+                matrices = buffer; instanceCount = transforms.count; tileMatrixCache[key] = (buffer, instanceCount)
             }
-            let buffer = values.withUnsafeBytes {
-                device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+        } else {
+            if matrixCache[symmetry] == nil {
+                let values: [SIMD4<Float>] = symmetry.matrices.flatMap { m in
+                    [SIMD4(Float(m.a), Float(m.b), Float(m.c), Float(m.d)), SIMD4(Float(m.tx), Float(m.ty), 0, 0)]
+                }
+                let buffer = values.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) }
+                guard let buffer else { throw DocumentError.graphicsMemory }
+                matrixCache[symmetry] = buffer
             }
-            guard let buffer else { throw DocumentError.graphicsMemory }
-            matrixCache[symmetry] = buffer
+            matrices = matrixCache[symmetry]!; instanceCount = symmetry.instanceCount
         }
-        let matrices = matrixCache[symmetry]!
         uniforms.withUnsafeBytes { encoder.setVertexBytes($0.baseAddress!, length: $0.count, index: 1) }
         // 64 sectors + Mirror uses 128 transforms (4096 bytes), so use a buffer
         // rather than the small inline setVertexBytes argument limit.
@@ -1600,7 +1635,7 @@ final class MetalCanvasRenderer {
             encoder.setVertexBytes(&compact, length: MemoryLayout<UInt32>.stride, index: 3)
             encoder.setVertexBuffer(chunk.buffer, offset: chunk.byteOffset, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: chunk.count,
-                                   instanceCount: symmetry.instanceCount)
+                                   instanceCount: instanceCount)
         }
     }
 

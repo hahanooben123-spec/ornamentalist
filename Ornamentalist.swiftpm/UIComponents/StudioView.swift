@@ -286,7 +286,6 @@ struct StudioView: View {
                 .popover(isPresented: Binding(get: { panel == .colors }, set: { if !$0 && panel == .colors { panel = nil } })) {
                     StudioPanelView(panel: .colors, model: model, appearance: $appearance) {}.tint(StudioStyle.copper)
                 }
-            Spacer(minLength: 0)
             Divider().frame(height: 24).padding(.horizontal, horizontalSizeClass == .compact ? 2 : 6)
             Menu {
                 Button("Insert photo", systemImage: "photo.on.rectangle") { panel = nil; photoPicker = true }

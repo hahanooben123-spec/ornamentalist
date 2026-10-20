@@ -51,39 +51,43 @@ struct StudioPanelView: View {
                 Text("Radial").tag(0); Text("Tiles 2×2").tag(2); Text("Tiles 4×4").tag(4)
             }.pickerStyle(.segmented)
             if document.symmetry.tileCount > 0 {
-                Text("Draw in any cell; strokes repeat across the grid. Use a new drawing for a seamless pattern. Export a tile from the export menu.")
+                Text("Draw in any cell. Mirror and rotations repeat with the pattern. Export a tile from the export menu.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             ZStack {
                 Circle().stroke(.secondary.opacity(0.15), lineWidth: 1)
-                SymmetryPreview(count: document.symmetry.guideRayCount)
+                SymmetryPreview(count: document.symmetry.tileCount > 0 ? document.symmetry.tileRepetitions * (document.symmetry.mirror ? 2 : 1) : document.symmetry.guideRayCount)
                     .stroke(StudioStyle.copper, lineWidth: 1)
-            }.frame(height: 100).accessibilityHidden(true).opacity(document.symmetry.tileCount > 0 ? 0.2 : 1)
+            }.frame(height: 100).accessibilityHidden(true)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                ForEach([1, 4, 6, 8, 12, 16, 24, 32], id: \.self) { count in
-                    Button { model.setRepetitions(count) } label: {
-                        Text(count == 1 ? "Off" : "×\(count)").font(.subheadline.monospacedDigit())
+                ForEach(document.symmetry.tileCount > 0 ? [1, 2, 4, 8] : [1, 4, 6, 8, 12, 16, 24, 32], id: \.self) { count in
+                    Button { if document.symmetry.tileCount > 0 { model.setTileRepetitions(count) } else { model.setRepetitions(count) } } label: {
+                        Text(count == 1 && document.symmetry.tileCount == 0 ? "Off" : "×\(count)").font(.subheadline.monospacedDigit())
                             .frame(maxWidth: .infinity).frame(height: 44)
-                            .foregroundStyle(document.symmetry.repetitions == count ? Color.white : Color.primary)
-                            .background(document.symmetry.repetitions == count ? StudioStyle.copperFill : Color.secondary.opacity(0.08),
+                            .foregroundStyle((document.symmetry.tileCount > 0 ? document.symmetry.tileRepetitions : document.symmetry.repetitions) == count ? Color.white : Color.primary)
+                            .background((document.symmetry.tileCount > 0 ? document.symmetry.tileRepetitions : document.symmetry.repetitions) == count ? StudioStyle.copperFill : Color.secondary.opacity(0.08),
                                         in: RoundedRectangle(cornerRadius: 12))
                     }.accessibilityLabel("Symmetry \(count)").accessibilityIdentifier("symmetry-\(count)")
-                        .accessibilityAddTraits(document.symmetry.repetitions == count ? .isSelected : [])
+                        .accessibilityAddTraits((document.symmetry.tileCount > 0 ? document.symmetry.tileRepetitions : document.symmetry.repetitions) == count ? .isSelected : [])
                 }
             }
-            .disabled(document.symmetry.tileCount > 0)
+            if document.symmetry.tileCount == 0 {
             Stepper(value: Binding(get: { document.symmetry.repetitions }, set: { model.setRepetitions($0) }), in: 1...64) {
                 Text("\(document.symmetry.repetitions) sectors").monospacedDigit()
             }.font(.subheadline)
                 .accessibilityLabel("Radial copies")
                 .accessibilityValue("\(document.symmetry.repetitions)")
                 .accessibilityIdentifier("symmetryCopies")
-                .disabled(document.symmetry.tileCount > 0)
+            }
             Toggle("Mirror", isOn: Binding(get: { document.symmetry.mirror }, set: { model.setMirror($0) }))
                 .font(.subheadline).accessibilityIdentifier("mirrorToggle")
-                .disabled(document.symmetry.tileCount > 0)
+            if document.symmetry.tileCount > 0 {
+                Text("\(document.symmetry.tileRepetitions) rotation(s) per tile\(document.symmetry.mirror ? " · Mirror" : "")")
+                    .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("mirrorSummary")
+            } else {
             Text(document.symmetry.mirror ? "\(document.symmetry.instanceCount) copies · Reflected across the guides." : "Rotate each stroke around the center.")
                 .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("mirrorSummary")
+            }
             Toggle("Show guides", isOn: $model.guides).font(.subheadline)
             Text("Changes apply to your next stroke. Existing lines keep their symmetry.")
                 .font(.caption).foregroundStyle(.secondary)

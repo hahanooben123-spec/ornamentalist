@@ -63,7 +63,7 @@ extension InkStroke {
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 18
+    var version = 19
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -85,7 +85,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard (1...18).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...19).contains(version) else { throw DocumentError.unsupportedVersion }
         let layerIDs = Set(layers.map(\.id))
         guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
               layerIDs.contains(activeLayerID), layers.allSatisfy({
@@ -107,7 +107,8 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
             guard rasterPixels <= LayerRaster.documentPixels, rasterBytes <= LayerRaster.documentBytes else { throw DocumentError.memoryLimit }
         }
         func validSymmetry(_ s: SymmetryConfiguration) -> Bool {
-            (1...64).contains(s.repetitions) && s.center.isFinite &&
+            (!s.tileSymmetry || version >= 19) && (1...8).contains(s.tileRepetitions) &&
+                (1...64).contains(s.repetitions) && s.center.isFinite &&
                 (0...size.x).contains(s.center.x) && (0...size.y).contains(s.center.y) &&
                 (s.tileCount == 0 || (version >= 16 && [2, 4].contains(s.tileCount) && s.tileCanvas == size))
         }

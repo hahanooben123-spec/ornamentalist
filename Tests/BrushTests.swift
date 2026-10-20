@@ -401,7 +401,7 @@ final class BrushTests: XCTestCase {
         let url = try await repository.exportProject(saved)
         defer { try? FileManager.default.removeItem(at: url) }
         let imported = try await repository.importProject(at: url)
-        XCTAssertEqual(imported.version, 18); XCTAssertEqual(imported.layers, d.layers)
+        XCTAssertEqual(imported.version, 19); XCTAssertEqual(imported.layers, d.layers)
         XCTAssertEqual(BrushGeometry.mesh(imported.strokes[0]), BrushGeometry.mesh(d.strokes[0]))
     }
 }

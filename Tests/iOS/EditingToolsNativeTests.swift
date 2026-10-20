@@ -5,6 +5,29 @@ import MetalKit
 
 final class EditingToolsNativeTests: XCTestCase {
     @MainActor
+    func testTileMirrorRotationsAndTransformedInkMatchMetalAndPNG() async throws {
+        for copies in [1, 2] {
+            var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+            document.symmetry = SymmetryConfiguration(repetitions: 8, center: Point(x: 64, y: 64), mirror: true,
+                tileCount: 2, tileSymmetry: true, tileRepetitions: copies, tileCanvas: document.size)
+            document.strokes = [InkStroke(brush: InkBrush(width: 8, stabilization: 0), symmetry: document.symmetry,
+                samples: [StrokeSample(point: Point(x: 20, y: 24), pressure: 1, altitude: 1, azimuth: 0, time: 0)],
+                transform: Matrix.translation(Point(x: 3, y: 5)))]
+            let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+            try await renderer.synchronize(document.strokes, layers: document.layers)
+            let pixels = try await renderer.renderOffscreen(document: document, viewport: Viewport(), width: 128, height: 128)
+            let matrix = Viewport().matrix(viewSize: document.size, canvasSize: document.size)
+            var checks: [(Point, Double)] = [(Point(x: 23, y: 29), 0), (Point(x: 23, y: 45), 0),
+                (Point(x: 87, y: 109), 0), (Point(x: 35, y: 37), 255)]
+            checks.append((Point(x: 47, y: 45), copies == 2 ? 0 : 255))
+            for (point, expected) in checks {
+                let screen = matrix.apply(point), offset = (Int(screen.y) * 128 + Int(screen.x)) * 4
+                XCTAssertEqual(Double(pixels[offset]), expected, accuracy: 5)
+                XCTAssertEqual(try PNGExporter.sample(document: document, point: point).red * 255, expected, accuracy: 5)
+            }
+        }
+    }
+    @MainActor
     func testSelectionAndWholeStrokeTransformMatchMetalAndPNG() async throws {
         var drawing = DrawingDocument(); drawing.size = Point(x: 128, y: 128)
         drawing.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64), mirror: true)

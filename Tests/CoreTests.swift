@@ -2,6 +2,32 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class CoreTests: XCTestCase {
+    func testTileMirrorAndRotationsCullInvisibleCopiesAndKeepLegacyInk() throws {
+        var symmetry = SymmetryConfiguration(repetitions: 8, center: Point(x: 1024, y: 1024), mirror: false,
+            tileCount: 4, tileSymmetry: true, tileRepetitions: 1)
+        let source = CGRect(x: 96, y: 116, width: 8, height: 8)
+        XCTAssertEqual(symmetry.matrices(for: source).count, 16)
+        symmetry.mirror = true
+        XCTAssertEqual(symmetry.matrices(for: source).count, 32)
+        symmetry.tileRepetitions = 2
+        XCTAssertEqual(symmetry.matrices(for: source).count, 64)
+        let point = Point(x: 100, y: 120)
+        let visible = symmetry.matrices(for: source).map { $0.apply(point) }
+        for expected in [Point(x: 100, y: 120), Point(x: 100, y: 392), Point(x: 412, y: 392)] {
+            XCTAssertTrue(visible.contains { ($0 - expected).length < 0.000001 })
+        }
+        var document = DrawingDocument(); document.symmetry = symmetry
+        try document.validate()
+        let restored = try JSONDecoder().decode(DrawingDocument.self, from: JSONEncoder().encode(document))
+        XCTAssertEqual(restored.symmetry, symmetry)
+        document.version = 18; XCTAssertThrowsError(try document.validate())
+        document.version = 19; document.symmetry.tileRepetitions = 9; XCTAssertThrowsError(try document.validate())
+        let old = try JSONDecoder().decode(SymmetryConfiguration.self, from: Data(#"{"repetitions":8,"center":{"x":1024,"y":1024},"mirror":true,"tileCount":4}"#.utf8))
+        XCTAssertFalse(old.tileSymmetry); XCTAssertEqual(old.instanceCount, 121)
+        XCTAssertEqual(old.matrices.count, 121)
+        // Extreme off-paper input cannot allocate an unbounded transform array.
+        XCTAssertLessThan(symmetry.matrices(for: CGRect(x: -100000, y: -100000, width: 200000, height: 200000)).count, 2000)
+    }
     func testTileSymmetryRepeatsAcrossCanvasAndRoundTrips() throws {
         var d = DrawingDocument(); d.symmetry.tileCount = 4; d.symmetry.tileCanvas = d.size
         try d.validate()

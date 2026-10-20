@@ -238,6 +238,9 @@ final class StudioModel: ObservableObject {
         opacityEditBefore = nil
         tool = .brush
         var adopted = d
+        if adopted.symmetry.tileCount > 0 {
+            adopted.symmetry.tileSymmetry = true; adopted.version = 19
+        }
         // Project settings must not overwrite newer personal brush preferences.
         // Stored strokes retain their own brushes and are never rewritten.
         if let remembered = brushSettings[d.brush.preset] { adopted.brush = remembered }
@@ -267,6 +270,7 @@ final class StudioModel: ObservableObject {
         guard document == nil, !busy else { return }
         busy = true; defer { busy = false }
         var d = DrawingDocument()
+        d.symmetry.mirror = true
         d.brush = brushSettings[preferredBrushPreset] ?? preferredBrushPreset.makeBrush()
         let cleaned = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
         d.title = cleaned.isEmpty ? "Untitled Drawing" : cleaned
@@ -349,7 +353,9 @@ final class StudioModel: ObservableObject {
     }
     func setMirror(_ enabled: Bool) {
         guard canEdit, !isDrawing, document != nil else { return }
-        document?.symmetry.mirror = enabled; changed()
+        document?.symmetry.mirror = enabled
+        if (document?.symmetry.tileCount ?? 0) > 0 { document?.symmetry.tileSymmetry = true }
+        changed()
     }
     func addParallelCopy() {
         guard canDraw, !isDrawing, let d = document,
@@ -411,7 +417,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 18
+            after.layers[index].raster = raster; after.version = 19
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -500,7 +506,7 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.version = 18
+            after.version = 19
             do {
                 if let preview = transformPreviewRaster, let start = transformStartMatrix {
                     let delta = start.inverse.followed(by: p.matrix(size: Point(x: Double(preview.width), y: Double(preview.height))))
@@ -642,7 +648,14 @@ final class StudioModel: ObservableObject {
     }
     func setTileCount(_ count: Int) {
         guard canEdit, !isDrawing, let size = document?.size, [0, 2, 4].contains(count) else { return }
-        document?.symmetry.tileCount = count; document?.symmetry.tileCanvas = size; changed()
+        document?.symmetry.tileCount = count; document?.symmetry.tileCanvas = size
+        if count > 0 { document?.symmetry.tileSymmetry = true }
+        changed()
+    }
+    func setTileRepetitions(_ count: Int) {
+        guard canEdit, !isDrawing else { return }
+        document?.symmetry.tileRepetitions = max(1, min(8, count))
+        document?.symmetry.tileSymmetry = true; changed()
     }
     func setWidth(_ width: Double) {
         guard canEdit, !isDrawing, width.isFinite else { return }
@@ -710,7 +723,7 @@ final class StudioModel: ObservableObject {
     }
     private func changed(appending: Bool = false) {
         if !appending { appendLineage = UUID() }
-        document?.version = 18; document?.modified = Date()
+        document?.version = 19; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"

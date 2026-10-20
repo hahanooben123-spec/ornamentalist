@@ -5,6 +5,24 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testNewDrawingDefaultsToMirrorAndTilesKeepSeparateRotationSettings() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = DocumentRepository(directory: directory)
+        let model = StudioModel(repository: repository); await model.create()
+        XCTAssertTrue(try XCTUnwrap(model.document).symmetry.mirror)
+        model.setRepetitions(12); model.setTileCount(4)
+        XCTAssertTrue(try XCTUnwrap(model.document).symmetry.tileSymmetry)
+        XCTAssertEqual(model.document?.symmetry.tileRepetitions, 1)
+        model.setTileRepetitions(2); model.setMirror(false)
+        XCTAssertFalse(try XCTUnwrap(model.document).symmetry.mirror)
+        XCTAssertEqual(model.document?.symmetry.tileRepetitions, 2)
+        model.setTileCount(0); XCTAssertEqual(model.document?.symmetry.repetitions, 12)
+        let saved = await model.saveNow(); XCTAssertTrue(saved)
+        let reopened = try await repository.open(try XCTUnwrap(model.document).id)
+        XCTAssertEqual(reopened.0.symmetry.tileRepetitions, 2)
+        XCTAssertFalse(reopened.0.symmetry.mirror)
+    }
     func testGeneralPreferencesSurviveRestart() {
         let name = "Ornamentalist-general-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!

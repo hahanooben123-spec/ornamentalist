@@ -543,7 +543,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         let points = selectionTouch == nil ? model.selection?.points ?? [] : selectionPoints
         guard let first = points.first, let document = model.document else { selectionOutline.path = nil; return }
         let path = UIBezierPath()
-        for symmetry in document.symmetry.matrices {
+        for symmetry in document.symmetry.matrices(for: SymmetryConfiguration.bounds(of: points, padding: 1)) {
             let matrix = symmetry.followed(by: canvasMatrix)
             let start = matrix.apply(first); path.move(to: CGPoint(x: start.x, y: start.y))
             for point in points.dropFirst() {
