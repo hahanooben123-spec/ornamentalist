@@ -76,6 +76,8 @@ actor DocumentRepository {
     private let saveDelayNanoseconds: UInt64
     private var primarySnapshot: DrawingDocument?
     private var primaryAppendLineage: UUID?
+    private var recoveryWarnings: [UUID: String] = [:]
+    func recoveryWarning(for id: UUID) -> String? { recoveryWarnings[id] }
     private(set) var prefixComparisons = 0
     private var journalBaseRevisions: [UUID: Int] = [:]
     private(set) var lastCheckpointBytes = 0
@@ -195,8 +197,10 @@ actor DocumentRepository {
         savedGenerations[document.id] = generation
     }
     func open(_ id: UUID) throws -> (DrawingDocument, Bool) {
+        recoveryWarnings[id] = nil
         guard !isDeleted(id) else { throw DocumentError.invalidData }
         let primary = try? decode(file(id))
+        let journalExists = FileManager.default.fileExists(atPath: file(id, suffix: "journal").path)
         let journal = try? readJournal(id, primary: primary)
         let validPrimary = primary.flatMap { $0.id == id ? $0 : nil }
         let validJournal = journal.flatMap { $0.id == id ? $0 : nil }
@@ -205,9 +209,12 @@ actor DocumentRepository {
             return (journal, true)
         }
         if let primary = validPrimary {
+            if journalExists && journal == nil {
+                recoveryWarnings[id] = "The latest recovery journal could not be read. The last valid saved drawing was opened. Newer changes may be missing. The recovery files have been kept."
+            }
             primarySnapshot = primary; primaryAppendLineage = nil
             savedGenerations[id] = max(savedGenerations[id] ?? 0, primary.storageRevision)
-            return (primary, false)
+            return (primary, journalExists && journal == nil)
         }
         let backup = try decode(file(id, suffix: "backup"))
         guard backup.id == id else { throw DocumentError.invalidData }

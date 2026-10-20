@@ -1110,7 +1110,7 @@ final class MetalCanvasRenderer {
             }
         }
         for (index, layer) in layers.enumerated() {
-            let (pass, region) = try livePass(active, preview: preview, document: document, viewport: viewport, viewSize: viewSize, work: work)
+            let pass = try geometryPass(workMultisample ?? work, resolve: workMultisample == nil ? nil : work)
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
             do {
                 try encodeScene(encoder: encoder, document: document, viewport: viewport, viewSize: viewSize,

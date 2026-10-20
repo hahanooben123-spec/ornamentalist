@@ -43,10 +43,11 @@ final class StudioModel: ObservableObject {
         return messages.joined(separator: "\n\n")
     }
     @Published var recoveryNotice = false
-    @Published var guides = true
-    @Published var fingerDrawing = false
-    @Published var shapeCorrection = false
-    @Published var parallelDistance = 12.0
+    @Published private(set) var recoveryMessage = "Confirmed ink was recovered from the recovery journal or a previous backup. The last unsaved moments may be missing. Save to keep this version."
+    @Published var guides = true { didSet { preferences?.set(guides, forKey: "guides") } }
+    @Published var fingerDrawing = false { didSet { preferences?.set(fingerDrawing, forKey: "fingerDrawing") } }
+    @Published var shapeCorrection = false { didSet { preferences?.set(shapeCorrection, forKey: "shapeCorrection") } }
+    @Published var parallelDistance = 12.0 { didSet { preferences?.set(parallelDistance, forKey: "parallelDistance") } }
     @Published private(set) var showBrushCursor = true
     @Published var resetViewToken = UUID()
     @Published private(set) var tool = StudioTool.brush
@@ -91,6 +92,12 @@ final class StudioModel: ObservableObject {
 
     init(repository: DocumentRepository = DocumentRepository(), preferences: UserDefaults? = nil) {
         self.repository = repository; self.preferences = preferences
+        guides = preferences?.object(forKey: "guides") as? Bool ?? true
+        fingerDrawing = preferences?.object(forKey: "fingerDrawing") as? Bool ?? false
+        shapeCorrection = preferences?.object(forKey: "shapeCorrection") as? Bool ?? false
+        if let distance = preferences?.object(forKey: "parallelDistance") as? Double, distance.isFinite {
+            parallelDistance = max(-80, min(80, distance))
+        }
         showBrushCursor = preferences?.object(forKey: "showBrushCursor") as? Bool ?? true
         if let data = preferences?.data(forKey: "brushSettings"),
            let settings = try? JSONDecoder().decode([String: InkBrush].self, from: data) {
@@ -219,7 +226,8 @@ final class StudioModel: ObservableObject {
         }
         catch { self.error = error.localizedDescription }
     }
-    private func adopt(_ d: DrawingDocument, recovered: Bool) {
+    private func adopt(_ d: DrawingDocument, recovered: Bool, warning: String? = nil) {
+        recoveryMessage = warning ?? "Confirmed ink was recovered from the recovery journal or a previous backup. The last unsaved moments may be missing. Save to keep this version."
         imageTransform = nil; transformLayerID = nil
         thumbnailTask?.cancel(); thumbnailTask = nil; thumbnailRequest = UUID()
         opacityEditBefore = nil
@@ -266,7 +274,8 @@ final class StudioModel: ObservableObject {
         busy = true; defer { busy = false }
         do {
             let (d, recovered) = try await repository.open(id)
-            adopt(d, recovered: recovered)
+            let warning = await repository.recoveryWarning(for: id)
+            adopt(d, recovered: recovered, warning: warning)
         } catch { self.error = error.localizedDescription }
     }
     func importProject(_ url: URL) async {
@@ -662,8 +671,13 @@ final class StudioModel: ObservableObject {
     }
     @discardableResult
     func saveNow(incremental: Bool = false) async -> Bool {
-        guard let snapshot = document else { return true }
-        guard !saveRunning, !isDrawing else { return false }
+        guard let expectedID = document?.id else { return true }
+        while saveRunning {
+            do { try await Task.sleep(nanoseconds: 10_000_000) }
+            catch { return false }
+            guard document?.id == expectedID else { return false }
+        }
+        guard let snapshot = document, !isDrawing else { return false }
         saveRunning = true; defer { saveRunning = false }
         let lineage = appendLineage
         let requestedGeneration = generation

@@ -27,6 +27,23 @@ final class DocumentRepositoryTests: XCTestCase {
         XCTAssertEqual(reopened.0.storageRevision, 3)
     }
 
+    func testCorruptJournalWarnsAndKeepsRecoveryFile() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DocumentRepository(directory: directory)
+        let drawing = DrawingDocument()
+        try await store.save(drawing, generation: 1)
+        let journal = directory.appendingPathComponent(drawing.id.uuidString + ".journal")
+        let damaged = Data("unreadable recovery".utf8)
+        try damaged.write(to: journal)
+        let opened = try await store.open(drawing.id)
+        XCTAssertTrue(opened.1)
+        XCTAssertEqual(opened.0.id, drawing.id)
+        let warning = await store.recoveryWarning(for: drawing.id)
+        XCTAssertNotNil(warning)
+        XCTAssertEqual(try Data(contentsOf: journal), damaged)
+    }
+
     func testCompressionChecksIntegrityBoundsAndLegacyJSON() throws {
         let original = Data(String(repeating: "editable drawing samples ", count: 4000).utf8)
         let packed = try DrawingStorageCodec.pack(original)

@@ -226,24 +226,34 @@ actor ExportService {
         }
         let mask = FillRegion.mask(rgba: pixels, width: width, height: height, seeds: seeds)
         try Task.checkCancellation()
-        let color = document.color
-        let alpha = document.brush.opacity
-        let red = UInt8((color.red * alpha * 255).rounded())
-        let green = UInt8((color.green * alpha * 255).rounded())
-        let blue = UInt8((color.blue * alpha * 255).rounded())
-        let opacity = UInt8((alpha * 255).rounded())
-        for i in mask.indices {
-            let offset = i * 4, included = mask[i] != 0
-            pixels[offset] = included ? red : 0; pixels[offset + 1] = included ? green : 0
-            pixels[offset + 2] = included ? blue : 0; pixels[offset + 3] = included ? opacity : 0
+        guard let first = mask.firstIndex(where: { $0 != 0 }) else { throw DocumentError.invalidData }
+        var minX = first % width, maxX = minX, minY = first / width, maxY = minY
+        for i in mask.indices where mask[i] != 0 {
+            minX = min(minX, i % width); maxX = max(maxX, i % width)
+            minY = min(minY, i / width); maxY = max(maxY, i / width)
         }
-        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
-              let output = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        let croppedWidth = maxX - minX + 1, croppedHeight = maxY - minY + 1
+        let color = document.color, alpha = document.brush.opacity
+        let red = UInt8((color.red * alpha * 255).rounded()), green = UInt8((color.green * alpha * 255).rounded())
+        let blue = UInt8((color.blue * alpha * 255).rounded()), opacity = UInt8((alpha * 255).rounded())
+        var cropped = [UInt8](repeating: 0, count: croppedWidth * croppedHeight * 4)
+        for y in 0..<croppedHeight {
+            if y % 64 == 0 { try Task.checkCancellation() }
+            for x in 0..<croppedWidth where mask[(y + minY) * width + x + minX] != 0 {
+                let offset = (y * croppedWidth + x) * 4
+                cropped[offset] = red; cropped[offset + 1] = green
+                cropped[offset + 2] = blue; cropped[offset + 3] = opacity
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(cropped) as CFData),
+              let output = CGImage(width: croppedWidth, height: croppedHeight, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: croppedWidth * 4, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue),
                 provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
               let png = UIImage(cgImage: output).pngData() else { throw DocumentError.graphics }
-        let raster = LayerRaster(png: png, width: width, height: height)
+        let raster = LayerRaster(png: png, width: croppedWidth, height: croppedHeight,
+            placement: RasterPlacement(center: Point(x: Double(minX) + Double(croppedWidth) * 0.5,
+                                                     y: Double(minY) + Double(croppedHeight) * 0.5)))
         try raster.validate(canvas: document.size)
         return raster
     }

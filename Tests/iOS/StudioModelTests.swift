@@ -5,6 +5,29 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testGeneralPreferencesSurviveRestart() {
+        let name = "Ornamentalist-general-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let model = StudioModel(preferences: defaults)
+        model.guides = false; model.fingerDrawing = true
+        model.shapeCorrection = true; model.parallelDistance = -35
+        let restored = StudioModel(preferences: defaults)
+        XCTAssertFalse(restored.guides); XCTAssertTrue(restored.fingerDrawing)
+        XCTAssertTrue(restored.shapeCorrection); XCTAssertEqual(restored.parallelDistance, -35)
+    }
+    func testManualSaveWaitsForInFlightAutosave() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder, saveDelayNanoseconds: 80_000_000)
+        let model = StudioModel(repository: repository)
+        await model.create()
+        let first = Task { await model.saveNow() }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        let second = await model.saveNow()
+        let firstResult = await first.value
+        XCTAssertTrue(firstResult); XCTAssertTrue(second)
+    }
     func testFillPreservesInkAndCanUndoRedo() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

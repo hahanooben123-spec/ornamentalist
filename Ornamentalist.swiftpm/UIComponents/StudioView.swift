@@ -71,7 +71,7 @@ struct StudioView: View {
         } message: { Text(model.error ?? "") }
         .alert("Drawing recovered", isPresented: $model.recoveryNotice) {
             Button("OK", role: .cancel) {}
-        } message: { Text("Confirmed ink was recovered from the recovery journal or a previous backup. The last unsaved moments may be missing. Save to keep this version.") }
+        } message: { Text(model.recoveryMessage) }
         .sheet(item: $shareFile) { file in ShareSheet(url: file.url) }
         .sheet(isPresented: $creating) {
             NewDrawingSheet { title in Task { await model.create(title: title) } }
