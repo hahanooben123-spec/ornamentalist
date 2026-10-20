@@ -2,6 +2,42 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class EditingToolsTests: XCTestCase {
+    func testLayerDropOrderIsAtomicAndUndoable() throws {
+        var document = DrawingDocument(), history = StrokeHistory()
+        _ = LayerManager.add(in: &document); _ = LayerManager.add(in: &document)
+        let ids = document.layers.map(\.id), original = document
+        XCTAssertTrue(LayerManager.move(ids[0], relativeTo: ids[2], above: true, in: &document))
+        XCTAssertEqual(document.layers.map(\.id), [ids[1], ids[2], ids[0]])
+        history.recordLayerChange(from: original, to: document)
+        XCTAssertTrue(history.undo(in: &document)); XCTAssertEqual(document, original)
+        XCTAssertTrue(history.redo(in: &document))
+        XCTAssertTrue(LayerManager.move(ids[0], relativeTo: ids[1], above: false, in: &document))
+        XCTAssertEqual(document.layers.map(\.id), ids)
+        XCTAssertFalse(LayerManager.move(ids[0], relativeTo: ids[1], above: false, in: &document))
+        XCTAssertFalse(LayerManager.move(ids[0], relativeTo: UUID(), above: true, in: &document))
+        XCTAssertEqual(document.activeLayerID, original.activeLayerID)
+        try document.validate()
+    }
+    func testHeldCircleUsesRawPathWithFullStabilization() throws {
+        var brush = BrushPreset.fineliner.makeBrush(); brush.stabilization = 1; brush.stabilizationEnabled = true
+        var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(repetitions: 4, mirror: true),
+            existingSamples: 0, existingVertices: 0)
+        for i in 0...120 {
+            let angle = Double(i) / 120 * 2 * Double.pi
+            let radius = 60 + sin(angle * 7) * 2
+            _ = try session.append(StrokeSample(point: Point(x: 100 + cos(angle) * radius, y: 100 + sin(angle) * radius),
+                pressure: 0.6, altitude: 1, azimuth: 0, time: Double(i) / 120))
+        }
+        // Resting events must not drag the center toward the held endpoint.
+        for i in 121...240 {
+            _ = try session.append(StrokeSample(point: Point(x: 160, y: 100), pressure: 0.6, altitude: 1, azimuth: 0, time: Double(i) / 120))
+        }
+        let circle = try XCTUnwrap(session.correctedShape())
+        XCTAssertEqual(circle.samples.count, 129)
+        XCTAssertLessThan((circle.samples.first!.point - circle.samples.last!.point).length, 0.00001)
+        XCTAssertEqual(circle.symmetry, session.stroke.symmetry)
+        for sample in circle.samples { XCTAssertEqual((sample.point - Point(x: 100, y: 100)).length, 60, accuracy: 1) }
+    }
     func testSelectionAndStrokeTransformPersistAndRejectOldFormat() throws {
         let polygon = StrokeSelection(points: [Point(x: 10, y: 10), Point(x: 50, y: 10), Point(x: 50, y: 50), Point(x: 10, y: 50)])
         XCTAssertTrue(polygon.contains(Point(x: 20, y: 20)))

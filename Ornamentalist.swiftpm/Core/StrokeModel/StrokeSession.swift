@@ -4,6 +4,11 @@ import Foundation
 /// samples mutate this state. Predictions run through a copy of the stabilizer.
 struct StrokeSession {
     private(set) var stroke: InkStroke
+    private var shapeSamples: [StrokeSample] = []
+    func correctedShape() -> InkStroke? {
+        var original = stroke; original.samples = shapeSamples
+        return StrokeGeometry.correctedShape(original)
+    }
     private var filtered: StrokeSample?
     private var rawPrevious: StrokeSample?
     private var velocity = Point.zero
@@ -82,6 +87,18 @@ struct StrokeSession {
         guard raw.point.isFinite, raw.time.isFinite, raw.pressure.isFinite,
               raw.altitude.isFinite, raw.azimuth.isFinite else { throw DocumentError.invalidData }
         if let last = filtered, raw.time <= last.time { return [] }
+        if stroke.operation == .ink && !stroke.brush.usesStamps {
+            if let previous = shapeSamples.last, (raw.point - previous.point).length * inputScale < 0.5 {
+                // Keep geometry of the actual path; resting pressure events do not bias the fit.
+            } else {
+                shapeSamples.append(raw)
+                if shapeSamples.count > 2048 {
+                    let last = shapeSamples.last!
+                    shapeSamples = shapeSamples.enumerated().filter { $0.offset % 2 == 0 }.map(\.element)
+                    if shapeSamples.last?.point != last.point { shapeSamples.append(last) }
+                }
+            }
+        }
         var sample = stabilized(raw, previous: filtered)
         rawPrevious = raw
         if let last = filtered { traveled += (sample.point - last.point).length }

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 struct StudioLayersView: View {
@@ -8,6 +9,8 @@ struct StudioLayersView: View {
     @State private var renaming: DrawingLayer?
     @State private var deleting: DrawingLayer?
     @State private var layerName = ""
+    @State private var draggedLayer: UUID?
+    private static let layerDragType = UTType(exportedAs: "com.ornamentalist.layer-reorder")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -38,6 +41,16 @@ struct StudioLayersView: View {
                 }
                 ForEach(Array(document.layers.reversed())) { layer in
                     row(layer, in: document, strokes: grouped[layer.id] ?? [])
+                        .onDrag {
+                            draggedLayer = layer.id
+                            let provider = NSItemProvider()
+                            provider.registerDataRepresentation(forTypeIdentifier: Self.layerDragType.identifier, visibility: .ownProcess) { completion in
+                                completion(Data(layer.id.uuidString.utf8), nil); return nil
+                            }
+                            return provider
+                        }
+                        .onDrop(of: [Self.layerDragType], delegate: LayerReorderDrop(
+                            target: layer.id, dragged: $draggedLayer, model: model))
                 }
             }
         }
@@ -125,5 +138,22 @@ struct StudioLayersView: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+}
+
+@MainActor
+private struct LayerReorderDrop: DropDelegate {
+    let target: UUID
+    @Binding var dragged: UUID?
+    let model: StudioModel
+    func validateDrop(info: DropInfo) -> Bool {
+        dragged != nil && dragged != target && model.canEdit && !model.isDrawing
+    }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func performDrop(info: DropInfo) -> Bool {
+        guard validateDrop(info: info), let source = dragged else { return false }
+        model.moveLayer(source, relativeTo: target, above: info.location.y < 32)
+        dragged = nil
+        return true
     }
 }

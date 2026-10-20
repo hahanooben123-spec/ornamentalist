@@ -112,6 +112,17 @@ enum LayerManager {
         return true
     }
 
+    /// Storage order is bottom to top; the panel displays the reverse.
+    static func move(_ id: UUID, relativeTo target: UUID, above: Bool, in document: inout DrawingDocument) -> Bool {
+        guard id != target, let source = document.layers.firstIndex(where: { $0.id == id }),
+              document.layers.contains(where: { $0.id == target }) else { return false }
+        let previous = document.layers.map(\.id)
+        let layer = document.layers.remove(at: source)
+        let destination = document.layers.firstIndex(where: { $0.id == target })!
+        document.layers.insert(layer, at: destination + (above ? 1 : 0))
+        return previous != document.layers.map(\.id)
+    }
+
     static func delete(_ id: UUID, in document: inout DrawingDocument) -> Bool {
         guard document.layers.count > 1,
               let i = document.layers.firstIndex(where: { $0.id == id }) else { return false }

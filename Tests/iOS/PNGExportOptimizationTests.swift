@@ -3,6 +3,27 @@ import UIKit
 @testable import Ornamentalist
 
 final class PNGExportOptimizationTests: XCTestCase {
+    func testTransformPreviewIsTightCachedAndKeepsAsymmetricPosition() async throws {
+        var document = DrawingDocument(); document.size = Point(x: 2048, y: 2048)
+        document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 1024, y: 1024))
+        document.strokes = [InkStroke(brush: InkBrush(width: 16, stabilization: 0), symmetry: document.symmetry,
+            samples: [StrokeSample(point: Point(x: 300, y: 160), pressure: 1, altitude: 1, azimuth: 0, time: 0),
+                      StrokeSample(point: Point(x: 380, y: 160), pressure: 1, altitude: 1, azimuth: 0, time: 1)])]
+        let service = ExportService()
+        let preview = try await service.transformPreview(document, layerID: document.activeLayerID)
+        let cached = try await service.transformPreview(document, layerID: document.activeLayerID)
+        XCTAssertEqual(preview.id, cached.id)
+        XCTAssertLessThan(preview.width, 80); XCTAssertLessThan(preview.height, 30)
+        XCTAssertEqual(preview.placement?.scale, 2)
+        var shown = document; shown.strokes = []; shown.layers[0].raster = preview
+        XCTAssertEqual(try PNGExporter.sample(document: shown, point: Point(x: 340, y: 160)).red, 0, accuracy: 0.05)
+        XCTAssertEqual(try PNGExporter.sample(document: shown, point: Point(x: 340, y: 1888)).red, 1, accuracy: 0.05)
+        document.strokes[0].id = UUID()
+        document.strokes[0].samples[0].point.y += 200; document.strokes[0].samples[1].point.y += 200
+        let changed = try await service.transformPreview(document, layerID: document.activeLayerID)
+        XCTAssertNotEqual(changed.id, cached.id)
+        XCTAssertGreaterThan(try XCTUnwrap(changed.placement).center.y, try XCTUnwrap(preview.placement).center.y + 190)
+    }
     func testLassoClipsMirroredInkAndEraserAfterTransform() throws {
         for operation in [StrokeOperation.ink, .erase] {
             var document = DrawingDocument(); document.size = Point(x: 128, y: 128)

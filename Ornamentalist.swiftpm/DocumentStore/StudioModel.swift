@@ -13,15 +13,12 @@ final class StudioModel: ObservableObject {
     private var transformLayerID: UUID?
     private var transformPreviewRaster: LayerRaster?
     private var transformStartMatrix: Matrix?
+    private var transformScene: DrawingDocument?
     @Published private(set) var selection: StrokeSelection?
     var isTransforming: Bool { imageTransform != nil }
     var displayDocument: DrawingDocument? {
-        guard var d = document, let placement = imageTransform,
+        guard var d = transformScene ?? document, let placement = imageTransform,
               let index = d.layers.firstIndex(where: { $0.id == transformLayerID }) else { return document }
-        if let preview = transformPreviewRaster {
-            d.layers[index].raster = preview
-            d.strokes.removeAll { $0.layerID == transformLayerID }
-        }
         d.layers[index].raster?.placement = placement
         return d
     }
@@ -235,7 +232,7 @@ final class StudioModel: ObservableObject {
     }
     private func adopt(_ d: DrawingDocument, recovered: Bool, warning: String? = nil) {
         recoveryMessage = warning ?? "Confirmed ink was recovered from the recovery journal or a previous backup. The last unsaved moments may be missing. Save to keep this version."
-        imageTransform = nil; transformLayerID = nil; transformPreviewRaster = nil; transformStartMatrix = nil
+        imageTransform = nil; transformLayerID = nil; transformPreviewRaster = nil; transformStartMatrix = nil; transformScene = nil
         selection = nil
         thumbnailTask?.cancel(); thumbnailTask = nil; thumbnailRequest = UUID()
         opacityEditBefore = nil
@@ -383,6 +380,9 @@ final class StudioModel: ObservableObject {
     func toggleLayerVisibility(_ id: UUID) { editLayers { LayerManager.toggleVisibility(id, in: &$0) } }
     func toggleLayerLock(_ id: UUID) { editLayers { LayerManager.toggleLock(id, in: &$0) } }
     func moveLayer(_ id: UUID, up: Bool) { editLayers { LayerManager.move(id, up: up, in: &$0) } }
+    func moveLayer(_ id: UUID, relativeTo target: UUID, above: Bool) {
+        editLayers { LayerManager.move(id, relativeTo: target, above: above, in: &$0) }
+    }
     func deleteLayer(_ id: UUID) { editLayers { LayerManager.delete(id, in: &$0) } }
     func duplicateLayer(_ id: UUID) { editLayers { try LayerManager.duplicate(id, in: &$0) } }
     func mergeLayerDown(_ id: UUID) async {
@@ -447,9 +447,13 @@ final class StudioModel: ObservableObject {
         finishLayerOpacityEdit()
         busy = true; defer { busy = false }
         do {
-            let preview = try await exportService.transformPreview(snapshot, layerID: layer.id)
+            let preview = try await previewService.transformPreview(snapshot, layerID: layer.id)
             guard document?.id == snapshot.id else { return }
             transformPreviewRaster = preview
+            var scene = snapshot
+            scene.strokes.removeAll { $0.layerID == layer.id }
+            if let index = scene.layers.firstIndex(where: { $0.id == layer.id }) { scene.layers[index].raster = preview }
+            transformScene = scene
             transformLayerID = layer.id
             transformStartMatrix = preview.matrix(canvas: snapshot.size)
             imageTransform = preview.placement
@@ -465,7 +469,7 @@ final class StudioModel: ObservableObject {
         if d.strokes.contains(where: { $0.layerID == layer.id }) {
             Task { await beginLayerTransform() }; return
         }
-        transformPreviewRaster = nil; transformStartMatrix = nil
+        transformPreviewRaster = nil; transformStartMatrix = nil; transformScene = nil
         transformLayerID = layer.id
         imageTransform = raster.placement ?? RasterPlacement(center: d.size * 0.5)
         generation += 1
@@ -475,9 +479,12 @@ final class StudioModel: ObservableObject {
         p.center = p.center + delta
         if p.isValid { imageTransform = p; generation += 1 }
     }
-    func scaleImage(by factor: Double) {
+    func scaleImage(by factor: Double, around anchor: Point? = nil) {
         guard var p = imageTransform, factor.isFinite, factor > 0 else { return }
+        let previous = p.scale
         p.scale = min(64, max(0.01, p.scale * factor))
+        if let anchor, anchor.isFinite { p.center = anchor + (p.center - anchor) * (p.scale / previous) }
+        guard p.isValid else { return }
         imageTransform = p; generation += 1
     }
     func rotateImage(by angle: Double) {
@@ -515,7 +522,7 @@ final class StudioModel: ObservableObject {
                 }
             } catch { self.error = error.localizedDescription }
         }
-        imageTransform = nil; transformLayerID = nil; transformPreviewRaster = nil; transformStartMatrix = nil; generation += 1
+        imageTransform = nil; transformLayerID = nil; transformPreviewRaster = nil; transformStartMatrix = nil; transformScene = nil; generation += 1
     }
     func selectTool(_ tool: StudioTool) {
         guard canEdit, !isDrawing, document != nil else { return }

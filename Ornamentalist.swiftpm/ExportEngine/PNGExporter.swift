@@ -291,15 +291,56 @@ actor ExportService {
         try raster.validate(canvas: document.size)
         return raster
     }
+    private struct TransformPreviewKey: Equatable {
+        let document: UUID
+        let layer: UUID
+        let raster: UUID?
+        let placement: RasterPlacement?
+        let size: Point
+        let strokes: [UUID]
+    }
+    private var cachedTransformPreview: (TransformPreviewKey, LayerRaster)?
     func transformPreview(_ document: DrawingDocument, layerID: UUID) throws -> LayerRaster {
+        try Task.checkCancellation()
         guard var layer = document.layers.first(where: { $0.id == layerID }) else { throw DocumentError.invalidData }
+        let strokes = document.strokes.filter { $0.layerID == layerID }
+        let key = TransformPreviewKey(document: document.id, layer: layerID, raster: layer.raster?.id,
+            placement: layer.raster?.placement, size: document.size, strokes: strokes.map(\.id))
+        if let cached = cachedTransformPreview, cached.0 == key { return cached.1 }
         layer.opacity = 1; layer.isVisible = true
-        var isolated = document; isolated.layers = [layer]; isolated.activeLayerID = layerID
-        isolated.strokes = document.strokes.filter { $0.layerID == layerID }
-        let image = try PNGExporter.image(document: isolated, transparent: true, maximumSide: 2048)
-        guard let cg = image.cgImage, let png = image.pngData() else { throw DocumentError.graphics }
-        return LayerRaster(png: png, width: cg.width, height: cg.height,
-            placement: RasterPlacement(center: document.size * 0.5, scale: document.size.x / Double(cg.width)))
+        var isolated = document; isolated.layers = [layer]; isolated.activeLayerID = layerID; isolated.strokes = strokes
+        // Only the interactive preview is reduced. Apply composes matrices onto original ink/images.
+        let image = try PNGExporter.image(document: isolated, transparent: true, maximumSide: 1024)
+        guard let cg = image.cgImage else { throw DocumentError.graphics }
+        let width = cg.width, height = cg.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let cropped: CGImage = try pixels.withUnsafeMutableBytes { bytes in
+            guard let context = CGContext(data: bytes.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { throw DocumentError.graphics }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            guard let normalized = context.makeImage() else { throw DocumentError.graphics }
+            return normalized
+        }
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for y in 0..<height {
+            if y % 64 == 0 { try Task.checkCancellation() }
+            for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 0 {
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { throw DocumentError.invalidData }
+        // A small transparent margin retains antialiasing at the handle bounds.
+        minX = max(0, minX - 2); minY = max(0, minY - 2)
+        maxX = min(width - 1, maxX + 2); maxY = min(height - 1, maxY + 2)
+        let rect = CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+        guard let result = cropped.cropping(to: rect), let png = UIImage(cgImage: result).pngData() else { throw DocumentError.graphics }
+        let scale = document.size.x / Double(width)
+        let raster = LayerRaster(png: png, width: result.width, height: result.height,
+            placement: RasterPlacement(center: Point(x: Double(rect.midX) * scale, y: Double(rect.midY) * scale), scale: scale))
+        try Task.checkCancellation()
+        cachedTransformPreview = (key, raster)
+        return raster
     }
     private struct PreviewIdentity: Hashable {
         let document: UUID
