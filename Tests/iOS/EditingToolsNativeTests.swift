@@ -21,9 +21,9 @@ final class EditingToolsNativeTests: XCTestCase {
         for (point, expected) in [(Point(x: 40, y: 35), 0), (Point(x: 40, y: 99), 0), (Point(x: 90, y: 35), 255)] {
             let screen = matrix.apply(point)
             let offset = (Int(screen.y) * 128 + Int(screen.x)) * 4
-            XCTAssertEqual(Int(pixels[offset]), expected, accuracy: 5)
+            XCTAssertEqual(Double(pixels[offset]), Double(expected), accuracy: 5)
             let png = try PNGExporter.sample(document: drawing, point: point)
-            XCTAssertEqual(Int((png.red * 255).rounded()), expected, accuracy: 5)
+            XCTAssertEqual(png.red * 255, Double(expected), accuracy: 5)
         }
     }
     @MainActor

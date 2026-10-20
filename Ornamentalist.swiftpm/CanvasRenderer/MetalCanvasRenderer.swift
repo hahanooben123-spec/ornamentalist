@@ -1577,6 +1577,9 @@ final class MetalCanvasRenderer {
         let polygon = selection?.points.map { SIMD2<Float>(Float($0.x), Float($0.y)) } ?? [SIMD2<Float>(0, 0)]
         polygon.withUnsafeBytes { encoder.setFragmentBytes($0.baseAddress!, length: $0.count, index: 1) }
         encoder.setFragmentBytes(&selectionCount, length: MemoryLayout<UInt32>.stride, index: 2)
+        var selectionBounds = SIMD4<Float>(polygon.map(\.x).min()!, polygon.map(\.y).min()!,
+                                          polygon.map(\.x).max()!, polygon.map(\.y).max()!)
+        encoder.setFragmentBytes(&selectionBounds, length: MemoryLayout<SIMD4<Float>>.stride, index: 3)
         if matrixCache[symmetry] == nil {
             let values: [SIMD4<Float>] = symmetry.matrices.flatMap { m in
                 [SIMD4(Float(m.a), Float(m.b), Float(m.c), Float(m.d)), SIMD4(Float(m.tx), Float(m.ty), 0, 0)]
@@ -1667,8 +1670,9 @@ final class MetalCanvasRenderer {
         return layer.read(uint2(in.position.xy), sample);
     }
     fragment float4 inkFragment(Output in [[stage_in]], constant float2 *polygon [[buffer(1)]],
-                                constant uint &count [[buffer(2)]]) {
+                                constant uint &count [[buffer(2)]], constant float4 &bounds [[buffer(3)]]) {
         if (count >= 3) {
+            if (any(in.source < bounds.xy) || any(in.source > bounds.zw)) discard_fragment();
             bool inside = false;
             uint j = count - 1;
             for (uint i = 0; i < count; j = i++) {
