@@ -2,6 +2,30 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class EditingToolsTests: XCTestCase {
+    func testSelectionAndStrokeTransformPersistAndRejectOldFormat() throws {
+        let polygon = StrokeSelection(points: [Point(x: 10, y: 10), Point(x: 50, y: 10), Point(x: 50, y: 50), Point(x: 10, y: 50)])
+        XCTAssertTrue(polygon.contains(Point(x: 20, y: 20)))
+        XCTAssertFalse(polygon.contains(Point(x: 60, y: 20)))
+        var document = DrawingDocument()
+        document.strokes = [InkStroke(samples: [StrokeSample(point: Point(x: 20, y: 20), pressure: 1, altitude: 1, azimuth: 0, time: 0)],
+            selection: polygon, transform: Matrix.translation(Point(x: 70, y: 12)))]
+        try document.validate()
+        let restored = try JSONDecoder().decode(DrawingDocument.self, from: JSONEncoder().encode(document))
+        XCTAssertEqual(restored.strokes, document.strokes)
+        document.version = 17; XCTAssertThrowsError(try document.validate())
+        document.version = 18; document.strokes[0].transform?.a = .nan
+        XCTAssertThrowsError(try document.validate())
+    }
+    func testRasterPlacementCompositionPreservesReflections() throws {
+        let original = RasterPlacement(center: Point(x: 60, y: 80), scale: 0.7, rotation: 0.4, flipHorizontal: true)
+        let size = Point(x: 80, y: 40)
+        let delta = Matrix.rotation(0.7).followed(by: .scale(1.5)).followed(by: .translation(Point(x: 10, y: 5)))
+        let matrix = original.matrix(size: size).followed(by: delta)
+        let placement = try RasterPlacement.decomposed(matrix, size: size)
+        for point in [Point.zero, size, Point(x: 31, y: 12)] {
+            XCTAssertLessThan((placement.matrix(size: size).apply(point) - matrix.apply(point)).length, 0.000001)
+        }
+    }
     func testArchivedStructuralHistoryPreservesUndoAndRedoExactly() async throws {
         var drawing = DrawingDocument(), history = StrokeHistory()
         var snapshots = [drawing]

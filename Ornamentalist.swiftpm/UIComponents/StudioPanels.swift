@@ -138,7 +138,7 @@ struct StudioPanelView: View {
                 .font(.subheadline).frame(minHeight: 44)
             Button("About Ornamentalist", systemImage: "info.circle") { showingAbout = true }
                 .font(.subheadline).frame(minHeight: 44).accessibilityIdentifier("canvasAbout")
-            Text("Ornamentalist 0.11.5").font(.caption).foregroundStyle(.secondary)
+            Text("Ornamentalist 0.12.0").font(.caption).foregroundStyle(.secondary)
                 .accessibilityIdentifier("appVersion")
         }
     }

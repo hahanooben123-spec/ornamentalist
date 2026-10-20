@@ -3,6 +3,78 @@ import UIKit
 @testable import Ornamentalist
 
 final class PNGExportOptimizationTests: XCTestCase {
+    func testLassoClipsMirroredInkAndEraserAfterTransform() throws {
+        for operation in [StrokeOperation.ink, .erase] {
+            var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+            document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64), mirror: true)
+            if operation == .erase {
+                let format = UIGraphicsImageRendererFormat(); format.scale = 1
+                let background = UIGraphicsImageRenderer(size: CGSize(width: 128, height: 128), format: format).image { output in
+                    UIColor.black.setFill(); output.fill(CGRect(x: 0, y: 0, width: 128, height: 128))
+                }
+                document.layers[0].raster = LayerRaster(png: try XCTUnwrap(background.pngData()), width: 128, height: 128)
+            }
+            let selection = StrokeSelection(points: [Point(x: 20, y: 20), Point(x: 50, y: 20), Point(x: 50, y: 44), Point(x: 20, y: 44)])
+            document.strokes = [InkStroke(brush: InkBrush(width: 10, stabilization: 0), symmetry: document.symmetry, samples: [
+                StrokeSample(point: Point(x: 20, y: 32), pressure: 1, altitude: 1, azimuth: 0, time: 0),
+                StrokeSample(point: Point(x: 100, y: 32), pressure: 1, altitude: 1, azimuth: 0, time: 1)
+            ], operation: operation, selection: selection, transform: Matrix.translation(Point(x: 10, y: 3)))]
+            let expected = operation == .ink ? 0.0 : 1.0
+            for point in [Point(x: 40, y: 35), Point(x: 40, y: 99)] {
+                XCTAssertEqual(try PNGExporter.sample(document: document, point: point).red, expected, accuracy: 0.05)
+            }
+            XCTAssertEqual(try PNGExporter.sample(document: document, point: Point(x: 90, y: 35)).red, 1 - expected, accuracy: 0.05)
+        }
+    }
+    @MainActor
+    func testWholeLayerTransformMovesRasterAndEraserTogetherAndCanReopen() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = DocumentRepository(directory: directory)
+        var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+        document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64), format: format).image { output in
+            UIColor.black.setFill(); output.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        }
+        document.layers[0].raster = LayerRaster(png: try XCTUnwrap(image.pngData()), width: 64, height: 64,
+            placement: RasterPlacement(center: Point(x: 64, y: 64)))
+        document.strokes = [InkStroke(brush: InkBrush(width: 12), symmetry: document.symmetry,
+            samples: [StrokeSample(point: Point(x: 64, y: 64), pressure: 1, altitude: 1, azimuth: 0, time: 0)], operation: .erase)]
+        try await repository.save(document, generation: 1)
+        let model = StudioModel(repository: repository); await model.open(document.id)
+        let original = try XCTUnwrap(model.document)
+        await model.beginLayerTransform()
+        XCTAssertTrue(model.isTransforming)
+        model.moveImage(by: Point(x: 20, y: 10)); model.finishImageTransform(apply: true)
+        let moved = try XCTUnwrap(model.document)
+        XCTAssertEqual(try PNGExporter.sample(document: moved, point: Point(x: 84, y: 74)).red, 1, accuracy: 0.05)
+        XCTAssertEqual(try PNGExporter.sample(document: moved, point: Point(x: 64, y: 64)).red, 0, accuracy: 0.05)
+        model.undo(); XCTAssertEqual(model.document?.strokes, original.strokes); XCTAssertEqual(model.document?.layers, original.layers)
+        model.redo(); XCTAssertEqual(model.document?.strokes, moved.strokes)
+        let saved = await model.saveNow(); XCTAssertTrue(saved)
+        let reopened = try await DocumentRepository(directory: directory).open(document.id)
+        XCTAssertEqual(reopened.0.strokes, moved.strokes); XCTAssertEqual(reopened.0.layers, moved.layers)
+    }
+    func testFiveSmallFillsDoNotConsumeFiveCanvasSizedRasters() async throws {
+        var document = DrawingDocument(); document.symmetry.repetitions = 1
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 2048, height: 2048), format: format).image { output in
+            UIColor.white.setFill(); output.fill(CGRect(x: 0, y: 0, width: 2048, height: 2048))
+            output.cgContext.setStrokeColor(UIColor.black.cgColor); output.cgContext.setLineWidth(2)
+            for i in 0..<5 { output.cgContext.stroke(CGRect(x: 40 + i * 40, y: 40, width: 20, height: 20)) }
+        }
+        document.layers[0].raster = LayerRaster(png: try XCTUnwrap(image.pngData()), width: 2048, height: 2048)
+        let service = ExportService()
+        for i in 0..<5 {
+            let fill = try await service.filledRegion(document, point: Point(x: Double(50 + i * 40), y: 50))
+            XCTAssertLessThan(fill.width * fill.height, 500)
+            var layer = DrawingLayer(); layer.raster = fill
+            document.layers.insert(layer, at: 0)
+            try document.validate()
+        }
+        XCTAssertEqual(document.layers.count, 6)
+    }
     func testCanceledExportDoesNotProduceAnImage() async {
         let task = Task { () -> Bool in
             withUnsafeCurrentTask { $0?.cancel() }

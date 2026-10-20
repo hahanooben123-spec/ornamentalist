@@ -12,7 +12,7 @@ struct Point: Codable, Hashable, Sendable {
 }
 
 /// Column-vector affine matrix. `a.followed(by: b)` applies a, then b.
-struct Matrix: Equatable, Sendable {
+struct Matrix: Codable, Equatable, Sendable {
     var a = 1.0, b = 0.0, c = 0.0, d = 1.0, tx = 0.0, ty = 0.0
     func apply(_ p: Point) -> Point {
         Point(x: a * p.x + c * p.y + tx, y: b * p.x + d * p.y + ty)
@@ -21,6 +21,10 @@ struct Matrix: Equatable, Sendable {
         Matrix(a: m.a*a + m.c*b, b: m.b*a + m.d*b,
                c: m.a*c + m.c*d, d: m.b*c + m.d*d,
                tx: m.a*tx + m.c*ty + m.tx, ty: m.b*tx + m.d*ty + m.ty)
+    }
+    var isValidInkTransform: Bool {
+        [a,b,c,d,tx,ty].allSatisfy { $0.isFinite } &&
+        [a,b,c,d].allSatisfy { abs($0) <= 4096 } && abs(tx) <= 100_000 && abs(ty) <= 100_000 && abs(a*d-b*c) > 1e-8
     }
     var inverse: Matrix {
         let det = a*d - b*c

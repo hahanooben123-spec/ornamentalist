@@ -157,7 +157,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = allocatedGeometryBytes + sealed.reduce(0) { $0 + $1.buffer.length } + scratch.count * 16
-        return "Ornamentalist 0.11.5\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nPartial live restores: \(partialLiveRestores)\nStreamed submissions: \(streamedSubmissions)\nZoom preview frames: \(navigationPreviewFrames)\nZoom preview texture: \((navigationTexture.map { $0.width * $0.height * 4 } ?? 0) / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.12.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nPartial live restores: \(partialLiveRestores)\nStreamed submissions: \(streamedSubmissions)\nZoom preview frames: \(navigationPreviewFrames)\nZoom preview texture: \((navigationTexture.map { $0.width * $0.height * 4 } ?? 0) / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -679,7 +679,7 @@ final class MetalCanvasRenderer {
                 committedStrokeDraws += 1
                 beginStroke(stroke, encoder: encoder)
                 try encode(buffers(for: stroke), symmetry: stroke.symmetry, transform: transform,
-                           size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+                           size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, strokeTransform: stroke.transform ?? .init(), selection: stroke.selection, encoder: encoder)
             }
             if let active, active.layerID == layer.id {
                 try encodeLive(active, preview: preview, transform: transform, viewSize: viewSize,
@@ -724,9 +724,9 @@ final class MetalCanvasRenderer {
         try prepareLiveBuffers(preview)
         beginStroke(stroke, encoder: encoder)
         try encode(uploadedLive, symmetry: stroke.symmetry, transform: transform, size: viewSize,
-                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, strokeTransform: stroke.transform ?? .init(), selection: stroke.selection, encoder: encoder)
         try encode(predictionBuffers, symmetry: stroke.symmetry, transform: transform, size: viewSize,
-                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+                   canvas: canvas, color: inkColor(stroke), brush: stroke.brush, strokeTransform: stroke.transform ?? .init(), selection: stroke.selection, encoder: encoder)
     }
 
     private func prepareLiveBuffers(_ preview: [BrushVertex]) throws {
@@ -866,7 +866,7 @@ final class MetalCanvasRenderer {
                                              width: radius * 2, height: radius * 2))
             }
             var mirrored = CGRect.null
-            for matrix in stroke.symmetry.matrices { mirrored = mirrored.union(transformed(bounds, by: matrix)) }
+            for matrix in stroke.symmetry.matrices { mirrored = mirrored.union(transformed(transformed(bounds, by: matrix), by: stroke.transform ?? .init())) }
             strokeBounds[stroke.id] = mirrored
         }
         scenePaintKeys = Dictionary(uniqueKeysWithValues: document.layers.map { layer in
@@ -1005,7 +1005,7 @@ final class MetalCanvasRenderer {
                 beginStroke(stroke, encoder: ink)
                 try encode(strokeBuffers, symmetry: stroke.symmetry,
                            transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size),
-                           size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: ink)
+                           size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, strokeTransform: stroke.transform ?? .init(), selection: stroke.selection, encoder: ink)
             } catch { ink.endEncoding(); throw error }
             ink.endEncoding(); preparationPins.remove(stroke.id)
             batchCount += 1
@@ -1163,7 +1163,7 @@ final class MetalCanvasRenderer {
                     let remaining = pendingLiveCommit == stroke.id && activeLiveID == stroke.id
                         ? suffix(buffers, after: activeLiveVertices) : buffers
                     try encode(remaining, symmetry: stroke.symmetry, transform: transform,
-                               size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, encoder: encoder)
+                               size: viewSize, canvas: document.size, color: inkColor(stroke), brush: stroke.brush, strokeTransform: stroke.transform ?? .init(), selection: stroke.selection, encoder: encoder)
                 }
                 incrementalLayerUpdates += 1
             } else {
@@ -1235,7 +1235,7 @@ final class MetalCanvasRenderer {
             } else {
                 encoder.setRenderPipelineState(active.operation == .erase ? erasePipeline : pipeline)
                 try encode(predictionBuffers, symmetry: active.symmetry, transform: transform, size: size,
-                           canvas: document.size, color: inkColor(active), brush: active.brush, encoder: encoder)
+                           canvas: document.size, color: inkColor(active), brush: active.brush, strokeTransform: active.transform ?? .init(), selection: active.selection, encoder: encoder)
             }
         } catch { encoder.endEncoding(); throw error }
         encoder.endEncoding()
@@ -1286,7 +1286,7 @@ final class MetalCanvasRenderer {
             do {
                 stable.setRenderPipelineState(active.operation == .erase ? erasePipeline : pipeline)
                 try encode(delta, symmetry: active.symmetry, transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size),
-                           size: viewSize, canvas: document.size, color: inkColor(active), brush: active.brush, encoder: stable)
+                           size: viewSize, canvas: document.size, color: inkColor(active), brush: active.brush, strokeTransform: active.transform ?? .init(), selection: active.selection, encoder: stable)
             } catch { stable.endEncoding(); throw error }
             stable.endEncoding()
             liveConfirmedVertexDraws += confirmed - activeLiveVertices; activeLiveVertices = confirmed
@@ -1308,7 +1308,7 @@ final class MetalCanvasRenderer {
             encoder.setRenderPipelineState(active.operation == .erase ? erasePipeline : pipeline)
             try encode(predictionBuffers, symmetry: active.symmetry,
                        transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size), size: viewSize,
-                       canvas: document.size, color: inkColor(active), brush: active.brush, encoder: encoder)
+                       canvas: document.size, color: inkColor(active), brush: active.brush, strokeTransform: active.transform ?? .init(), selection: active.selection, encoder: encoder)
         } catch { encoder.endEncoding(); throw error }
         encoder.endEncoding()
         return work
@@ -1563,13 +1563,20 @@ final class MetalCanvasRenderer {
     }
 
     private func encode(_ chunks: [GPUChunk], symmetry: SymmetryConfiguration, transform: Matrix,
-                        size: Point, canvas: Point, color: SIMD4<Float>, brush: InkBrush = InkBrush(), encoder: MTLRenderCommandEncoder) throws {
-        // Layout is four aligned float4s in both Swift and Metal (64 bytes).
+                        size: Point, canvas: Point, color: SIMD4<Float>, brush: InkBrush = InkBrush(), strokeTransform: Matrix = .init(),
+                        selection: StrokeSelection? = nil, encoder: MTLRenderCommandEncoder) throws {
+        // Six aligned float4s in both Swift and Metal (96 bytes).
         let uniforms: [SIMD4<Float>] = [
             SIMD4(Float(transform.a), Float(transform.b), Float(transform.c), Float(transform.d)),
             SIMD4(Float(transform.tx), Float(transform.ty), Float(size.x), Float(size.y)),
-            SIMD4(Float(canvas.x), Float(canvas.y), Float(brush.effectiveSoftness), brush.usesStamps ? 1 : 0), color
+            SIMD4(Float(canvas.x), Float(canvas.y), Float(brush.effectiveSoftness), brush.usesStamps ? 1 : 0), color,
+            SIMD4(Float(strokeTransform.a), Float(strokeTransform.b), Float(strokeTransform.c), Float(strokeTransform.d)),
+            SIMD4(Float(strokeTransform.tx), Float(strokeTransform.ty), 0, 0)
         ]
+        var selectionCount = UInt32(selection?.points.count ?? 0)
+        let polygon = selection?.points.map { SIMD2<Float>(Float($0.x), Float($0.y)) } ?? [SIMD2<Float>(0, 0)]
+        polygon.withUnsafeBytes { encoder.setFragmentBytes($0.baseAddress!, length: $0.count, index: 1) }
+        encoder.setFragmentBytes(&selectionCount, length: MemoryLayout<UInt32>.stride, index: 2)
         if matrixCache[symmetry] == nil {
             let values: [SIMD4<Float>] = symmetry.matrices.flatMap { m in
                 [SIMD4(Float(m.a), Float(m.b), Float(m.c), Float(m.d)), SIMD4(Float(m.tx), Float(m.ty), 0, 0)]
@@ -1598,8 +1605,8 @@ final class MetalCanvasRenderer {
     #include <metal_stdlib>
     using namespace metal;
     fragment float4 clearRegionFragment() { return float4(0); }
-    struct Uniforms { float4 matrix; float4 offsetSize; float4 canvas; float4 color; };
-    struct Output { float4 position [[position]]; float2 canvas; float2 limit; float4 color; float2 local; float2 stamp; };
+    struct Uniforms { float4 matrix; float4 offsetSize; float4 canvas; float4 color; float4 strokeMatrix; float4 strokeOffset; };
+    struct Output { float4 position [[position]]; float2 canvas; float2 source; float2 limit; float4 color; float2 local; float2 stamp; };
     vertex Output inkVertex(uint v [[vertex_id]], uint instance [[instance_id]],
                            const device float2 *vertices [[buffer(0)]],
                            constant Uniforms &u [[buffer(1)]], constant float4 *symmetry [[buffer(2)]],
@@ -1617,12 +1624,15 @@ final class MetalCanvasRenderer {
         } else if (compact == 0 && abs(shape.x) >= 2 && abs(shape.x) <= 3) {
             fade = abs(shape.x) - 2; shape = sign(shape);
         }
+        float2 source = p;
         p = float2(m.x*p.x + m.z*p.y, m.y*p.x + m.w*p.y) + symmetry[instance*2+1].xy;
+        float4 sm = u.strokeMatrix;
+        p = float2(sm.x*p.x + sm.z*p.y, sm.y*p.x + sm.w*p.y) + u.strokeOffset.xy;
         float4 t = u.matrix;
         float2 screen = float2(t.x*p.x + t.z*p.y, t.y*p.x + t.w*p.y) + u.offsetSize.xy;
         Output out;
         out.position = float4(screen.x/u.offsetSize.z*2-1, 1-screen.y/u.offsetSize.w*2, 0, 1);
-        out.canvas = p; out.limit = u.canvas.xy; out.color = u.color;
+        out.canvas = p; out.source = source; out.limit = u.canvas.xy; out.color = u.color;
         out.color.a *= fade;
         out.local = shape; out.stamp = u.canvas.zw;
         return out;
@@ -1656,7 +1666,18 @@ final class MetalCanvasRenderer {
                                            uint sample [[sample_id]]) {
         return layer.read(uint2(in.position.xy), sample);
     }
-    fragment float4 inkFragment(Output in [[stage_in]]) {
+    fragment float4 inkFragment(Output in [[stage_in]], constant float2 *polygon [[buffer(1)]],
+                                constant uint &count [[buffer(2)]]) {
+        if (count >= 3) {
+            bool inside = false;
+            uint j = count - 1;
+            for (uint i = 0; i < count; j = i++) {
+                float2 a = polygon[i], b = polygon[j];
+                if ((a.y > in.source.y) != (b.y > in.source.y) &&
+                    in.source.x < (b.x-a.x) * (in.source.y-a.y) / (b.y-a.y) + a.x) inside = !inside;
+            }
+            if (!inside) discard_fragment();
+        }
         if (any(in.canvas < float2(0)) || any(in.canvas > in.limit)) discard_fragment();
         float4 color = in.color;
         if (in.stamp.y > 0.5) {

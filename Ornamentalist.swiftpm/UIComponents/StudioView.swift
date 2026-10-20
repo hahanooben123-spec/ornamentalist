@@ -55,10 +55,10 @@ struct StudioView: View {
         .accessibilityValue(rootDiagnostic)
         .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task {
-            print("Ornamentalist 0.11.5: studio visible; loading gallery")
+            print("Ornamentalist 0.12.0: studio visible; loading gallery")
             model.startMaintenance()
             await model.refresh()
-            print("Ornamentalist 0.11.5: gallery loading finished")
+            print("Ornamentalist 0.12.0: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
         .onChange(of: scenePhase) { _, phase in
@@ -165,12 +165,18 @@ struct StudioView: View {
                             .accessibilityIdentifier("applyImageTransform")
                     }.padding(12).studioSurface().padding(16)
                         .disabled(model.busy || model.isPreparing)
+                } else if model.selection != nil || model.tool == .selection {
+                    HStack {
+                        Text(model.tool == .selection ? "Draw a closed selection · Mirror follows the selection" : "Selection active · Draw inside the original outline")
+                            .font(.caption)
+                        Button("Clear selection") { model.clearSelection() }.accessibilityIdentifier("clearSelection")
+                    }.padding(12).studioSurface().padding(16).disabled(model.isDrawing)
                 }
             }
             .overlay {
                 if model.tool == .eyedropper || model.tool == .fill {
                     Label(model.tool == .fill ? "Tap an area to fill Â· Creates a layer below your linework" : "Tap artwork to pick a color",
-                          systemImage: model.tool == .fill ? "paintbucket" : "eyedropper")
+                          systemImage: model.tool == .fill ? "paintbucket" : model.tool == .selection ? "lasso" : "eyedropper")
                         .font(.subheadline).padding(16).studioSurface().allowsHitTesting(false)
                         .accessibilityIdentifier("eyedropperHint")
                 } else if !document.canDrawOnActiveLayer {
@@ -258,12 +264,14 @@ struct StudioView: View {
                     Button("Eraser", systemImage: "eraser") { model.selectTool(.eraser) }
                     Button("Eyedropper", systemImage: "eyedropper") { model.selectTool(.eyedropper) }
                     Button("Fill", systemImage: "paintbucket") { model.selectTool(.fill) }
+                    Button("Selection", systemImage: "lasso") { model.selectTool(.selection) }
                 } label: { StudioIcon(symbol: model.tool == .brush ? "pencil.tip" : model.tool == .eraser ? "eraser" : model.tool == .fill ? "paintbucket" : "eyedropper") }
                     .disabled(controlsDisabled).accessibilityLabel("Drawing tools")
             } else {
                 toolButton(.eraser, symbol: "eraser", label: "Eraser")
                 toolButton(.eyedropper, symbol: "eyedropper", label: "Eyedropper")
                 toolButton(.fill, symbol: "paintbucket", label: "Fill")
+                toolButton(.selection, symbol: "lasso", label: "Selection")
             }
             }.padding(2)
                 .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
@@ -283,8 +291,8 @@ struct StudioView: View {
             Menu {
                 Button("Insert photo", systemImage: "photo.on.rectangle") { panel = nil; photoPicker = true }
                 Button("Insert image file", systemImage: "doc.badge.plus") { panel = nil; importingImage = true; importing = true }
-                Button("Transform image", systemImage: "arrow.up.left.and.arrow.down.right") { panel = nil; model.beginImageTransform() }
-                    .disabled(document.activeLayer?.raster == nil || !document.canDrawOnActiveLayer)
+                Button("Transform layer", systemImage: "arrow.up.left.and.arrow.down.right") { panel = nil; Task { await model.beginLayerTransform() } }
+                    .disabled(!document.canDrawOnActiveLayer || (document.activeLayer?.raster == nil && !document.strokes.contains { $0.layerID == document.activeLayerID }))
                 Divider()
                 Button("Save drawing", systemImage: "externaldrive") { Task { await model.saveNow() } }
                 Divider()

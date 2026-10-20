@@ -101,10 +101,19 @@ enum PNGExporter {
     static func paint(_ stroke: InkStroke, in context: CGContext) {
         try? paintCancellable(stroke, in: context)
     }
+    private static func clip(_ selection: StrokeSelection?, context: CGContext) {
+        guard let points = selection?.points, let first = points.first else { return }
+        context.beginPath(); context.move(to: CGPoint(x: first.x, y: first.y))
+        for point in points.dropFirst() { context.addLine(to: CGPoint(x: point.x, y: point.y)) }
+        context.closePath(); context.clip(using: .evenOdd)
+    }
     static func paintCancellable(_ stroke: InkStroke, in context: CGContext) throws {
         try Task.checkCancellation()
         context.saveGState()
         defer { context.restoreGState() }
+        if let m = stroke.transform {
+            context.concatenate(CGAffineTransform(a: m.a, b: m.b, c: m.c, d: m.d, tx: m.tx, ty: m.ty))
+        }
         if stroke.operation == .erase { context.setBlendMode(.destinationOut) }
         let ink = stroke.color
         if stroke.brush.usesStamps {
@@ -127,6 +136,7 @@ enum PNGExporter {
                 defer { context.restoreGState() }
                 context.concatenate(CGAffineTransform(a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d,
                                                       tx: matrix.tx, ty: matrix.ty))
+                clip(stroke.selection, context: context)
                 // The clip is expressed in this symmetry copy's local coordinates.
                 // Keep a device-pixel margin for antialiasing at the canvas edge.
                 let pixel = context.convertToUserSpace(CGSize(width: 1, height: 1))
@@ -196,6 +206,7 @@ enum PNGExporter {
             context.saveGState()
             context.concatenate(CGAffineTransform(a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d,
                                                   tx: matrix.tx, ty: matrix.ty))
+            clip(stroke.selection, context: context)
             context.addPath(path); context.fillPath()
             context.restoreGState()
         }
@@ -205,7 +216,7 @@ enum PNGExporter {
 }
 
 actor ExportService {
-    func filledRegion(_ document: DrawingDocument, point: Point) throws -> LayerRaster {
+    func filledRegion(_ document: DrawingDocument, point: Point, selection: StrokeSelection? = nil) throws -> LayerRaster {
         try Task.checkCancellation()
         let width = Int(document.size.x), height = Int(document.size.y)
         guard width >= 64, height >= 64, width <= 2048, height <= 2048 else { throw DocumentError.mergeSize }
@@ -224,8 +235,15 @@ actor ExportService {
             let p = matrix.apply(point)
             return (Int(p.x.rounded(.down)), Int(p.y.rounded(.down)))
         }
-        let mask = FillRegion.mask(rgba: pixels, width: width, height: height, seeds: seeds)
+        var mask = FillRegion.mask(rgba: pixels, width: width, height: height, seeds: seeds)
         try Task.checkCancellation()
+        if let selection {
+            let inverses = document.symmetry.matrices.map(\.inverse)
+            for i in mask.indices where mask[i] != 0 {
+                let point = Point(x: Double(i % width) + 0.5, y: Double(i / width) + 0.5)
+                if !inverses.contains(where: { selection.contains($0.apply(point)) }) { mask[i] = 0 }
+            }
+        }
         guard let first = mask.firstIndex(where: { $0 != 0 }) else { throw DocumentError.invalidData }
         var minX = first % width, maxX = minX, minY = first / width, maxY = minY
         for i in mask.indices where mask[i] != 0 {
@@ -256,6 +274,16 @@ actor ExportService {
                                                      y: Double(minY) + Double(croppedHeight) * 0.5)))
         try raster.validate(canvas: document.size)
         return raster
+    }
+    func transformPreview(_ document: DrawingDocument, layerID: UUID) throws -> LayerRaster {
+        guard var layer = document.layers.first(where: { $0.id == layerID }) else { throw DocumentError.invalidData }
+        layer.opacity = 1; layer.isVisible = true
+        var isolated = document; isolated.layers = [layer]; isolated.activeLayerID = layerID
+        isolated.strokes = document.strokes.filter { $0.layerID == layerID }
+        let image = try PNGExporter.image(document: isolated, transparent: true, maximumSide: 2048)
+        guard let cg = image.cgImage, let png = image.pngData() else { throw DocumentError.graphics }
+        return LayerRaster(png: png, width: cg.width, height: cg.height,
+            placement: RasterPlacement(center: document.size * 0.5, scale: document.size.x / Double(cg.width)))
     }
     private struct PreviewIdentity: Hashable {
         let document: UUID

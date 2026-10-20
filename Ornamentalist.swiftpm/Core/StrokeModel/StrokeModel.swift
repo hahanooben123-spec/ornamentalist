@@ -30,7 +30,7 @@ extension StrokeSample {
 }
 
 enum StrokeOperation: String, Codable, Sendable { case ink, erase }
-enum StudioTool: String, Sendable { case brush, eraser, eyedropper, fill }
+enum StudioTool: String, Sendable { case brush, eraser, eyedropper, fill, selection }
 
 struct InkStroke: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
@@ -41,6 +41,8 @@ struct InkStroke: Codable, Identifiable, Equatable, Sendable {
     var color = InkColor.black
     var operation = StrokeOperation.ink
     var geometrySeed: UUID?
+    var selection: StrokeSelection?
+    var transform: Matrix?
     var seedID: UUID { geometrySeed ?? id }
 }
 
@@ -55,11 +57,13 @@ extension InkStroke {
         color = try c.decodeIfPresent(InkColor.self, forKey: .color) ?? .black
         operation = try c.decodeIfPresent(StrokeOperation.self, forKey: .operation) ?? .ink
         geometrySeed = try c.decodeIfPresent(UUID.self, forKey: .geometrySeed)
+        selection = try c.decodeIfPresent(StrokeSelection.self, forKey: .selection)
+        transform = try c.decodeIfPresent(Matrix.self, forKey: .transform)
     }
 }
 
 struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
-    var version = 17
+    var version = 18
     var storageRevision = 0
     var id = UUID()
     var title = "Untitled Drawing"
@@ -81,7 +85,7 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard (1...17).contains(version) else { throw DocumentError.unsupportedVersion }
+        guard (1...18).contains(version) else { throw DocumentError.unsupportedVersion }
         let layerIDs = Set(layers.map(\.id))
         guard (1...LayerManager.maximumLayers).contains(layers.count), layerIDs.count == layers.count,
               layerIDs.contains(activeLayerID), layers.allSatisfy({
@@ -123,6 +127,8 @@ struct DrawingDocument: Codable, Identifiable, Equatable, Sendable {
                   !stroke.samples.isEmpty, stroke.samples.count <= DrawingLimits.strokeSamples,
                   validBrush(stroke.brush), stroke.color.isValid,
                   validSymmetry(stroke.symmetry) else { throw DocumentError.invalidData }
+            guard stroke.selection?.isValid ?? true, stroke.transform?.isValidInkTransform ?? true,
+                  version >= 18 || (stroke.selection == nil && stroke.transform == nil) else { throw DocumentError.invalidData }
             var lastTime = -Double.infinity
             for sample in stroke.samples {
                 guard sample.point.isFinite, abs(sample.point.x) <= 100_000, abs(sample.point.y) <= 100_000,

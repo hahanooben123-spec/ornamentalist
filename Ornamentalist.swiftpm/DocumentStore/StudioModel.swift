@@ -11,10 +11,17 @@ final class StudioModel: ObservableObject {
     var canDraw: Bool { canEdit && !isTransforming && (document?.canDrawOnActiveLayer ?? false) }
     @Published private(set) var imageTransform: RasterPlacement?
     private var transformLayerID: UUID?
+    private var transformPreviewRaster: LayerRaster?
+    private var transformStartMatrix: Matrix?
+    @Published private(set) var selection: StrokeSelection?
     var isTransforming: Bool { imageTransform != nil }
     var displayDocument: DrawingDocument? {
         guard var d = document, let placement = imageTransform,
               let index = d.layers.firstIndex(where: { $0.id == transformLayerID }) else { return document }
+        if let preview = transformPreviewRaster {
+            d.layers[index].raster = preview
+            d.strokes.removeAll { $0.layerID == transformLayerID }
+        }
         d.layers[index].raster?.placement = placement
         return d
     }
@@ -228,7 +235,8 @@ final class StudioModel: ObservableObject {
     }
     private func adopt(_ d: DrawingDocument, recovered: Bool, warning: String? = nil) {
         recoveryMessage = warning ?? "Confirmed ink was recovered from the recovery journal or a previous backup. The last unsaved moments may be missing. Save to keep this version."
-        imageTransform = nil; transformLayerID = nil
+        imageTransform = nil; transformLayerID = nil; transformPreviewRaster = nil; transformStartMatrix = nil
+        selection = nil
         thumbnailTask?.cancel(); thumbnailTask = nil; thumbnailRequest = UUID()
         opacityEditBefore = nil
         tool = .brush
@@ -403,7 +411,7 @@ final class StudioModel: ObservableObject {
                 throw DocumentError.memoryLimit
             }
             after.layers[index].name = "Image \(after.layers.count)"
-            after.layers[index].raster = raster; after.version = 17
+            after.layers[index].raster = raster; after.version = 18
             try after.validate()
             history.recordLayerChange(from: before, to: after)
             document = after; changed(); busy = false
@@ -420,10 +428,44 @@ final class StudioModel: ObservableObject {
             await insertImage(data)
         } catch { self.error = error.localizedDescription }
     }
+    func setSelection(_ points: [Point]) {
+        guard canEdit, !isDrawing else { return }
+        let reduced = points.count <= 64 ? points : (0..<64).map { points[$0 * points.count / 64] }
+        let candidate = StrokeSelection(points: reduced)
+        selection = candidate.isValid ? candidate : nil
+        tool = .brush
+    }
+    func clearSelection() {
+        guard canEdit, !isDrawing else { return }
+        selection = nil
+        if tool == .selection { tool = .brush }
+    }
+    func beginLayerTransform() async {
+        guard canEdit, !isDrawing, let snapshot = document, let layer = snapshot.activeLayer,
+              layer.isVisible, !layer.isLocked else { return }
+        if !snapshot.strokes.contains(where: { $0.layerID == layer.id }) { beginImageTransform(); return }
+        finishLayerOpacityEdit()
+        busy = true; defer { busy = false }
+        do {
+            let preview = try await exportService.transformPreview(snapshot, layerID: layer.id)
+            guard document?.id == snapshot.id else { return }
+            transformPreviewRaster = preview
+            transformLayerID = layer.id
+            transformStartMatrix = preview.matrix(canvas: snapshot.size)
+            imageTransform = preview.placement
+            generation += 1
+        } catch { self.error = error.localizedDescription }
+    }
     func beginImageTransform() {
         guard canEdit, !isDrawing, let d = document, let layer = d.activeLayer,
               layer.isVisible, !layer.isLocked, let raster = layer.raster else { return }
         finishLayerOpacityEdit()
+        // Whole-layer transformations use a temporary flattened preview when
+        // strokes are present; never move the raster underneath stationary erasers.
+        if d.strokes.contains(where: { $0.layerID == layer.id }) {
+            Task { await beginLayerTransform() }; return
+        }
+        transformPreviewRaster = nil; transformStartMatrix = nil
         transformLayerID = layer.id
         imageTransform = raster.placement ?? RasterPlacement(center: d.size * 0.5)
         generation += 1
@@ -451,16 +493,29 @@ final class StudioModel: ObservableObject {
     func finishImageTransform(apply: Bool) {
         guard let p = imageTransform, let id = transformLayerID else { return }
         if apply, var after = document, let index = after.layers.firstIndex(where: { $0.id == id }), let before = document {
-            after.layers[index].raster?.placement = p; after.version = 17
+            after.version = 18
             do {
+                if let preview = transformPreviewRaster, let start = transformStartMatrix {
+                    let delta = start.inverse.followed(by: p.matrix(size: Point(x: Double(preview.width), y: Double(preview.height))))
+                    if let raster = before.layers[index].raster {
+                        after.layers[index].raster?.placement = try RasterPlacement.decomposed(
+                            raster.matrix(canvas: before.size).followed(by: delta),
+                            size: Point(x: Double(raster.width), y: Double(raster.height)))
+                    }
+                    for i in after.strokes.indices where after.strokes[i].layerID == id {
+                        after.strokes[i].geometrySeed = after.strokes[i].seedID
+                        after.strokes[i].id = UUID()
+                        after.strokes[i].transform = (after.strokes[i].transform ?? .init()).followed(by: delta)
+                    }
+                } else { after.layers[index].raster?.placement = p }
                 try after.validate()
-                if before.layers != after.layers {
+                if before.layers != after.layers || before.strokes != after.strokes {
                     history.recordLayerChange(from: before, to: after)
                     document = after; changed()
                 }
             } catch { self.error = error.localizedDescription }
         }
-        imageTransform = nil; transformLayerID = nil; generation += 1
+        imageTransform = nil; transformLayerID = nil; transformPreviewRaster = nil; transformStartMatrix = nil; generation += 1
     }
     func selectTool(_ tool: StudioTool) {
         guard canEdit, !isDrawing, document != nil else { return }
@@ -532,7 +587,7 @@ final class StudioModel: ObservableObject {
         guard before.layers.count < LayerManager.maximumLayers else { error = DocumentError.memoryLimit.localizedDescription; return }
         busy = true; defer { busy = false }
         do {
-            let raster = try await exportService.filledRegion(before, point: point)
+            let raster = try await exportService.filledRegion(before, point: point, selection: selection)
             guard document?.id == before.id,
                   let index = before.layers.firstIndex(where: { $0.id == before.activeLayerID }) else { return }
             var after = before
@@ -647,7 +702,7 @@ final class StudioModel: ObservableObject {
     }
     private func changed(appending: Bool = false) {
         if !appending { appendLineage = UUID() }
-        document?.version = 17; document?.modified = Date()
+        document?.version = 18; document?.modified = Date()
         if let brush = document?.brush { rememberBrush(brush) }
         generation += 1
         saveStatus = "Unsaved changes"

@@ -31,8 +31,8 @@ targets:
         DEVELOPMENT_TEAM: K2TYPDPPZJ
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: '0.11.5'
-        CURRENT_PROJECT_VERSION: '38'
+        MARKETING_VERSION: '0.12.0'
+        CURRENT_PROJECT_VERSION: '39'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Ornamentalist
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Save your exported Ornamentalist drawings to Photos.

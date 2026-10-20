@@ -35,8 +35,9 @@ struct StrokeSession {
 
     init(brush: InkBrush, symmetry: SymmetryConfiguration, existingSamples: Int, existingVertices: Int,
          layerID: UUID = DrawingLayer.legacyID, color: InkColor = .black, operation: StrokeOperation = .ink,
-         inputScale: Double = 1) {
+         inputScale: Double = 1, selection: StrokeSelection? = nil) {
         stroke = InkStroke(brush: brush, symmetry: symmetry, layerID: layerID, color: color, operation: operation)
+        stroke.selection = selection
         stamps = BrushStampState(id: stroke.seedID)
         self.inputScale = inputScale.isFinite ? max(0.001, inputScale) : 1
         remainingSamples = min(DrawingLimits.strokeSamples, DrawingLimits.sampleCount - existingSamples)

@@ -52,6 +52,8 @@ jobs:
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
           -derivedDataPath DerivedData -resultBundlePath ExportTests.xcresult
           -only-testing:OrnamentalistTests/PNGExportOptimizationTests
+          -only-testing:OrnamentalistTests/StudioModelTests/testGeneralPreferencesSurviveRestart
+          -only-testing:OrnamentalistTests/StudioModelTests/testManualSaveWaitsForInFlightAutosave
           -parallel-testing-enabled NO -destination-timeout 60
           -test-timeouts-enabled YES -default-test-execution-time-allowance 45
           -maximum-test-execution-time-allowance 90
