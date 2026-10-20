@@ -67,10 +67,22 @@ jobs:
           -only-testing:OrnamentalistTests/PNGExportOptimizationTests
           -only-testing:OrnamentalistTests/StudioModelTests/testFillPreservesInkAndCanUndoRedo
           -only-testing:OrnamentalistTests/StudioModelTests/testGeneralPreferencesSurviveRestart
+          -only-testing:OrnamentalistTests/StudioModelTests/testNewDrawingDefaultsToMirrorAndTilesKeepSeparateRotationSettings
           -only-testing:OrnamentalistTests/StudioModelTests/testManualSaveWaitsForInFlightAutosave
           -parallel-testing-enabled NO -destination-timeout 60
           -test-timeouts-enabled YES -default-test-execution-time-allowance 45
           -maximum-test-execution-time-allowance 90
+          CODE_SIGNING_ALLOWED=NO
+      - name: Verify mirrored tile rendering against PNG
+        timeout-minutes: 3
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
+          -derivedDataPath DerivedData -resultBundlePath TileTests.xcresult
+          -only-testing:OrnamentalistTests/EditingToolsNativeTests/testTileMirrorRotationsAndTransformedInkMatchMetalAndPNG
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 30
+          -maximum-test-execution-time-allowance 45
           CODE_SIGNING_ALLOWED=NO
       - name: Verify incremental live rendering and geometry batches
         timeout-minutes: 3
@@ -78,7 +90,6 @@ jobs:
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath OptimizationTests.xcresult
-          -only-testing:OrnamentalistTests/EditingToolsNativeTests/testTileMirrorRotationsAndTransformedInkMatchMetalAndPNG
           -only-testing:OrnamentalistTests/EditingToolsNativeTests/testSelectionAndWholeStrokeTransformMatchMetalAndPNG
           -only-testing:OrnamentalistTests/RendererCacheTests/testPartialLiveRestorePreservesPredictionOpacityAndEraser
           -only-testing:OrnamentalistTests/RendererCacheTests/testEvictedGeometryStreamsBackWithoutChangingInkOrBlockingNewStrokes
@@ -161,5 +172,6 @@ jobs:
             MetalSmoke.xcresult
             ZoomTests.xcresult
             ExportTests.xcresult
+            TileTests.xcresult
             OptimizationTests.xcresult
           if-no-files-found: ignore

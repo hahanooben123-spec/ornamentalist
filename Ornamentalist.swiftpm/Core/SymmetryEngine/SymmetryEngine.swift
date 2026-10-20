@@ -1,3 +1,6 @@
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 import Foundation
 
 struct SymmetryConfiguration: Codable, Hashable, Sendable {
