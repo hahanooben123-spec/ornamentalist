@@ -13,6 +13,7 @@ files = sorted((ROOT / 'Ornamentalist.swiftpm').rglob('*.swift')) + sorted((ROOT
 errors = []
 for path in files:
     source = path.read_bytes()
+    source.decode("utf-8") # Fail before packaging if inserted UI text has a platform encoding.
     root = parser.parse(source).root_node
     nodes = [root]
     while nodes:

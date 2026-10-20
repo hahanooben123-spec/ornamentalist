@@ -5,6 +5,28 @@ import MetalKit
 
 final class EditingToolsNativeTests: XCTestCase {
     @MainActor
+    func testSelectionAndWholeStrokeTransformMatchMetalAndPNG() async throws {
+        var drawing = DrawingDocument(); drawing.size = Point(x: 128, y: 128)
+        drawing.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64), mirror: true)
+        let selection = StrokeSelection(points: [Point(x: 20, y: 20), Point(x: 50, y: 20), Point(x: 50, y: 44), Point(x: 20, y: 44)])
+        let points = [Point(x: 20, y: 32), Point(x: 100, y: 32)].enumerated().map {
+            StrokeSample(point: $0.element, pressure: 1, altitude: 1, azimuth: 0, time: Double($0.offset))
+        }
+        drawing.strokes = [InkStroke(brush: InkBrush(width: 10, stabilization: 0), symmetry: drawing.symmetry,
+            samples: points, selection: selection, transform: Matrix.translation(Point(x: 10, y: 3)))]
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(drawing.strokes, layers: drawing.layers)
+        let pixels = try await renderer.renderOffscreen(document: drawing, viewport: Viewport(), width: 128, height: 128)
+        let matrix = Viewport().matrix(viewSize: drawing.size, canvasSize: drawing.size)
+        for (point, expected) in [(Point(x: 40, y: 35), 0), (Point(x: 40, y: 99), 0), (Point(x: 90, y: 35), 255)] {
+            let screen = matrix.apply(point)
+            let offset = (Int(screen.y) * 128 + Int(screen.x)) * 4
+            XCTAssertEqual(Int(pixels[offset]), expected, accuracy: 5)
+            let png = try PNGExporter.sample(document: drawing, point: point)
+            XCTAssertEqual(Int((png.red * 255).rounded()), expected, accuracy: 5)
+        }
+    }
+    @MainActor
     func testImagePlacementMatchesMetalAndPNGAndInvalidatesRasterCache() async throws {
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 32), format: format).image { output in
