@@ -238,11 +238,27 @@ actor ExportService {
         var mask = FillRegion.mask(rgba: pixels, width: width, height: height, seeds: seeds)
         try Task.checkCancellation()
         if let selection {
-            let inverses = document.symmetry.matrices.map(\.inverse)
-            for i in mask.indices where mask[i] != 0 {
-                let point = Point(x: Double(i % width) + 0.5, y: Double(i / width) + 0.5)
-                if !inverses.contains(where: { selection.contains($0.apply(point)) }) { mask[i] = 0 }
+            // Rasterize the lasso once instead of testing every filled pixel
+            // against every polygon edge and every Mirror copy.
+            var selectionPixels = [UInt8](repeating: 0, count: width * height)
+            try selectionPixels.withUnsafeMutableBytes { bytes in
+                guard let context = CGContext(data: bytes.baseAddress, width: width, height: height,
+                    bitsPerComponent: 8, bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                    bitmapInfo: CGImageAlphaInfo.none.rawValue) else { throw DocumentError.graphics }
+                context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: 1, y: -1)
+                context.setShouldAntialias(false); context.setFillColor(gray: 1, alpha: 1)
+                for matrix in document.symmetry.matrices {
+                    try Task.checkCancellation()
+                    context.beginPath()
+                    for (i, point) in selection.points.enumerated() {
+                        let p = matrix.apply(point)
+                        if i == 0 { context.move(to: CGPoint(x: p.x, y: p.y)) }
+                        else { context.addLine(to: CGPoint(x: p.x, y: p.y)) }
+                    }
+                    context.closePath(); context.drawPath(using: .eoFill)
+                }
             }
+            for i in mask.indices where selectionPixels[i] == 0 { mask[i] = 0 }
         }
         guard let first = mask.firstIndex(where: { $0 != 0 }) else { throw DocumentError.invalidData }
         var minX = first % width, maxX = minX, minY = first / width, maxY = minY

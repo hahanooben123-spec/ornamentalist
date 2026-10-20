@@ -37,7 +37,7 @@ struct StrokeSelection: Codable, Equatable, Sendable {
     var points: [Point]
     var isValid: Bool { (3...64).contains(points.count) && points.allSatisfy { $0.isFinite && abs($0.x) <= 100_000 && abs($0.y) <= 100_000 } }
     func contains(_ point: Point) -> Bool {
-        guard isValid else { return false }
+        guard (3...64).contains(points.count), point.isFinite else { return false }
         var inside = false, j = points.count - 1
         for i in points.indices {
             let a = points[i], b = points[j]

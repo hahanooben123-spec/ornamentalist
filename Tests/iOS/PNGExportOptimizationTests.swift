@@ -56,6 +56,17 @@ final class PNGExportOptimizationTests: XCTestCase {
         let reopened = try await DocumentRepository(directory: directory).open(document.id)
         XCTAssertEqual(reopened.0.strokes, moved.strokes); XCTAssertEqual(reopened.0.layers, moved.layers)
     }
+    func testFillRespectsSelectionAndMirrorWithoutPaintingOutside() async throws {
+        var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+        document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64), mirror: true)
+        let selection = StrokeSelection(points: [Point(x: 20, y: 20), Point(x: 50, y: 20), Point(x: 50, y: 44), Point(x: 20, y: 44)])
+        let raster = try await ExportService().filledRegion(document, point: Point(x: 30, y: 30), selection: selection)
+        document.layers[0].raster = raster
+        for point in [Point(x: 30, y: 30), Point(x: 30, y: 98)] {
+            XCTAssertEqual(try PNGExporter.sample(document: document, point: point).red, 0, accuracy: 0.05)
+        }
+        XCTAssertEqual(try PNGExporter.sample(document: document, point: Point(x: 70, y: 30)).red, 1, accuracy: 0.05)
+    }
     func testFiveSmallFillsDoNotConsumeFiveCanvasSizedRasters() async throws {
         var document = DrawingDocument(); document.symmetry.repetitions = 1
         let format = UIGraphicsImageRendererFormat(); format.scale = 1

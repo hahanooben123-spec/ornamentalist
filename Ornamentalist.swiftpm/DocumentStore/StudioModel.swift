@@ -584,6 +584,7 @@ final class StudioModel: ObservableObject {
         guard canDraw, !isDrawing, let before = document, point.isFinite,
               (0..<before.size.x).contains(point.x), (0..<before.size.y).contains(point.y),
               before.brush.opacity > 0 else { return }
+        if let selection, !before.symmetry.matrices.contains(where: { selection.contains($0.inverse.apply(point)) }) { return }
         guard before.layers.count < LayerManager.maximumLayers else { error = DocumentError.memoryLimit.localizedDescription; return }
         busy = true; defer { busy = false }
         do {
