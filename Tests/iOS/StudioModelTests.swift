@@ -33,7 +33,7 @@ final class StudioModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
         let repository = DocumentRepository(directory: folder)
         var drawing = DrawingDocument(); drawing.size = Point(x: 64, y: 64)
-        drawing.symmetry.repetitions = 1
+        drawing.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 32, y: 32))
         drawing.color = InkColor(red: 1, green: 0, blue: 0)
         drawing.brush.width = 4; drawing.brush.pressureEnabled = false
         drawing.strokes = [InkStroke(brush: drawing.brush, symmetry: drawing.symmetry, samples: [
