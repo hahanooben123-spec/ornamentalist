@@ -29,19 +29,32 @@ jobs:
       - name: Select an available iPad simulator
         run: |
           python3 - <<'PY'
-          import json, os, subprocess
+          import json, os, subprocess, platform
           devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))['devices']
           candidates = [d for runtime, group in devices.items() if 'iOS' in runtime for d in group if 'iPad' in d['name']]
           if not candidates:
               raise SystemExit('No iPad simulator is installed on this runner')
           with open(os.environ['GITHUB_ENV'], 'a') as f:
               f.write('IPAD_SIMULATOR=' + candidates[-1]['udid'] + '\n')
+              f.write('IPAD_SIMULATOR_ARCH=' + platform.machine() + '\n')
+          PY
+      - name: Boot selected simulator before running tests
+        timeout-minutes: 3
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          simulator = os.environ['IPAD_SIMULATOR']
+          groups = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', '-j']))['devices']
+          device = next(d for group in groups.values() for d in group if d['udid'] == simulator)
+          if device['state'] != 'Booted':
+              subprocess.run(['xcrun', 'simctl', 'boot', simulator], check=True)
+          subprocess.run(['xcrun', 'simctl', 'bootstatus', simulator, '-b'], check=True)
           PY
       - name: Compile native app and test bundle
         timeout-minutes: 5
         run: >-
           xcodebuild build-for-testing -project Ornamentalist.xcodeproj -scheme Ornamentalist
-          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData
           -only-testing:OrnamentalistTests
           CODE_SIGNING_ALLOWED=NO
@@ -49,7 +62,7 @@ jobs:
         timeout-minutes: 3
         run: >-
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
-          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath ExportTests.xcresult
           -only-testing:OrnamentalistTests/PNGExportOptimizationTests
           -only-testing:OrnamentalistTests/StudioModelTests/testFillPreservesInkAndCanUndoRedo
@@ -63,7 +76,7 @@ jobs:
         timeout-minutes: 3
         run: >-
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
-          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath OptimizationTests.xcresult
           -only-testing:OrnamentalistTests/EditingToolsNativeTests/testSelectionAndWholeStrokeTransformMatchMetalAndPNG
           -only-testing:OrnamentalistTests/RendererCacheTests/testPartialLiveRestorePreservesPredictionOpacityAndEraser
@@ -76,7 +89,7 @@ jobs:
         timeout-minutes: 4
         run: >-
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
-          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath ZoomTests.xcresult
           -only-testing:OrnamentalistTests/RendererCacheTests/testViewportPreviewTransformsImageWithoutReplayingGeometry
           -only-testing:OrnamentalistTests/StudioModelTests/testLinerDefaultsMigrateOnceWithoutChangingSavedInkOrLaterChoices
@@ -88,7 +101,7 @@ jobs:
         timeout-minutes: 4
         run: >-
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
-          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath ModelTests.xcresult
           -only-testing:OrnamentalistTests/StudioModelTests
           -parallel-testing-enabled NO -destination-timeout 60
@@ -102,7 +115,7 @@ jobs:
           SIMCTL_CHILD_MTL_SHADER_VALIDATION: '1'
         run: >-
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
-          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath MetalSmoke.xcresult
           -only-testing:OrnamentalistTests/EditingToolsNativeTests/testImagePlacementMatchesMetalAndPNGAndInvalidatesRasterCache
           -parallel-testing-enabled NO -destination-timeout 60
@@ -113,7 +126,7 @@ jobs:
         timeout-minutes: 6
         run: >-
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
-          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR"
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath AppleTests.xcresult
           -only-testing:OrnamentalistTests
           -skip-testing:OrnamentalistTests/StudioModelTests
