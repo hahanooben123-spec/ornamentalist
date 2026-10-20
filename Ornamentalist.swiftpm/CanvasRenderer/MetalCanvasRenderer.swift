@@ -1654,11 +1654,11 @@ final class MetalCanvasRenderer {
         return layer.sample(s, in.uv) * opacity;
     }
     fragment float4 restoreTileSamplesFragment(CompositeOutput in [[stage_in]],
-        texture2d_ms<float> image [[texture(0)]], constant uint2 &origin [[buffer(0)]], uint sample [[sample_id]]) {
+        texture2d_ms<float, access::read> image [[texture(0)]], constant uint2 &origin [[buffer(0)]], uint sample [[sample_id]]) {
         return image.read(uint2(in.position.xy) + origin, sample);
     }
     fragment float4 restoreTileColorFragment(CompositeOutput in [[stage_in]],
-        texture2d<float> image [[texture(0)]], constant uint2 &origin [[buffer(0)]]) {
+        texture2d<float, access::read> image [[texture(0)]], constant uint2 &origin [[buffer(0)]]) {
         return image.read(uint2(in.position.xy) + origin);
     }
     fragment float4 restoreSamplesFragment(CompositeOutput in [[stage_in]],

@@ -167,7 +167,7 @@ struct StudioView: View {
                         .disabled(model.busy || model.isPreparing)
                 } else if model.selection != nil || model.tool == .selection {
                     HStack {
-                        Text(model.tool == .selection ? "Draw a closed selection · Mirror follows the selection" : "Selection active · Draw inside the original outline")
+                        Text(model.tool == .selection ? "Draw a closed selection Â· Mirror follows the selection" : "Selection active Â· Draw inside the original outline")
                             .font(.caption)
                         Button("Clear selection") { model.clearSelection() }.accessibilityIdentifier("clearSelection")
                     }.padding(12).studioSurface().padding(16).disabled(model.isDrawing)
