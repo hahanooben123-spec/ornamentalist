@@ -463,6 +463,7 @@ final class ArtworkRenderer {
     weak var source: MetalCanvasRenderer?
     private var renderer: MetalCanvasRenderer?
     private var rendering = false
+    private var gpuFailure: Error?
     private let encoder = ExportService()
     private struct Key: Equatable {
         let display: CanvasDisplayState
@@ -486,10 +487,12 @@ final class ArtworkRenderer {
         try Task.checkCancellation()
         if let cached = previews.first(where: { $0.0 == key }) { return cached.1 }
         rendering = true; defer { rendering = false }
+        if let gpuFailure { throw gpuFailure }
         try document.validate()
         let scale = min(1, Double(maximumSide) / max(Double(region.width), Double(region.height)))
         let width = max(1, Int((Double(region.width) * scale).rounded())), height = max(1, Int((Double(region.height) * scale).rounded()))
         guard width <= 2048, height <= 2048 else { return try await encoder.pngData(drawing, transparent: transparent, region: region) }
+        do {
         if let source {
             if renderer?.usesArtworkDevice(of: source) != true { renderer = try source.makeArtworkRenderer() }
         } else if renderer == nil { renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero)) }
@@ -507,6 +510,11 @@ final class ArtworkRenderer {
         renderCount += 1; previews.append((key, png))
         while previews.count > 40 || previews.reduce(0, { $0 + $1.1.count }) > 4 * 1024 * 1024 { previews.removeFirst() }
         return png
+        } catch is CancellationError {
+            renderer = nil; throw CancellationError()
+        } catch {
+            renderer = nil; gpuFailure = error; throw error
+        }
     }
 }
 

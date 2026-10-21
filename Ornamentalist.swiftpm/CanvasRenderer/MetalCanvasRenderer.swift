@@ -1,4 +1,25 @@
 import MetalKit
+import Dispatch
+
+/// A GPU callback can race cancellation or a timeout. Resume its continuation
+/// once, without leaving export/previews waiting on an unresponsive command.
+private final class ArtworkCommandCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var result: Result<Void, Error>?
+    func install(_ continuation: CheckedContinuation<Void, Error>) {
+        lock.lock()
+        if let result { lock.unlock(); continuation.resume(with: result) }
+        else { self.continuation = continuation; lock.unlock() }
+    }
+    func finish(_ result: Result<Void, Error>) {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return }
+        self.result = result
+        let continuation = self.continuation; self.continuation = nil
+        lock.unlock(); continuation?.resume(with: result)
+    }
+}
 
 private struct GPUChunk {
     let buffer: MTLBuffer
@@ -1583,16 +1604,23 @@ final class MetalCanvasRenderer {
             } catch { encoder.endEncoding(); throw error }
             encoder.endEncoding()
         }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            command.addCompletedHandler { @Sendable command in
-                if command.status == .error {
-                    print("Metal readback failed: \(String(describing: command.error)); details: \(String(describing: (command.error as NSError?)?.userInfo))")
-                    continuation.resume(throwing: command.error ?? DocumentError.graphics)
+        let completion = ArtworkCommandCompletion()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                completion.install(continuation)
+                guard !Task.isCancelled else { completion.finish(.failure(CancellationError())); return }
+                command.addCompletedHandler { @Sendable command in
+                    if command.status == .error {
+                        print("Metal readback failed: \(String(describing: command.error)); details: \(String(describing: (command.error as NSError?)?.userInfo))")
+                        completion.finish(.failure(command.error ?? DocumentError.graphics))
+                    } else { completion.finish(.success(())) }
                 }
-                else { continuation.resume() }
+                command.commit()
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) {
+                    completion.finish(.failure(DocumentError.graphics))
+                }
             }
-            command.commit()
-        }
+        } onCancel: { completion.finish(.failure(CancellationError())) }
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         pixels.withUnsafeMutableBytes {
             output.getBytes($0.baseAddress!, bytesPerRow: width * 4,
