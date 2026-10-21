@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import MetalKit
 @testable import Ornamentalist
 
 final class PNGExportOptimizationTests: XCTestCase {
@@ -20,7 +21,9 @@ final class PNGExportOptimizationTests: XCTestCase {
         _ = LayerManager.add(in: &document); document.layers[1].opacity = 0.5
         document.strokes.append(InkStroke(brush: InkBrush(width: 12), symmetry: document.symmetry,
             samples: [sample(20, 70), sample(90, 70, 1)], layerID: document.activeLayerID, color: InkColor(red: 0, green: 0, blue: 1)))
-        let artwork = ArtworkRenderer()
+        let source = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await source.synchronize(document.strokes, layers: document.layers)
+        let artwork = ArtworkRenderer(source: source)
         let png = try await artwork.png(document, maximumSide: 128, transparent: true)
         let cached = try await artwork.png(document, maximumSide: 128, transparent: true)
         XCTAssertEqual(cached, png); XCTAssertEqual(artwork.renderCount, 1)

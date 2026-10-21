@@ -73,17 +73,23 @@ final class StudioModel: ObservableObject {
         guard let snapshot = document else { throw DocumentError.invalidData }
         if max(snapshot.size.x, snapshot.size.y) > 2048 { return try await exportService.png(snapshot, transparent: transparent) }
         if artworkRenderer == nil { artworkRenderer = ArtworkRenderer() }
-        let data = try await artworkRenderer!.png(snapshot, maximumSide: 2048, transparent: transparent)
-        return try await exportService.writeArtwork(data, id: snapshot.id, transparent: transparent)
+        do {
+            let data = try await artworkRenderer!.png(snapshot, maximumSide: 2048, transparent: transparent)
+            return try await exportService.writeArtwork(data, id: snapshot.id, transparent: transparent)
+        } catch is CancellationError { throw CancellationError() }
+        catch { return try await exportService.png(snapshot, transparent: transparent) }
     }
     func exportTilePNG() async throws -> URL {
         guard let snapshot = document, snapshot.symmetry.tileCount > 0 else { throw DocumentError.invalidData }
         let size = snapshot.symmetry.tileSize
         if max(size.x, size.y) > 2048 { return try await exportService.tilePNG(snapshot) }
         enableArtworkPreviews()
-        let data = try await artworkRenderer!.png(snapshot, maximumSide: 2048, transparent: true,
-            region: CGRect(x: 0, y: 0, width: size.x, height: size.y))
-        return try await exportService.writeArtwork(data, id: snapshot.id, transparent: true, tile: true)
+        do {
+            let data = try await artworkRenderer!.png(snapshot, maximumSide: 2048, transparent: true,
+                region: CGRect(x: 0, y: 0, width: size.x, height: size.y))
+            return try await exportService.writeArtwork(data, id: snapshot.id, transparent: true, tile: true)
+        } catch is CancellationError { throw CancellationError() }
+        catch { return try await exportService.tilePNG(snapshot) }
     }
     private func galleryThumbnail(_ snapshot: DrawingDocument) async throws -> Data {
         guard let artworkRenderer else { return try await previewService.thumbnail(snapshot) }
