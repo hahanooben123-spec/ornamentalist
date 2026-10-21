@@ -1605,7 +1605,7 @@ final class MetalCanvasRenderer {
             encoder.endEncoding()
         }
         let completion = ArtworkCommandCompletion()
-        try await withTaskCancellationHandler {
+        try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 completion.install(continuation)
                 guard !Task.isCancelled else { completion.finish(.failure(CancellationError())); return }
@@ -1613,14 +1613,14 @@ final class MetalCanvasRenderer {
                     if command.status == .error {
                         print("Metal readback failed: \(String(describing: command.error)); details: \(String(describing: (command.error as NSError?)?.userInfo))")
                         completion.finish(.failure(command.error ?? DocumentError.graphics))
-                    } else { completion.finish(.success(())) }
+                    } else { completion.finish(.success(Void())) }
                 }
                 command.commit()
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) {
                     completion.finish(.failure(DocumentError.graphics))
                 }
             }
-        } onCancel: { completion.finish(.failure(CancellationError())) }
+        }, onCancel: { completion.finish(.failure(CancellationError())) })
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         pixels.withUnsafeMutableBytes {
             output.getBytes($0.baseAddress!, bytesPerRow: width * 4,
