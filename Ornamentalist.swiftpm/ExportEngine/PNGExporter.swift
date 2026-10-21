@@ -1,5 +1,6 @@
 import UIKit
 import ImageIO
+import MetalKit
 
 /// Exports document-space triangles through Core Graphics. No viewport, guides,
 /// prediction, UI chrome, or screenshot is involved. 2048 square in Phase 1.
@@ -451,5 +452,72 @@ actor ExportService {
         let url = directory.appendingPathComponent("Ornamentalist-Tile-\(document.id.uuidString).png")
         try output.write(to: url, options: .atomic)
         return url
+    }
+}
+
+
+/// One separate renderer serializes readbacks without disturbing canvas caches.
+/// Finished PNGs are cached by visible content, with a 4 MiB/40-image bound.
+@MainActor
+final class ArtworkRenderer {
+    weak var source: MetalCanvasRenderer?
+    private var renderer: MetalCanvasRenderer?
+    private var rendering = false
+    private let encoder = ExportService()
+    private struct Key: Equatable {
+        let display: CanvasDisplayState
+        let side: Int
+        let transparent: Bool
+    }
+    private var previews: [(Key, Data)] = []
+    private(set) var renderCount = 0
+    init(source: MetalCanvasRenderer? = nil) { self.source = source }
+    func releaseCaches() { renderer = nil; previews.removeAll() }
+    func png(_ document: DrawingDocument, maximumSide: Int, transparent: Bool) async throws -> Data {
+        let key = Key(display: CanvasDisplayState(document, guides: false), side: maximumSide, transparent: transparent)
+        if let cached = previews.first(where: { $0.0 == key }) { return cached.1 }
+        while rendering { try await Task.sleep(nanoseconds: 10_000_000) }
+        try Task.checkCancellation()
+        if let cached = previews.first(where: { $0.0 == key }) { return cached.1 }
+        rendering = true; defer { rendering = false }
+        try document.validate()
+        let scale = min(1, Double(maximumSide) / max(document.size.x, document.size.y))
+        let width = max(1, Int((document.size.x * scale).rounded())), height = max(1, Int((document.size.y * scale).rounded()))
+        guard width <= 2048, height <= 2048 else { return try await encoder.pngData(document, transparent: transparent) }
+        if renderer == nil { renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero)) }
+        guard let renderer else { throw DocumentError.noMetal }
+        if let source { renderer.borrowArtworkGeometry(from: source) }
+        try await renderer.synchronize(document.strokes, layers: document.layers)
+        let pixels = try await renderer.renderOffscreen(document: document, viewport: Viewport(zoom: 1 / 0.92),
+            width: width, height: height, transparent: transparent)
+        try Task.checkCancellation()
+        let png = try await encoder.encodeArtwork(Data(pixels), width: width, height: height)
+        try Task.checkCancellation()
+        renderCount += 1; previews.append((key, png))
+        while previews.count > 40 || previews.reduce(0, { $0 + $1.1.count }) > 4 * 1024 * 1024 { previews.removeFirst() }
+        return png
+    }
+}
+
+extension ExportService {
+    func pngData(_ document: DrawingDocument, transparent: Bool) throws -> Data {
+        try PNGExporter.data(document: document, transparent: transparent)
+    }
+    func encodeArtwork(_ pixels: Data, width: Int, height: Int) throws -> Data {
+        try Task.checkCancellation()
+        guard pixels.count == width * height * 4, let provider = CGDataProvider(data: pixels as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+              let data = UIImage(cgImage: image).pngData() else { throw DocumentError.graphics }
+        try Task.checkCancellation(); return data
+    }
+    func writeArtwork(_ data: Data, id: UUID, transparent: Bool) throws -> URL {
+        try Task.checkCancellation()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("OrnamentalistExports", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("Ornamentalist-\(id.uuidString)\(transparent ? "-transparent" : "").png")
+        try data.write(to: url, options: .atomic); return url
     }
 }

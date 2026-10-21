@@ -168,6 +168,23 @@ final class DocumentRepositoryTests: XCTestCase {
         XCTAssertEqual(reopened.title, drawing.title)
     }
 
+    func testPreviewStampRejectsLegacyAndStaleImagesAndSurvivesRestart() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DocumentRepository(directory: directory)
+        var drawing = DrawingDocument(); try await store.save(drawing, generation: 1)
+        let image = Data([1, 2, 3])
+        try image.write(to: directory.appendingPathComponent(drawing.id.uuidString + ".png"))
+        let legacy = try await store.list(); XCTAssertNil(legacy.first?.thumbnail)
+        try await store.storeThumbnail(image, id: drawing.id, generation: 1)
+        let restarted = try await DocumentRepository(directory: directory).list()
+        XCTAssertEqual(restarted.first?.thumbnail, image)
+        drawing.modified = drawing.modified.addingTimeInterval(1)
+        try await store.save(drawing, generation: 2)
+        let stale = try await store.list(); XCTAssertNil(stale.first?.thumbnail)
+        try await store.storeThumbnail(image, id: drawing.id, generation: 2)
+        let fresh = try await store.list(); XCTAssertEqual(fresh.first?.thumbnail, image)
+    }
     func testLateThumbnailCannotReplaceANewerSavedRevision() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

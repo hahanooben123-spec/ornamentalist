@@ -58,6 +58,17 @@ jobs:
           -derivedDataPath DerivedData
           -only-testing:OrnamentalistTests
           CODE_SIGNING_ALLOWED=NO
+      - name: Verify fast artwork export and preview pixels
+        timeout-minutes: 3
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
+          -derivedDataPath DerivedData -resultBundlePath ArtworkTests.xcresult
+          -only-testing:OrnamentalistTests/PNGExportOptimizationTests/testArtworkExportPreservesTransparencyErasersOpacityAndCachesReadback
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 45
+          -maximum-test-execution-time-allowance 60
+          CODE_SIGNING_ALLOWED=NO
       - name: Verify PNG export pixel parity
         timeout-minutes: 3
         run: >-
@@ -65,6 +76,7 @@ jobs:
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath ExportTests.xcresult
           -only-testing:OrnamentalistTests/PNGExportOptimizationTests
+          -skip-testing:OrnamentalistTests/PNGExportOptimizationTests/testArtworkExportPreservesTransparencyErasersOpacityAndCachesReadback
           -only-testing:OrnamentalistTests/StudioModelTests/testFillPreservesInkAndCanUndoRedo
           -only-testing:OrnamentalistTests/StudioModelTests/testGeneralPreferencesSurviveRestart
           -only-testing:OrnamentalistTests/StudioModelTests/testNewDrawingDefaultsToMirrorAndTilesKeepSeparateRotationSettings
@@ -172,6 +184,7 @@ jobs:
             MetalSmoke.xcresult
             ZoomTests.xcresult
             ExportTests.xcresult
+            ArtworkTests.xcresult
             TileTests.xcresult
             OptimizationTests.xcresult
           if-no-files-found: ignore

@@ -40,6 +40,7 @@ struct StudioGallery: View {
             }
             .background(colorScheme == .dark ? Color(uiColor: .systemBackground) : StudioStyle.paper)
         }
+        .onAppear { model.enableArtworkPreviews() }
         .disabled(model.busy)
         .sheet(isPresented: $showingAbout) { StudioAboutView() }
         .overlay { if model.busy { ProgressView().padding(24).studioSurface() } }

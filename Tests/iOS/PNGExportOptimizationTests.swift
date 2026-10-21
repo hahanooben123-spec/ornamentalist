@@ -3,6 +3,43 @@ import UIKit
 @testable import Ornamentalist
 
 final class PNGExportOptimizationTests: XCTestCase {
+    @MainActor
+    func testArtworkExportPreservesTransparencyErasersOpacityAndCachesReadback() async throws {
+        var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+        document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64), mirror: true)
+        document.layers[0].opacity = 0.6
+        let lower = document.activeLayerID
+        func sample(_ x: Double, _ y: Double, _ time: Double = 0) -> StrokeSample {
+            StrokeSample(point: Point(x: x, y: y), pressure: 1, altitude: 1, azimuth: 0, time: time)
+        }
+        var brush = InkBrush(width: 12, stabilization: 0); brush.opacity = 0.5
+        document.strokes = [InkStroke(brush: brush, symmetry: document.symmetry,
+            samples: [sample(20, 30), sample(90, 30, 1)], layerID: lower, color: InkColor(red: 1, green: 0, blue: 0)),
+            InkStroke(brush: InkBrush(width: 16), symmetry: document.symmetry,
+                samples: [sample(50, 30)], layerID: lower, operation: .erase)]
+        _ = LayerManager.add(in: &document); document.layers[1].opacity = 0.5
+        document.strokes.append(InkStroke(brush: InkBrush(width: 12), symmetry: document.symmetry,
+            samples: [sample(20, 70), sample(90, 70, 1)], layerID: document.activeLayerID, color: InkColor(red: 0, green: 0, blue: 1)))
+        let artwork = ArtworkRenderer()
+        let png = try await artwork.png(document, maximumSide: 128, transparent: true)
+        let cached = try await artwork.png(document, maximumSide: 128, transparent: true)
+        XCTAssertEqual(cached, png); XCTAssertEqual(artwork.renderCount, 1)
+        let output = try bytes(XCTUnwrap(UIImage(data: png)?.cgImage))
+        let expected = try bytes(XCTUnwrap(UIImage(data: PNGExporter.data(document: document, transparent: true))?.cgImage))
+        for (x, y) in [(5, 5), (30, 30), (30, 98), (50, 30), (30, 70)] {
+            for component in 0..<4 {
+                XCTAssertEqual(Double(output[(y * 128 + x) * 4 + component]), Double(expected[(y * 128 + x) * 4 + component]), accuracy: 4)
+            }
+        }
+        XCTAssertEqual(output[(5 * 128 + 5) * 4 + 3], 0)
+        let opaque = try await artwork.png(document, maximumSide: 128, transparent: false)
+        let white = try bytes(XCTUnwrap(UIImage(data: opaque)?.cgImage))
+        XCTAssertEqual(Array(white[(5 * 128 + 5) * 4..<(5 * 128 + 5) * 4 + 4]), [255, 255, 255, 255])
+        XCTAssertEqual(artwork.renderCount, 2)
+        document.strokes[0].id = UUID()
+        _ = try await artwork.png(document, maximumSide: 128, transparent: false)
+        XCTAssertEqual(artwork.renderCount, 3)
+    }
     func testTransformPreviewIsTightCachedAndKeepsAsymmetricPosition() async throws {
         var document = DrawingDocument(); document.size = Point(x: 2048, y: 2048)
         document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 1024, y: 1024))

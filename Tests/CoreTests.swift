@@ -5,6 +5,34 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class CoreTests: XCTestCase {
+    func testHeldShapeResizesCircleAndKeepsAdjustedLineExactlyStraight() throws {
+        var line = InkStroke()
+        line.samples = (0...20).map { index in
+            StrokeSample(point: Point(x: 20 + Double(index) * 5, y: 50 + sin(Double(index)) * 8), pressure: 1, altitude: 1, azimuth: 0, time: Double(index))
+        }
+        let straight = try XCTUnwrap(StrokeGeometry.correctedShape(line))
+        let adjusted = StrokeGeometry.adjustedHeldShape(straight, endpoint: Point(x: 170, y: 90), verticalDrag: 0)
+        let first = adjusted.samples.first!.point, delta = adjusted.samples.last!.point - first
+        for sample in adjusted.samples {
+            let relative = sample.point - first
+            XCTAssertEqual(delta.x * relative.y - delta.y * relative.x, 0, accuracy: 0.000001)
+        }
+        var circle = InkStroke(symmetry: SymmetryConfiguration(mirror: true))
+        circle.samples = (0...64).map { index in
+            let angle = Double(index) / 64 * 2 * Double.pi
+            return StrokeSample(point: Point(x: 100 + cos(angle) * 40, y: 100 + sin(angle) * 40), pressure: 0.6, altitude: 1, azimuth: 0, time: Double(index))
+        }
+        let snapped = try XCTUnwrap(StrokeGeometry.correctedShape(circle))
+        let larger = StrokeGeometry.adjustedHeldShape(snapped, endpoint: Point(x: 140, y: 100), verticalDrag: -80)
+        let smaller = StrokeGeometry.adjustedHeldShape(snapped, endpoint: Point(x: 140, y: 100), verticalDrag: 80)
+        XCTAssertEqual(larger.symmetry, snapped.symmetry); XCTAssertEqual(larger.brush, snapped.brush)
+        XCTAssertGreaterThan((larger.samples[0].point - Point(x: 100, y: 100)).length, 40)
+        XCTAssertLessThan((smaller.samples[0].point - Point(x: 100, y: 100)).length, 40)
+        XCTAssertLessThan((larger.samples.first!.point - larger.samples.last!.point).length, 0.00001)
+        // Fast two-sample strokes can also be held into a line.
+        line.samples = [line.samples[0], line.samples[20]]
+        XCTAssertNotNil(StrokeGeometry.correctedShape(line))
+    }
     func testTileMirrorAndRotationsCullInvisibleCopiesAndKeepLegacyInk() throws {
         var symmetry = SymmetryConfiguration(repetitions: 8, center: Point(x: 1024, y: 1024), mirror: false,
             tileCount: 4, tileSymmetry: true, tileRepetitions: 1)

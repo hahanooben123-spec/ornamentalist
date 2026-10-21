@@ -6,15 +6,15 @@ enum StrokeGeometry {
     /// Recognize only an unambiguous line or nearly closed circle. Other
     /// strokes stay unchanged; input timing and symmetry remain intact.
     static func correctedShape(_ stroke: InkStroke) -> InkStroke? {
-        guard stroke.operation == .ink, stroke.samples.count >= 6,
+        guard stroke.operation == .ink, stroke.samples.count >= 2,
               let first = stroke.samples.first, let last = stroke.samples.last else { return nil }
         let points = stroke.samples.map(\.point)
         let delta = last.point - first.point, span = delta.length
         var positions: [Point] = []
-        if span > 12 {
+        if span > 6 {
             let error = points.map { abs(delta.x * ($0.y - first.point.y) - delta.y * ($0.x - first.point.x)) / span }.max() ?? 0
             let length = zip(points, points.dropFirst()).reduce(0.0) { $0 + ($1.1 - $1.0).length }
-            if error <= max(2, span * 0.035), length <= span * 1.15 {
+            if error <= max(3, span * 0.15), length <= span * 1.6 {
                 positions = (0...16).map { first.point + delta * (Double($0) / 16) }
             }
         }
@@ -46,6 +46,25 @@ enum StrokeGeometry {
             var sample = first; sample.point = point; sample.pressure = pressure; sample.radiusScale = 1
             sample.time = first.time + max(0.01, last.time - first.time) * Double(index) / Double(positions.count - 1)
             return sample
+        }
+        return result
+    }
+
+    /// Shape adjustment preserves the brush, clipping and symmetry. Only the
+    /// confirmed centerline changes; Pencil predictions never enter the shape.
+    static func adjustedHeldShape(_ shape: InkStroke, endpoint: Point, verticalDrag: Double) -> InkStroke {
+        guard endpoint.isFinite, verticalDrag.isFinite, let first = shape.samples.first,
+              let last = shape.samples.last, shape.samples.count > 1 else { return shape }
+        var result = shape
+        if shape.samples.count > 32 && (first.point - last.point).length < 0.001 {
+            let points = shape.samples.dropLast()
+            let center = points.reduce(Point.zero) { $0 + $1.point } * (1 / Double(points.count))
+            let factor = exp(max(-3, min(3, -verticalDrag / 160)))
+            for i in result.samples.indices { result.samples[i].point = center + (shape.samples[i].point - center) * factor }
+        } else {
+            for i in result.samples.indices {
+                result.samples[i].point = first.point + (endpoint - first.point) * (Double(i) / Double(result.samples.count - 1))
+            }
         }
         return result
     }

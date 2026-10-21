@@ -261,7 +261,7 @@ struct StudioView: View {
             if horizontalSizeClass == .compact {
                 Menu {
                     Button("Brush", systemImage: "pencil.tip") { model.selectTool(.brush) }
-                    Button("Eraser", systemImage: "eraser") { model.selectTool(.eraser) }
+                    Button("Eraser", systemImage: "eraser") { model.selectTool(.eraser); panel = .brush }
                     Button("Eyedropper", systemImage: "eyedropper") { model.selectTool(.eyedropper) }
                     Button("Fill", systemImage: "paintbucket") { model.selectTool(.fill) }
                     Button("Selection", systemImage: "lasso") { model.selectTool(.selection) }
@@ -319,7 +319,9 @@ struct StudioView: View {
 
     private func toolButton(_ tool: StudioTool, symbol: String, label: String) -> some View {
         Button {
-            panel = nil; model.selectTool(model.tool == tool ? .brush : tool)
+            if tool == .eraser {
+                model.selectTool(.eraser); panel = panel == .brush ? nil : .brush
+            } else { panel = nil; model.selectTool(model.tool == tool ? .brush : tool) }
         } label: {
             StudioIcon(symbol: symbol)
                 .foregroundStyle(model.tool == tool ? StudioStyle.copper : Color.primary)
@@ -392,7 +394,7 @@ struct StudioView: View {
         exportTask = Task {
             defer { exporting = false; exportTask = nil }
             do {
-                let url = try await exportService.png(document, transparent: transparent)
+                let url = try await model.exportPNG(transparent: transparent)
                 try Task.checkCancellation()
                 shareFile = ShareFile(url: url)
             } catch is CancellationError { }

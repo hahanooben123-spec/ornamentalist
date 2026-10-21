@@ -60,6 +60,41 @@ final class StudioModel: ObservableObject {
     let repository: DocumentRepository
     private let exportService = ExportService()
     private let previewService = ExportService()
+    private var artworkRenderer: ArtworkRenderer?
+    private var canvasPreviewTask: Task<Void, Never>?
+    private var canvasPreviewState: CanvasDisplayState?
+    func setArtworkSource(_ source: MetalCanvasRenderer) {
+        if artworkRenderer == nil { artworkRenderer = ArtworkRenderer(source: source) }
+        else { artworkRenderer?.source = source }
+    }
+    func enableArtworkPreviews() { if artworkRenderer == nil { artworkRenderer = ArtworkRenderer() } }
+    func releaseArtworkCaches() { artworkRenderer?.releaseCaches() }
+    func exportPNG(transparent: Bool) async throws -> URL {
+        guard let snapshot = document else { throw DocumentError.invalidData }
+        if max(snapshot.size.x, snapshot.size.y) > 2048 { return try await exportService.png(snapshot, transparent: transparent) }
+        if artworkRenderer == nil { artworkRenderer = ArtworkRenderer() }
+        let data = try await artworkRenderer!.png(snapshot, maximumSide: 2048, transparent: transparent)
+        return try await exportService.writeArtwork(data, id: snapshot.id, transparent: transparent)
+    }
+    private func galleryThumbnail(_ snapshot: DrawingDocument) async throws -> Data {
+        guard let artworkRenderer else { return try await previewService.thumbnail(snapshot) }
+        do { return try await artworkRenderer.png(snapshot, maximumSide: 512, transparent: false) }
+        catch is CancellationError { throw CancellationError() }
+        catch { return try await previewService.thumbnail(snapshot) }
+    }
+    private func warmGalleryThumbnail() {
+        guard let snapshot = document, artworkRenderer != nil else { return }
+        let state = CanvasDisplayState(snapshot, guides: false)
+        guard state != canvasPreviewState else { return }
+        canvasPreviewState = state; canvasPreviewTask?.cancel()
+        canvasPreviewTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 180_000_000)
+                guard let self, !self.isDrawing, self.document?.id == snapshot.id else { return }
+                _ = try await self.galleryThumbnail(snapshot)
+            } catch { }
+        }
+    }
     private var appendLineage = UUID()
     // Canvas exposes confirmed ink only; no predicted points enter a checkpoint.
     var captureActiveStroke: (() -> InkStroke?)?
@@ -235,6 +270,7 @@ final class StudioModel: ObservableObject {
         imageTransform = nil; transformLayerID = nil; transformPreviewRaster = nil; transformStartMatrix = nil; transformScene = nil
         selection = nil
         thumbnailTask?.cancel(); thumbnailTask = nil; thumbnailRequest = UUID()
+        canvasPreviewTask?.cancel(); canvasPreviewTask = nil; canvasPreviewState = nil
         opacityEditBefore = nil
         tool = .brush
         var adopted = d
@@ -404,7 +440,15 @@ final class StudioModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func layerThumbnail(_ snapshot: DrawingDocument, id: UUID) async throws -> Data {
-        try await previewService.layerThumbnail(snapshot, id: id)
+        if let artworkRenderer, var layer = snapshot.layers.first(where: { $0.id == id }) {
+            layer.isVisible = true; layer.opacity = 1
+            var isolated = snapshot; isolated.layers = [layer]; isolated.activeLayerID = id
+            isolated.strokes = snapshot.strokes.filter { $0.layerID == id }
+            do { return try await artworkRenderer.png(isolated, maximumSide: 128, transparent: true) }
+            catch is CancellationError { throw CancellationError() }
+            catch { return try await previewService.layerThumbnail(snapshot, id: id) }
+        }
+        return try await previewService.layerThumbnail(snapshot, id: id)
     }
     func insertImage(_ data: Data) async {
         guard canEdit, !isDrawing, !isTransforming, let before = document else { return }
@@ -728,6 +772,7 @@ final class StudioModel: ObservableObject {
         generation += 1
         saveStatus = "Unsaved changes"
         schedule.edited(at: ProcessInfo.processInfo.systemUptime)
+        warmGalleryThumbnail()
         rescheduleMaintenance()
     }
     var inkBudgetReport: String {
@@ -804,7 +849,15 @@ final class StudioModel: ObservableObject {
         while saveRunning { try? await Task.sleep(nanoseconds: 10_000_000) }
         let closingGeneration = generation
         guard await saveNow(), generation == closingGeneration else { return }
-        if let id = document?.id { thumbnailRefreshIDs.insert(id) }
+        canvasPreviewTask?.cancel(); canvasPreviewTask = nil
+        if let snapshot = document {
+            do {
+                let thumbnail = try await galleryThumbnail(snapshot)
+                try await repository.storeThumbnail(thumbnail, id: snapshot.id, generation: snapshot.storageRevision,
+                    modified: snapshot.modified, strokeCount: snapshot.strokes.count)
+                thumbnailRefreshIDs.remove(snapshot.id)
+            } catch { thumbnailRefreshIDs.insert(snapshot.id) }
+        }
         document = nil; history = StrokeHistory(); captureActiveStroke = nil; rendererDiagnostics = nil
         await refresh()
     }
@@ -827,9 +880,9 @@ final class StudioModel: ObservableObject {
                 do {
                     let (snapshot, _) = try await self.repository.open(project.id)
                     try Task.checkCancellation()
-                    let thumbnail = try await self.previewService.thumbnail(snapshot)
+                    let thumbnail = try await self.galleryThumbnail(snapshot)
                     try Task.checkCancellation()
-                    try await self.repository.storeThumbnail(thumbnail, id: snapshot.id, generation: snapshot.storageRevision)
+                    try await self.repository.storeThumbnail(thumbnail, id: snapshot.id, generation: snapshot.storageRevision, modified: snapshot.modified, strokeCount: snapshot.strokes.count)
                     guard !Task.isCancelled, self.document == nil, self.thumbnailRequest == request else { return }
                     self.thumbnailRefreshIDs.remove(project.id)
                     if let index = self.projects.firstIndex(where: { $0.id == project.id }) {

@@ -25,7 +25,6 @@ struct LayerPreview: View {
             .accessibilityHidden(true)
             .task(id: LayerPreviewKey(layerID: layer.id, rasterID: layer.raster?.id, placement: layer.raster?.placement,
                                       strokes: strokeIDs)) {
-                image = nil
                 do {
                     let data = try await model.layerThumbnail(document, id: layer.id)
                     try Task.checkCancellation()

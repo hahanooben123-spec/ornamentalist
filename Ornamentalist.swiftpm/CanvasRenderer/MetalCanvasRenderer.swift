@@ -43,6 +43,18 @@ private struct SurfaceKey: Equatable {
 /// remain valid while the GPU consumes previous frames; no shared-buffer races.
 @MainActor
 final class MetalCanvasRenderer {
+    private var offscreenTransparent = false
+    private var backgroundClearColor: MTLClearColor {
+        offscreenTransparent ? MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+            : MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
+    }
+    /// Sharing immutable source buffers avoids tessellating the drawing again
+    /// for previews/export. Surface caches and command queues remain independent.
+    func borrowArtworkGeometry(from source: MetalCanvasRenderer) {
+        guard source.device.registryID == device.registryID else { return }
+        cache = source.cache; cacheOrder = source.cacheOrder; registered = source.registered
+        rasterTextures = source.rasterTextures
+    }
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private let pipeline: MTLRenderPipelineState
@@ -499,7 +511,7 @@ final class MetalCanvasRenderer {
                                   viewport: Viewport, viewSize: Point) throws {
         guard let image = navigationTexture, navigationDocument == document.id else { throw DocumentError.graphics }
         let pass = targetPass(output)
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
+        pass.colorAttachments[0].clearColor = backgroundClearColor
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw DocumentError.graphics }
         do {
             // The newly revealed area gets white paper while the final artwork
@@ -633,7 +645,7 @@ final class MetalCanvasRenderer {
         encoder.setRenderPipelineState(state ?? pipeline)
         let transform = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
         let identity = SymmetryConfiguration(repetitions: 1, center: .zero)
-        if layerOnly == nil {
+        if layerOnly == nil && !offscreenTransparent {
         if paperSize != document.size || paper.isEmpty {
             paperSize = document.size
             let a = BrushVertex(.zero, local: .zero)
@@ -1353,7 +1365,7 @@ final class MetalCanvasRenderer {
             lowerKey = nil; upperKey = nil; activeKey = nil; surfaceKey = next
         }
         let backgroundPass = targetPass(output)
-        backgroundPass.colorAttachments[0].clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
+        backgroundPass.colorAttachments[0].clearColor = backgroundClearColor
         guard let background = command.makeRenderCommandEncoder(descriptor: backgroundPass) else { throw DocumentError.graphics }
         do {
             try encodeScene(encoder: background, document: document, viewport: viewport, viewSize: viewSize,
@@ -1441,7 +1453,7 @@ final class MetalCanvasRenderer {
             let pass = MTLRenderPassDescriptor()
             pass.colorAttachments[0].texture = output
             pass.colorAttachments[0].loadAction = load; pass.colorAttachments[0].storeAction = .store
-            pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
+            pass.colorAttachments[0].clearColor = backgroundClearColor
             return pass
         }
         guard let background = command.makeRenderCommandEncoder(descriptor: outputPass(load: .clear)) else { throw DocumentError.graphics }
@@ -1478,7 +1490,10 @@ final class MetalCanvasRenderer {
     /// as the visible canvas. BGRA rows are returned in top-left screen order.
     func renderOffscreen(document: DrawingDocument, viewport: Viewport, width: Int, height: Int,
                          active: InkStroke? = nil, preview: [BrushVertex] = [], guides: Bool = false,
-                         reference: Bool = false) async throws -> [UInt8] {
+                         reference: Bool = false, transparent: Bool = false) async throws -> [UInt8] {
+        offscreenTransparent = transparent
+        defer { offscreenTransparent = false }
+        try Task.checkCancellation()
         guard width > 0, height > 0, width <= 2048, height <= 2048 else { throw DocumentError.invalidData }
         if reference { liveWorkStroke = nil }
         if isPreparingScene { await preparationTask?.value }
@@ -1497,7 +1512,7 @@ final class MetalCanvasRenderer {
               let command = queue.makeCommandBuffer() else { throw DocumentError.graphics }
         let pass = MTLRenderPassDescriptor()
         let color = pass.colorAttachments[0]!
-        color.clearColor = MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
+        color.clearColor = backgroundClearColor
         color.loadAction = .clear
         if reference && sampleCount > 1 && !requiresGroups(document, active: active) {
             let msaa = MTLTextureDescriptor()

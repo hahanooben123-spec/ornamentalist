@@ -16,6 +16,8 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private var resetToken: UUID
     private var session: StrokeSession?
     private var heldShape: InkStroke?
+    private var heldShapeStart: InkStroke?
+    private var heldShapeScreenY = 0.0
     private var shapeHoldTask: Task<Void, Never>?
     private var active: InkStroke? { heldShape ?? session?.stroke }
     private var preparation: Task<Void, Never>?
@@ -83,6 +85,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         updateBrushCursor()
         do {
             renderer = try MetalCanvasRenderer(view: self)
+            if let renderer { model.setArtworkSource(renderer) }
             renderer?.preparationChanged = { [weak self] preparing in
                 guard let self else { return }
                 self.model.setPreparing(preparing || self.pendingPreparation)
@@ -96,7 +99,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             }
             delegate = self
         } catch { report(error) }
-        model.captureActiveStroke = { [weak self] in self?.session?.stroke }
+        model.captureActiveStroke = { [weak self] in self?.active }
         model.rendererDiagnostics = { [weak self] in
             guard let self else { return "Renderer unavailable" }
             return (self.renderer?.performanceReport() ?? "Renderer unavailable") + "\n\n" + self.model.inkBudgetReport
@@ -320,22 +323,20 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     private func ingest(_ touch: UITouch, event: UIEvent?) {
         guard session != nil else { return }
         let currentPoint = point(touch)
+        if let start = heldShapeStart {
+            let adjusted = StrokeGeometry.adjustedHeldShape(start, endpoint: currentPoint,
+                verticalDrag: Double(touch.preciseLocation(in: self).y) - heldShapeScreenY)
+            do {
+                renderer?.begin(); try renderer?.append(BrushGeometry.mesh(adjusted))
+                heldShape = adjusted; preview = []; setNeedsDisplay()
+            } catch { finishStroke(rebuild: true); report(error) }
+            return
+        }
         if let origin = holdOrigin,
            (currentPoint - origin).length * hypot(canvasMatrix.a, canvasMatrix.b) > 4 {
             holdOrigin = currentPoint; lastMotionTime = touch.timestamp
-            if heldShape != nil {
-                heldShape = nil
-                do {
-                    renderer?.begin()
-                    if let stroke = session?.stroke {
-                        let mesh = BrushGeometry.mesh(stroke)
-                        try renderer?.append(Array(mesh.dropLast(BrushGeometry.tail(stroke).count)))
-                    }
-                } catch { finishStroke(rebuild: true); report(error); return }
-            }
             scheduleShapeHold()
         }
-        guard heldShape == nil else { return }
         cursorCanvasPoint = point(touch)
         updateBrushCursor()
         do {
@@ -361,7 +362,9 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
             do {
                 self.renderer?.begin()
                 try self.renderer?.append(BrushGeometry.mesh(corrected))
-                self.heldShape = corrected; self.preview = []
+                self.heldShape = corrected; self.heldShapeStart = corrected
+                self.heldShapeScreenY = Double(self.drawingTouch!.preciseLocation(in: self).y)
+                self.preview = []
                 self.setNeedsDisplay()
             } catch { self.finishStroke(rebuild: true); self.report(error) }
         }
@@ -372,7 +375,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         shapeHoldTask?.cancel(); shapeHoldTask = nil
         let held = model.shapeCorrection && !rebuild && drawingTouch.map { $0.timestamp - lastMotionTime >= 0.6 } == true
         let correction = !rebuild && model.shapeCorrection ? (heldShape ?? (held ? completed.correctedShape() : nil)) : nil
-        heldShape = nil
+        heldShape = nil; heldShapeStart = nil
         let stroke = correction ?? original
         session = nil; drawingTouch = nil; preview = []
         if rebuild || correction != nil { renderer?.cancel() }
@@ -395,7 +398,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         Task { await model.saveNow() }
     }
     @objc private func releaseRenderCaches() {
-        renderer?.handleMemoryPressure()
+        renderer?.handleMemoryPressure(); model.releaseArtworkCaches()
         setNeedsDisplay()
     }
     private func report(_ error: Error) {
@@ -420,7 +423,7 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
     }
     private func discardFingerStroke() {
         guard drawingTouch?.type == .direct else { return }
-        shapeHoldTask?.cancel(); shapeHoldTask = nil; heldShape = nil
+        shapeHoldTask?.cancel(); shapeHoldTask = nil; heldShape = nil; heldShapeStart = nil
         session = nil; drawingTouch = nil; preview = []; renderer?.cancel(); model.discardActiveCheckpoint()
         setNeedsDisplay()
     }

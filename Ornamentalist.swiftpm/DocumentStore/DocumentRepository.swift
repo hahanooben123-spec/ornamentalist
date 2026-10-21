@@ -61,6 +61,11 @@ struct ProjectSummary: Identifiable, Sendable {
     var thumbnail: Data? = nil
 }
 
+private struct ThumbnailStamp: Codable {
+    let modified: Date
+    let strokeCount: Int
+}
+
 private struct ProjectIndex: Codable {
     let id: UUID
     let title: String
@@ -101,7 +106,7 @@ actor DocumentRepository {
         savedGenerations.removeValue(forKey: id)
         if primarySnapshot?.id == id { primarySnapshot = nil }
         journalBaseRevisions.removeValue(forKey: id)
-        for suffix in ["mandala", "backup", "journal", "journalbase", "index", "png"] {
+        for suffix in ["mandala", "backup", "journal", "journalbase", "index", "png", "preview"] {
             let target = file(id, suffix: suffix)
             if FileManager.default.fileExists(atPath: target.path) {
                 try FileManager.default.removeItem(at: target)
@@ -247,12 +252,26 @@ actor DocumentRepository {
                                  primaryBytes: bytes, primaryModified: a[.modificationDate] as? Date ?? .distantPast)
         try JSONEncoder().encode(index).write(to: file(d.id, suffix: "index"), options: .atomic)
     }
-    func storeThumbnail(_ data: Data, id: UUID, generation: Int) throws {
-        guard !isDeleted(id) else { return }
-        guard savedGenerations[id] == generation, data.count <= 1024*1024 else { return }
+    func storeThumbnail(_ data: Data, id: UUID, generation: Int, modified: Date? = nil, strokeCount: Int? = nil) throws {
+        guard !isDeleted(id), savedGenerations[id] == generation, data.count <= 1024*1024 else { return }
+        let stamp: ThumbnailStamp
+        if let modified, let strokeCount { stamp = ThumbnailStamp(modified: modified, strokeCount: strokeCount) }
+        else {
+            let (document, _) = try open(id)
+            guard savedGenerations[id] == generation else { return }
+            stamp = ThumbnailStamp(modified: document.modified, strokeCount: document.strokes.count)
+        }
         try data.write(to: file(id, suffix: "png"), options: .atomic)
+        try JSONEncoder().encode(stamp).write(to: file(id, suffix: "preview"), options: .atomic)
     }
-    private func thumbnail(_ id: UUID) -> Data? {
+    private func thumbnail(_ id: UUID, modified: Date, strokeCount: Int) -> Data? {
+        // Legacy/unmatched thumbnails are regenerated. A white PNG from an old
+        // save must not be treated as a permanently valid project preview.
+        let metadata = file(id, suffix: "preview")
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: metadata.path),
+              ((attributes[.size] as? NSNumber)?.intValue ?? Int.max) <= 4096,
+              let bytes = try? Data(contentsOf: metadata), let stamp = try? JSONDecoder().decode(ThumbnailStamp.self, from: bytes),
+              stamp.modified == modified, stamp.strokeCount == strokeCount else { return nil }
         let url = file(id, suffix: "png")
         guard let a = try? FileManager.default.attributesOfItem(atPath: url.path),
               ((a[.size] as? NSNumber)?.intValue ?? Int.max) <= 1024*1024 else { return nil }
@@ -273,11 +292,11 @@ actor DocumentRepository {
                (a[.size] as? NSNumber)?.intValue == index.primaryBytes,
                (a[.modificationDate] as? Date) == index.primaryModified {
                 return ProjectSummary(id: id, title: index.title, modified: index.modified,
-                                      strokeCount: index.strokeCount, thumbnail: thumbnail(id))
+                                      strokeCount: index.strokeCount, thumbnail: thumbnail(id, modified: index.modified, strokeCount: index.strokeCount))
             }
             if let (d, _) = try? open(id) {
                 return ProjectSummary(id: id, title: d.title, modified: d.modified,
-                                      strokeCount: d.strokes.count, thumbnail: thumbnail(id))
+                                      strokeCount: d.strokes.count, thumbnail: thumbnail(id, modified: d.modified, strokeCount: d.strokes.count))
             }
             return ProjectSummary(id: id, title: "Unreadable drawing · \(id.uuidString.prefix(8))",
                                   modified: .distantPast, strokeCount: 0)
