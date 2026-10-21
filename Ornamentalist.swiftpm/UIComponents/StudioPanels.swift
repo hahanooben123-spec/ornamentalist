@@ -18,7 +18,7 @@ struct StudioPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(panel.rawValue).font(.system(.title2, design: .serif))
+                Text(panel == .brush && model.tool == .eraser ? "Eraser brushes" : panel.rawValue).font(.system(.title2, design: .serif))
                 Spacer()
                 Button { dismiss() } label: { StudioIcon(symbol: "xmark") }
                     .accessibilityLabel("Close settings").accessibilityIdentifier("closePanel")

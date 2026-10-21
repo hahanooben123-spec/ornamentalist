@@ -164,6 +164,7 @@ struct StudioBrushesView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }.disabled(!brush.stabilizationEnabled)
         }.onAppear { family = brush.preset.family }
+            .onChange(of: brush.preset) { _, preset in family = preset.family }
         .onDisappear { model.brushPreviewRequested?(false) }
     }
     private func valueLabel(_ name: String, value: String) -> some View {

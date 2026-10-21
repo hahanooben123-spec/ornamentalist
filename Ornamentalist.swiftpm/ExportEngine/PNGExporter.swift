@@ -468,27 +468,36 @@ final class ArtworkRenderer {
         let display: CanvasDisplayState
         let side: Int
         let transparent: Bool
+        let region: CGRect
     }
     private var previews: [(Key, Data)] = []
     private(set) var renderCount = 0
     init(source: MetalCanvasRenderer? = nil) { self.source = source }
     func releaseCaches() { renderer = nil; previews.removeAll() }
-    func png(_ document: DrawingDocument, maximumSide: Int, transparent: Bool) async throws -> Data {
-        let key = Key(display: CanvasDisplayState(document, guides: false), side: maximumSide, transparent: transparent)
+    func png(_ document: DrawingDocument, maximumSide: Int, transparent: Bool, region: CGRect? = nil) async throws -> Data {
+        let canvas = CGRect(x: 0, y: 0, width: document.size.x, height: document.size.y)
+        let region = region ?? canvas
+        guard !region.isEmpty, canvas.contains(region) else { throw DocumentError.invalidData }
+        var drawing = document
+        if let first = drawing.layers.first { drawing.activeLayerID = first.id }
+        let key = Key(display: CanvasDisplayState(drawing, guides: false), side: maximumSide, transparent: transparent, region: region)
         if let cached = previews.first(where: { $0.0 == key }) { return cached.1 }
         while rendering { try await Task.sleep(nanoseconds: 10_000_000) }
         try Task.checkCancellation()
         if let cached = previews.first(where: { $0.0 == key }) { return cached.1 }
         rendering = true; defer { rendering = false }
         try document.validate()
-        let scale = min(1, Double(maximumSide) / max(document.size.x, document.size.y))
-        let width = max(1, Int((document.size.x * scale).rounded())), height = max(1, Int((document.size.y * scale).rounded()))
-        guard width <= 2048, height <= 2048 else { return try await encoder.pngData(document, transparent: transparent) }
+        let scale = min(1, Double(maximumSide) / max(Double(region.width), Double(region.height)))
+        let width = max(1, Int((Double(region.width) * scale).rounded())), height = max(1, Int((Double(region.height) * scale).rounded()))
+        guard width <= 2048, height <= 2048 else { return try await encoder.pngData(drawing, transparent: transparent, region: region) }
         if renderer == nil { renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero)) }
         guard let renderer else { throw DocumentError.noMetal }
         if let source { renderer.borrowArtworkGeometry(from: source) }
-        try await renderer.synchronize(document.strokes, layers: document.layers)
-        let pixels = try await renderer.renderOffscreen(document: document, viewport: Viewport(zoom: 1 / 0.92),
+        try await renderer.synchronize(drawing.strokes, layers: drawing.layers)
+        let fit = min(Double(width) / drawing.size.x, Double(height) / drawing.size.y) * 0.92
+        let center = Point(x: Double(region.midX), y: Double(region.midY))
+        let viewport = Viewport(zoom: scale / fit, pan: (drawing.size * 0.5 - center) * scale)
+        let pixels = try await renderer.renderOffscreen(document: drawing, viewport: viewport,
             width: width, height: height, transparent: transparent)
         try Task.checkCancellation()
         let png = try await encoder.encodeArtwork(Data(pixels), width: width, height: height)
@@ -500,8 +509,8 @@ final class ArtworkRenderer {
 }
 
 extension ExportService {
-    func pngData(_ document: DrawingDocument, transparent: Bool) throws -> Data {
-        try PNGExporter.data(document: document, transparent: transparent)
+    func pngData(_ document: DrawingDocument, transparent: Bool, region: CGRect? = nil) throws -> Data {
+        try PNGExporter.data(document: document, transparent: transparent, region: region)
     }
     func encodeArtwork(_ pixels: Data, width: Int, height: Int) throws -> Data {
         try Task.checkCancellation()
@@ -513,11 +522,11 @@ extension ExportService {
               let data = UIImage(cgImage: image).pngData() else { throw DocumentError.graphics }
         try Task.checkCancellation(); return data
     }
-    func writeArtwork(_ data: Data, id: UUID, transparent: Bool) throws -> URL {
+    func writeArtwork(_ data: Data, id: UUID, transparent: Bool, tile: Bool = false) throws -> URL {
         try Task.checkCancellation()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("OrnamentalistExports", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("Ornamentalist-\(id.uuidString)\(transparent ? "-transparent" : "").png")
+        let url = directory.appendingPathComponent("Ornamentalist-\(id.uuidString)\(tile ? "-tile" : "")\(transparent ? "-transparent" : "").png")
         try data.write(to: url, options: .atomic); return url
     }
 }

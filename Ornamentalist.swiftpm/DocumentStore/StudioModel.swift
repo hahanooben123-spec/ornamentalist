@@ -76,6 +76,15 @@ final class StudioModel: ObservableObject {
         let data = try await artworkRenderer!.png(snapshot, maximumSide: 2048, transparent: transparent)
         return try await exportService.writeArtwork(data, id: snapshot.id, transparent: transparent)
     }
+    func exportTilePNG() async throws -> URL {
+        guard let snapshot = document, snapshot.symmetry.tileCount > 0 else { throw DocumentError.invalidData }
+        let size = snapshot.symmetry.tileSize
+        if max(size.x, size.y) > 2048 { return try await exportService.tilePNG(snapshot) }
+        enableArtworkPreviews()
+        let data = try await artworkRenderer!.png(snapshot, maximumSide: 2048, transparent: true,
+            region: CGRect(x: 0, y: 0, width: size.x, height: size.y))
+        return try await exportService.writeArtwork(data, id: snapshot.id, transparent: true, tile: true)
+    }
     private func galleryThumbnail(_ snapshot: DrawingDocument) async throws -> Data {
         guard let artworkRenderer else { return try await previewService.thumbnail(snapshot) }
         do { return try await artworkRenderer.png(snapshot, maximumSide: 512, transparent: false) }
@@ -89,7 +98,7 @@ final class StudioModel: ObservableObject {
         canvasPreviewState = state; canvasPreviewTask?.cancel()
         canvasPreviewTask = Task { [weak self] in
             do {
-                try await Task.sleep(nanoseconds: 180_000_000)
+                try await Task.sleep(nanoseconds: 500_000_000)
                 guard let self, !self.isDrawing, self.document?.id == snapshot.id else { return }
                 _ = try await self.galleryThumbnail(snapshot)
             } catch { }

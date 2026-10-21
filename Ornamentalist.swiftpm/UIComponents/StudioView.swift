@@ -320,7 +320,8 @@ struct StudioView: View {
     private func toolButton(_ tool: StudioTool, symbol: String, label: String) -> some View {
         Button {
             if tool == .eraser {
-                model.selectTool(.eraser); panel = panel == .brush ? nil : .brush
+                if model.tool == .eraser { panel = panel == .brush ? nil : .brush }
+                else { panel = nil; model.selectTool(.eraser) }
             } else { panel = nil; model.selectTool(model.tool == tool ? .brush : tool) }
         } label: {
             StudioIcon(symbol: symbol)
@@ -407,7 +408,7 @@ struct StudioView: View {
         exportTask = Task {
             defer { exporting = false; exportTask = nil }
             do {
-                let url = try await exportService.tilePNG(document)
+                let url = try await model.exportTilePNG()
                 try Task.checkCancellation()
                 shareFile = ShareFile(url: url)
             }

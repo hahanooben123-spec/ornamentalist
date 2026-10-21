@@ -40,6 +40,23 @@ final class PNGExportOptimizationTests: XCTestCase {
         _ = try await artwork.png(document, maximumSide: 128, transparent: false)
         XCTAssertEqual(artwork.renderCount, 3)
     }
+    @MainActor
+    func testFastTileExportMatchesOriginalResolutionCrop() async throws {
+        var document = DrawingDocument(); document.size = Point(x: 128, y: 128)
+        document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64), mirror: true,
+            tileCount: 2, tileSymmetry: true, tileRepetitions: 1, tileCanvas: document.size)
+        document.strokes = [InkStroke(brush: InkBrush(width: 10), symmetry: document.symmetry,
+            samples: [StrokeSample(point: Point(x: 20, y: 24), pressure: 1, altitude: 1, azimuth: 0, time: 0)])]
+        let region = CGRect(x: 0, y: 0, width: 64, height: 64)
+        let data = try await ArtworkRenderer().png(document, maximumSide: 2048, transparent: true, region: region)
+        let image = try XCTUnwrap(UIImage(data: data)?.cgImage)
+        XCTAssertEqual(image.width, 64); XCTAssertEqual(image.height, 64)
+        let pixels = try bytes(image)
+        let expected = try bytes(XCTUnwrap(UIImage(data: PNGExporter.data(document: document, transparent: true, region: region))?.cgImage))
+        for (x, y) in [(20, 24), (20, 40), (5, 5)] {
+            for component in 0..<4 { XCTAssertEqual(Double(pixels[(y * 64 + x) * 4 + component]), Double(expected[(y * 64 + x) * 4 + component]), accuracy: 4) }
+        }
+    }
     func testTransformPreviewIsTightCachedAndKeepsAsymmetricPosition() async throws {
         var document = DrawingDocument(); document.size = Point(x: 2048, y: 2048)
         document.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 1024, y: 1024))
