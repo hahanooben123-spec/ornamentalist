@@ -60,15 +60,28 @@ jobs:
           CODE_SIGNING_ALLOWED=NO
       - name: Verify fast artwork export and preview pixels
         timeout-minutes: 3
+        env:
+          SIMCTL_CHILD_MTL_DEBUG_LAYER: '1'
+          SIMCTL_CHILD_MTL_SHADER_VALIDATION: '1'
         run: >-
           xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath ArtworkTests.xcresult
           -only-testing:OrnamentalistTests/PNGExportOptimizationTests/testArtworkExportPreservesTransparencyErasersOpacityAndCachesReadback
-          -only-testing:OrnamentalistTests/PNGExportOptimizationTests/testFastTileExportMatchesOriginalResolutionCrop
           -parallel-testing-enabled NO -destination-timeout 60
           -test-timeouts-enabled YES -default-test-execution-time-allowance 45
           -maximum-test-execution-time-allowance 60
+          CODE_SIGNING_ALLOWED=NO
+      - name: Verify fast tile crop pixels
+        timeout-minutes: 3
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
+          -derivedDataPath DerivedData -resultBundlePath FastTileTests.xcresult
+          -only-testing:OrnamentalistTests/PNGExportOptimizationTests/testFastTileExportMatchesOriginalResolutionCrop
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 30
+          -maximum-test-execution-time-allowance 45
           CODE_SIGNING_ALLOWED=NO
       - name: Verify PNG export pixel parity
         timeout-minutes: 3
@@ -187,6 +200,7 @@ jobs:
             ZoomTests.xcresult
             ExportTests.xcresult
             ArtworkTests.xcresult
+            FastTileTests.xcresult
             TileTests.xcresult
             OptimizationTests.xcresult
           if-no-files-found: ignore

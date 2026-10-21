@@ -490,7 +490,9 @@ final class ArtworkRenderer {
         let scale = min(1, Double(maximumSide) / max(Double(region.width), Double(region.height)))
         let width = max(1, Int((Double(region.width) * scale).rounded())), height = max(1, Int((Double(region.height) * scale).rounded()))
         guard width <= 2048, height <= 2048 else { return try await encoder.pngData(drawing, transparent: transparent, region: region) }
-        if renderer == nil { renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero)) }
+        if let source {
+            if renderer?.usesArtworkDevice(of: source) != true { renderer = try source.makeArtworkRenderer() }
+        } else if renderer == nil { renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero)) }
         guard let renderer else { throw DocumentError.noMetal }
         if let source { renderer.borrowArtworkGeometry(from: source) }
         try await renderer.synchronize(drawing.strokes, layers: drawing.layers)

@@ -50,8 +50,12 @@ final class MetalCanvasRenderer {
     }
     /// Sharing immutable source buffers avoids tessellating the drawing again
     /// for previews/export. Surface caches and command queues remain independent.
+    func usesArtworkDevice(of source: MetalCanvasRenderer) -> Bool { device === source.device }
+    func makeArtworkRenderer() throws -> MetalCanvasRenderer {
+        try MetalCanvasRenderer(view: MTKView(frame: .zero), sharedDevice: device)
+    }
     func borrowArtworkGeometry(from source: MetalCanvasRenderer) {
-        guard source.device.registryID == device.registryID else { return }
+        guard usesArtworkDevice(of: source) else { return }
         cache = source.cache; cacheOrder = source.cacheOrder; registered = source.registered
         rasterTextures = source.rasterTextures
     }
@@ -188,8 +192,8 @@ final class MetalCanvasRenderer {
         if gpuFrameMilliseconds.count > 240 { gpuFrameMilliseconds.removeFirst() }
     }
 
-    init(view: MTKView, compactStamps: Bool = true, geometryBudget: Int = 16 * 1024 * 1024) throws {
-        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
+    init(view: MTKView, compactStamps: Bool = true, geometryBudget: Int = 16 * 1024 * 1024, sharedDevice: MTLDevice? = nil) throws {
+        guard let device = sharedDevice ?? MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
             throw DocumentError.noMetal
         }
         self.device = device
@@ -1508,8 +1512,13 @@ final class MetalCanvasRenderer {
                                       width: width, height: height, mipmapped: false)
         outputDescriptor.storageMode = .shared
         outputDescriptor.usage = [.renderTarget]
+        let commandDescriptor = MTLCommandBufferDescriptor()
+        #if DEBUG
+        commandDescriptor.errorOptions = .encoderExecutionStatus
+        #endif
         guard let output = device.makeTexture(descriptor: outputDescriptor),
-              let command = queue.makeCommandBuffer() else { throw DocumentError.graphics }
+              let command = queue.makeCommandBuffer(descriptor: commandDescriptor) else { throw DocumentError.graphics }
+        command.label = "Artwork readback"
         let pass = MTLRenderPassDescriptor()
         let color = pass.colorAttachments[0]!
         color.clearColor = backgroundClearColor
@@ -1577,7 +1586,7 @@ final class MetalCanvasRenderer {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             command.addCompletedHandler { @Sendable command in
                 if command.status == .error {
-                    print("Metal readback failed: \(String(describing: command.error))")
+                    print("Metal readback failed: \(String(describing: command.error)); details: \(String(describing: (command.error as NSError?)?.userInfo))")
                     continuation.resume(throwing: command.error ?? DocumentError.graphics)
                 }
                 else { continuation.resume() }
