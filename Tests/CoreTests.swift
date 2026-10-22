@@ -247,6 +247,32 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(document.strokes[0].symmetry.repetitions, 8)
         XCTAssertEqual(document.strokes[1].symmetry.repetitions, 64)
     }
+    func testHistoryBudgetStopsAtPrunedStructuralBoundary() {
+        var d = DrawingDocument(), history = StrokeHistory(memoryBudget: 4096, maximumEdits: 2)
+        let a = InkStroke(samples: [sample(1, 1)])
+        history.recordNewStroke(a, in: &d)
+        let before = d
+        _ = LayerManager.add(in: &d)
+        history.recordLayerChange(from: before, to: d)
+        let b = InkStroke(samples: [sample(2, 2)], layerID: d.activeLayerID)
+        history.recordNewStroke(b, in: &d)
+        XCTAssertLessThanOrEqual(history.retainedBytes, 4096)
+        XCTAssertTrue(history.undo(in: &d)); XCTAssertEqual(d.strokes, [a])
+        XCTAssertTrue(history.undo(in: &d)); XCTAssertEqual(d.layers, before.layers)
+        XCTAssertFalse(history.undo(in: &d)) // Never jump across a discarded layer edit.
+        XCTAssertEqual(d.strokes, [a])
+        XCTAssertTrue(history.redo(in: &d)); XCTAssertTrue(history.redo(in: &d))
+        XCTAssertEqual(d.strokes, [a, b])
+    }
+    func testLayerHistoryDoesNotRetainUnchangedStrokeSamples() {
+        var d = DrawingDocument(), history = StrokeHistory()
+        d.strokes = [InkStroke(samples: (0..<20000).map { sample(Double($0), 1) })]
+        let before = d
+        d.layers[0].opacity = 0.4
+        history.recordLayerChange(from: before, to: d)
+        XCTAssertLessThan(history.retainedBytes, 2048)
+        XCTAssertTrue(history.undo(in: &d)); XCTAssertEqual(d, before)
+    }
     func testDocumentRoundTripAndValidation() throws {
         var document = DrawingDocument()
         document.strokes = [InkStroke(samples: [sample(15, 20)])]

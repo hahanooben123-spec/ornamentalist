@@ -61,6 +61,8 @@ final class StudioModel: ObservableObject {
     private let exportService = ExportService()
     private let previewService = ExportService()
     private var artworkRenderer: ArtworkRenderer?
+    @Published private(set) var exportProgress = 0.0
+    private var cachedExport: (CanvasDisplayState, PNGExportResolution, Bool, Data)?
     private var canvasPreviewTask: Task<Void, Never>?
     private var canvasPreviewState: CanvasDisplayState?
     func setArtworkSource(_ source: MetalCanvasRenderer) {
@@ -68,16 +70,33 @@ final class StudioModel: ObservableObject {
         else { artworkRenderer?.source = source }
     }
     func enableArtworkPreviews() { if artworkRenderer == nil { artworkRenderer = ArtworkRenderer() } }
-    func releaseArtworkCaches() { artworkRenderer?.releaseCaches() }
-    func exportPNG(transparent: Bool) async throws -> URL {
+    func releaseArtworkCaches() { artworkRenderer?.releaseCaches(); cachedExport = nil; history.trimForMemoryPressure() }
+    func exportPNG(transparent: Bool, resolution: PNGExportResolution = .original) async throws -> URL {
         guard let snapshot = document else { throw DocumentError.invalidData }
-        if max(snapshot.size.x, snapshot.size.y) > 2048 { return try await exportService.png(snapshot, transparent: transparent) }
-        if artworkRenderer == nil { artworkRenderer = ArtworkRenderer() }
-        do {
-            let data = try await artworkRenderer!.png(snapshot, maximumSide: 2048, transparent: transparent)
-            return try await exportService.writeArtwork(data, id: snapshot.id, transparent: transparent)
-        } catch is CancellationError { throw CancellationError() }
-        catch { return try await exportService.png(snapshot, transparent: transparent) }
+        exportProgress = 0
+        var identity = snapshot
+        if let layer = identity.layers.first { identity.activeLayerID = layer.id }
+        let state = CanvasDisplayState(identity, guides: false)
+        let data: Data
+        if let cached = cachedExport, cached.0 == state, cached.1 == resolution, cached.2 == transparent {
+            data = cached.3
+        } else {
+            if artworkRenderer == nil { artworkRenderer = ArtworkRenderer() }
+            do {
+                if resolution == .original && max(snapshot.size.x, snapshot.size.y) <= 2048 {
+                    data = try await artworkRenderer!.png(snapshot, maximumSide: 2048, transparent: transparent)
+                } else {
+                    data = try await artworkRenderer!.export(snapshot, resolution: resolution, transparent: transparent) { [weak self] in self?.exportProgress = $0 }
+                }
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                data = try await exportService.scaledPNG(snapshot, resolution: resolution, transparent: transparent)
+            }
+            try Task.checkCancellation()
+            cachedExport = data.count <= 12 * 1024 * 1024 ? (state, resolution, transparent, data) : nil
+        }
+        exportProgress = 1
+        return try await exportService.writeArtwork(data, id: snapshot.id, transparent: transparent, suffix: resolution.rawValue)
     }
     func exportTilePNG() async throws -> URL {
         guard let snapshot = document, snapshot.symmetry.tileCount > 0 else { throw DocumentError.invalidData }
@@ -873,7 +892,7 @@ final class StudioModel: ObservableObject {
                 thumbnailRefreshIDs.remove(snapshot.id)
             } catch { thumbnailRefreshIDs.insert(snapshot.id) }
         }
-        document = nil; history = StrokeHistory(); captureActiveStroke = nil; rendererDiagnostics = nil
+        cachedExport = nil; document = nil; history = StrokeHistory(); captureActiveStroke = nil; rendererDiagnostics = nil
         await refresh()
     }
 

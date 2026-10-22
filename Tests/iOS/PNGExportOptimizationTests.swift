@@ -1,9 +1,44 @@
 import XCTest
 import UIKit
+import ImageIO
 import MetalKit
 @testable import Ornamentalist
 
 final class PNGExportOptimizationTests: XCTestCase {
+    func testHighResolutionAndA4ExportPreserveShapeAndPaperMargins() async throws {
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        d.strokes = [InkStroke(brush: InkBrush(width: 12), symmetry: d.symmetry, samples: [
+            StrokeSample(point: Point(x: 64, y: 64), pressure: 1, altitude: 1, azimuth: 0, time: 0)])]
+        let service = ExportService()
+        let data = try await service.scaledPNG(d, resolution: .a4, transparent: false)
+        let image = try XCTUnwrap(UIImage(data: data)?.cgImage)
+        XCTAssertEqual(image.width, 2480); XCTAssertEqual(image.height, 3508)
+        let output = try bytes(image)
+        XCTAssertEqual(Array(output[0..<4]), [255, 255, 255, 255])
+        XCTAssertEqual(output[(1754 * 2480 + 1240) * 4], 0)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+        let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        XCTAssertEqual(try XCTUnwrap(properties[kCGImagePropertyDPIWidth] as? Double), 300, accuracy: 0.1)
+        XCTAssertEqual(PNGExportResolution.high.pixels(canvas: Point(x: 128, y: 64)), Point(x: 4096, y: 2048))
+    }
+    @MainActor
+    func testTiledExportMatchesMonolithicPixelsAcrossBoundaries() async throws {
+        var d = DrawingDocument(); d.size = Point(x: 1100, y: 1100)
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 550, y: 550), mirror: true)
+        d.layers[0].opacity = 0.6
+        d.strokes = [InkStroke(brush: InkBrush(width: 20), symmetry: d.symmetry, samples: [
+            StrokeSample(point: Point(x: 980, y: 1024), pressure: 1, altitude: 1, azimuth: 0, time: 0),
+            StrokeSample(point: Point(x: 1080, y: 1024), pressure: 1, altitude: 1, azimuth: 0, time: 1)])]
+        let data = try await ArtworkRenderer().export(d, resolution: .original, transparent: true) { _ in }
+        let actual = try bytes(XCTUnwrap(UIImage(data: data)?.cgImage))
+        let expected = try bytes(XCTUnwrap(UIImage(data: PNGExporter.data(document: d, transparent: true))?.cgImage))
+        for y in [1022, 1023, 1024, 1025] {
+            for x in [1000, 1023, 1024, 1050] {
+                for c in 0..<4 { XCTAssertEqual(Double(actual[(y * 1100 + x) * 4 + c]), Double(expected[(y * 1100 + x) * 4 + c]), accuracy: 4) }
+            }
+        }
+    }
     @MainActor
     func testArtworkExportPreservesTransparencyErasersOpacityAndCachesReadback() async throws {
         var document = DrawingDocument(); document.size = Point(x: 128, y: 128)

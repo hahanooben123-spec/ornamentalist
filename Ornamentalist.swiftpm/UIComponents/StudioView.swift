@@ -188,8 +188,15 @@ struct StudioView: View {
             }
             .overlay {
                 if (model.isPreparing && !model.isNavigating) || model.busy || exporting {
-                    ProgressView(exporting ? "Preparing export…" : model.isPreparing ? "Preparing drawing…" : "Saving drawing…")
-                        .padding(24).studioSurface()
+                    VStack(spacing: 12) {
+                        if exporting {
+                            ProgressView("Preparing export…", value: model.exportProgress)
+                                .frame(width: 220)
+                            Button("Cancel") { exportTask?.cancel() }
+                        } else {
+                            ProgressView(model.isPreparing ? "Preparing drawing…" : "Saving drawing…")
+                        }
+                    }.padding(24).studioSurface()
                 }
             }
             .background(StudioStyle.workspace)
@@ -295,8 +302,16 @@ struct StudioView: View {
                 Divider()
                 Button("Save drawing", systemImage: "externaldrive") { Task { await model.saveNow() } }
                 Divider()
-                Button("PNG · White paper", systemImage: "photo") { exportPNG(transparent: false) }
-                Button("PNG · Transparent", systemImage: "square.dashed") { exportPNG(transparent: true) }
+                Menu("PNG · White paper", systemImage: "photo") {
+                    ForEach(PNGExportResolution.allCases, id: \.self) { resolution in
+                        Button(resolution.rawValue) { exportPNG(transparent: false, resolution: resolution) }
+                    }
+                }
+                Menu("PNG · Transparent", systemImage: "square.dashed") {
+                    ForEach(PNGExportResolution.allCases, id: \.self) { resolution in
+                        Button(resolution.rawValue) { exportPNG(transparent: true, resolution: resolution) }
+                    }
+                }
                 Button("PNG · Pattern tile", systemImage: "square.grid.3x3") { exportTile() }
                     .disabled(document.symmetry.tileCount == 0)
                 Button("Editable project", systemImage: "doc") { exportProject() }
@@ -389,13 +404,13 @@ struct StudioView: View {
         }
     }
 
-    private func exportPNG(transparent: Bool) {
+    private func exportPNG(transparent: Bool, resolution: PNGExportResolution = .original) {
         guard let document = model.document else { return }
         exporting = true
         exportTask = Task {
             defer { exporting = false; exportTask = nil }
             do {
-                let url = try await model.exportPNG(transparent: transparent)
+                let url = try await model.exportPNG(transparent: transparent, resolution: resolution)
                 try Task.checkCancellation()
                 shareFile = ShareFile(url: url)
             } catch is CancellationError { }

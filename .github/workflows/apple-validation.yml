@@ -58,6 +58,26 @@ jobs:
           -derivedDataPath DerivedData
           -only-testing:OrnamentalistTests
           CODE_SIGNING_ALLOWED=NO
+      - name: Verify high-resolution export dimensions and DPI
+        timeout-minutes: 3
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
+          -derivedDataPath DerivedData -resultBundlePath ResolutionTests.xcresult
+          -only-testing:OrnamentalistTests/PNGExportOptimizationTests/testHighResolutionAndA4ExportPreserveShapeAndPaperMargins
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 30
+          -maximum-test-execution-time-allowance 45 CODE_SIGNING_ALLOWED=NO
+      - name: Verify tiled high-resolution export pixel boundaries
+        timeout-minutes: 3
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
+          -derivedDataPath DerivedData -resultBundlePath TiledResolutionTests.xcresult
+          -only-testing:OrnamentalistTests/PNGExportOptimizationTests/testTiledExportMatchesMonolithicPixelsAcrossBoundaries
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 30
+          -maximum-test-execution-time-allowance 45 CODE_SIGNING_ALLOWED=NO
       - name: Verify fast artwork export and preview pixels
         timeout-minutes: 3
         env:

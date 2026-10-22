@@ -65,9 +65,11 @@ private struct SurfaceKey: Equatable {
 @MainActor
 final class MetalCanvasRenderer {
     private var offscreenTransparent = false
+    private var offscreenPaper = false
     private var backgroundClearColor: MTLClearColor {
         offscreenTransparent ? MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-            : MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1)
+            : (offscreenPaper ? MTLClearColor(red: 1, green: 1, blue: 1, alpha: 1)
+               : MTLClearColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1))
     }
     /// Sharing immutable source buffers avoids tessellating the drawing again
     /// for previews/export. Surface caches and command queues remain independent.
@@ -91,6 +93,15 @@ final class MetalCanvasRenderer {
     private var lastFrameViewSize = Point.zero
     private var lastFrameWidth = 0
     private var lastFrameHeight = 0
+    private struct NavigationTile {
+        let image: MTLTexture
+        let quad: [GPUChunk]
+    }
+    private var navigationTiles: [NavigationTile] = []
+    private var navigationWorker: MetalCanvasRenderer?
+    private var navigationTask: Task<Void, Never>?
+    private var navigationRequested: Matrix?
+    private var navigationFailed = false
     private var navigationTexture: MTLTexture?
     private var navigationQuad: [GPUChunk] = []
     private var navigationDocument: UUID?
@@ -201,7 +212,7 @@ final class MetalCanvasRenderer {
             return String(format: "median %.2f ms · p95 %.2f ms", median, p95)
         }
         let bytes = allocatedGeometryBytes + sealed.reduce(0) { $0 + $1.buffer.length } + scratch.count * 16
-        return "Ornamentalist 0.12.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nPartial live restores: \(partialLiveRestores)\nStreamed submissions: \(streamedSubmissions)\nZoom preview frames: \(navigationPreviewFrames)\nZoom preview texture: \((navigationTexture.map { $0.width * $0.height * 4 } ?? 0) / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
+        return "Ornamentalist 0.14.0\nCPU frame submission: \(timing(cpuFrameMilliseconds))\nGPU execution: \(timing(gpuFrameMilliseconds))\nDeferred frames: \(deferredFrames)\nSource vertex buffers: \(bytes / 1024) KiB\nGPU geometry budget: \(geometryBudget / 1024) KiB\nPartial live restores: \(partialLiveRestores)\nStreamed submissions: \(streamedSubmissions)\nZoom preview frames: \(navigationPreviewFrames)\nZoom preview texture: \((navigationTexture.map { $0.width * $0.height * 4 } ?? 0) / 1024) KiB\nGeometry reconstructions: \(geometryRebuilds)\nLayer composite passes: \(layerCompositePasses)\nLive full-surface restores: \(liveRestorePasses)\nDirty tile updates: \(localTileUpdates)\nRender caches: \(renderCacheBytes / 1024) KiB\nWorking texture allocations: \(workingTextureAllocations)\nCommitted stroke draws: \(committedStrokeDraws)\nLayer/group rebuilds: \(cachedLayerBuilds)/\(cachedGroupBuilds)\nIncremental commits: \(incrementalLayerUpdates)\nLive confirmed vertex draws: \(liveConfirmedVertexDraws)\n\nLast 240 samples. These timings do not measure Pencil-to-screen latency or total app memory."
     }
     private func recordCPU(_ milliseconds: Double) {
         cpuFrameMilliseconds.append(milliseconds)
@@ -518,11 +529,16 @@ final class MetalCanvasRenderer {
         isViewportNavigating = true
     }
 
-    func endViewportNavigation() { isViewportNavigating = false }
+    func endViewportNavigation() {
+        isViewportNavigating = false
+        navigationTask?.cancel(); navigationWorker = nil
+    }
 
     func cancelViewportNavigation() {
         let hadPreview = navigationTexture != nil
         navigationToken = UUID(); isViewportNavigating = false
+        navigationTask?.cancel(); navigationWorker = nil
+        navigationTiles.removeAll(); navigationRequested = nil
         navigationTexture = nil; navigationQuad.removeAll(); navigationDocument = nil
         if hadPreview { navigationRefined?() }
     }
@@ -548,8 +564,77 @@ final class MetalCanvasRenderer {
             try encode(navigationQuad, symmetry: SymmetryConfiguration(repetitions: 1, center: .zero),
                        transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size), size: viewSize,
                        canvas: document.size, color: SIMD4(1, 1, 1, 1), encoder: encoder)
+            for tile in navigationTiles {
+                encoder.setFragmentTexture(tile.image, index: 0)
+                try encode(tile.quad, symmetry: SymmetryConfiguration(repetitions: 1, center: .zero),
+                    transform: viewport.matrix(viewSize: viewSize, canvasSize: document.size), size: viewSize,
+                    canvas: document.size, color: SIMD4(1, 1, 1, 1), encoder: encoder)
+            }
         } catch { encoder.endEncoding(); throw error }
         encoder.endEncoding(); navigationPreviewFrames += 1
+    }
+
+    private func refineNavigation(document: DrawingDocument, viewport: Viewport, viewSize: Point,
+                                  width: Int, height: Int, guides: Bool) {
+        let matrix = viewport.matrix(viewSize: viewSize, canvasSize: document.size)
+        guard navigationTask == nil, !navigationFailed, navigationRequested != matrix,
+              width * height * 4 <= 32 * 1024 * 1024 else { return }
+        navigationRequested = matrix
+        let token = navigationToken
+        navigationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.navigationTask = nil; if self.isViewportNavigating { self.redrawView?.setNeedsDisplay() } }
+            do {
+                // Coalesce input bursts; one worker only, with no CPU pixel readback.
+                try await Task.sleep(nanoseconds: 70_000_000)
+                if self.navigationWorker == nil { self.navigationWorker = try self.makeArtworkRenderer() }
+                guard let worker = self.navigationWorker else { return }
+                worker.cacheBudget = 48 * 1024 * 1024
+                worker.borrowArtworkGeometry(from: self)
+                try await worker.synchronize(document.strokes, layers: document.layers)
+                var tiles: [NavigationTile] = []
+                let ratio = Double(width) / viewSize.x
+                let scale = hypot(matrix.a, matrix.b) * ratio
+                for y in stride(from: 0, to: height, by: 1024) {
+                    for x in stride(from: 0, to: width, by: 1024) {
+                        try Task.checkCancellation()
+                        let w = min(1024, width - x), h = min(1024, height - y)
+                        let size = Point(x: Double(w), y: Double(h))
+                        let fit = max(0.001, min(size.x / document.size.x, size.y / document.size.y) * 0.92)
+                        let tileViewport = Viewport(zoom: scale / fit, rotation: viewport.rotation,
+                            pan: (viewSize * 0.5 + viewport.pan) * ratio - Point(x: Double(x), y: Double(y)) - size * 0.5)
+                        let image = try await worker.navigationImage(document: document, viewport: tileViewport,
+                            size: size, width: w, height: h, guides: guides)
+                        let corners = tileViewport.documentCorners(viewSize: size, canvasSize: document.size)
+                        let a = BrushVertex(corners[0], local: .zero), b = BrushVertex(corners[1], local: Point(x: 1, y: 0))
+                        let c = BrushVertex(corners[2], local: Point(x: 1, y: 1)), d = BrushVertex(corners[3], local: Point(x: 0, y: 1))
+                        tiles.append(NavigationTile(image: image, quad: try self.chunks([a, b, c, a, c, d])))
+                    }
+                }
+                try Task.checkCancellation()
+                guard self.navigationToken == token, self.isViewportNavigating else { return }
+                self.navigationTiles = tiles
+                self.redrawView?.setNeedsDisplay()
+            } catch is CancellationError { }
+            catch {
+                // A failed optional refinement retains the valid preview/final-render path.
+                self.navigationFailed = true; self.navigationWorker = nil
+            }
+        }
+    }
+    private func navigationImage(document: DrawingDocument, viewport: Viewport, size: Point,
+                                 width: Int, height: Int, guides: Bool) async throws -> MTLTexture {
+        updateScene(document); sceneRevision = nil
+        try configureSurface(document: document, viewport: viewport, viewSize: size, width: width, height: height)
+        if needsStreamedPreparation(document) {
+            try await prepareScene(document: document, viewport: viewport, viewSize: size, width: width, height: height)
+        }
+        let image = try texture(width: width, height: height)
+        guard let command = queue.makeCommandBuffer() else { throw DocumentError.graphics }
+        try encodeCachedScene(command: command, output: image, document: document, viewport: viewport,
+            viewSize: size, active: nil, preview: [], guides: guides)
+        try await submit(command)
+        return image
     }
 
     /// Native pixel verification uses the exact preview encoder, without a drawable.
@@ -641,6 +726,7 @@ final class MetalCanvasRenderer {
             recordCPU((ProcessInfo.processInfo.systemUptime - started) * 1000)
         }
         if navigating {
+            refineNavigation(document: document, viewport: viewport, viewSize: size, width: width, height: height, guides: guides)
             try encodeNavigation(command: command, output: drawable.texture, document: document, viewport: viewport, viewSize: size)
         } else {
             try encodeCachedScene(command: command, output: drawable.texture, document: document,
@@ -1011,16 +1097,21 @@ final class MetalCanvasRenderer {
     }
 
     private func submit(_ command: MTLCommandBuffer) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            command.addCompletedHandler { @Sendable finished in
-                if finished.status == .error {
-                    print("Metal command failed: \(String(describing: finished.error))")
-                    continuation.resume(throwing: finished.error ?? DocumentError.graphics)
+        let completion = ArtworkCommandCompletion()
+        try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                completion.install(continuation)
+                guard !Task.isCancelled else { completion.finish(.failure(CancellationError())); return }
+                command.addCompletedHandler { @Sendable finished in
+                    if finished.status == .error { completion.finish(.failure(finished.error ?? DocumentError.graphics)) }
+                    else { completion.finish(.success(Void())) }
                 }
-                else { continuation.resume() }
+                command.commit()
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) {
+                    completion.finish(.failure(DocumentError.graphics))
+                }
             }
-            command.commit()
-        }
+        }, onCancel: { completion.finish(.failure(CancellationError())) })
         try Task.checkCancellation()
     }
 
@@ -1452,6 +1543,7 @@ final class MetalCanvasRenderer {
     }
 
     func handleMemoryPressure() {
+        navigationTask?.cancel(); navigationWorker = nil; navigationTiles.removeAll(); navigationRequested = nil
         liveTile = nil; liveTileMSAA = nil; liveTileStencil = nil
         cancelViewportNavigation(); lastFrameDocument = nil; lastFrameViewport = nil
         clearLayerCaches()
@@ -1515,9 +1607,9 @@ final class MetalCanvasRenderer {
     /// as the visible canvas. BGRA rows are returned in top-left screen order.
     func renderOffscreen(document: DrawingDocument, viewport: Viewport, width: Int, height: Int,
                          active: InkStroke? = nil, preview: [BrushVertex] = [], guides: Bool = false,
-                         reference: Bool = false, transparent: Bool = false) async throws -> [UInt8] {
-        offscreenTransparent = transparent
-        defer { offscreenTransparent = false }
+                         reference: Bool = false, transparent: Bool = false, paper: Bool = false) async throws -> [UInt8] {
+        offscreenTransparent = transparent; offscreenPaper = paper && !transparent
+        defer { offscreenTransparent = false; offscreenPaper = false }
         try Task.checkCancellation()
         guard width > 0, height > 0, width <= 2048, height <= 2048 else { throw DocumentError.invalidData }
         if reference { liveWorkStroke = nil }
