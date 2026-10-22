@@ -5,6 +5,13 @@ import MetalKit
 @testable import Ornamentalist
 
 final class PNGExportOptimizationTests: XCTestCase {
+    @MainActor
+    func testPNGSharingPreservesOriginalFileForFileDestinations() throws {
+        let url = URL(fileURLWithPath: "/tmp/Ornamentalist-A4.png")
+        let item = PNGShareItem(url: url), controller = UIActivityViewController(activityItems: [], applicationActivities: nil)
+        XCTAssertEqual(item.activityViewController(controller, itemForActivityType: nil) as? URL, url)
+        XCTAssertEqual(item.activityViewController(controller, itemForActivityType: .airDrop) as? URL, url)
+    }
     func testHighResolutionAndA4ExportPreserveShapeAndPaperMargins() async throws {
         var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
         d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))

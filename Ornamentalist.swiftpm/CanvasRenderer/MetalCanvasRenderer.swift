@@ -638,11 +638,17 @@ final class MetalCanvasRenderer {
     }
 
     /// Native pixel verification uses the exact preview encoder, without a drawable.
-    func renderViewportPreview(document: DrawingDocument, viewport: Viewport, width: Int, height: Int) async throws -> [UInt8] {
+    func renderViewportPreview(document: DrawingDocument, viewport: Viewport, width: Int, height: Int, refine: Bool = false) async throws -> [UInt8] {
         guard width > 0, height > 0, width <= 2048, height <= 2048 else { throw DocumentError.invalidData }
         let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         info.storageMode = .shared; info.usage = .renderTarget
         guard let image = device.makeTexture(descriptor: info), let command = queue.makeCommandBuffer() else { throw DocumentError.graphicsMemory }
+        if refine {
+            refineNavigation(document: document, viewport: viewport,
+                viewSize: Point(x: Double(width), y: Double(height)), width: width, height: height, guides: false)
+            await navigationTask?.value
+            guard !navigationTiles.isEmpty else { throw DocumentError.graphics }
+        }
         try encodeNavigation(command: command, output: image, document: document, viewport: viewport,
                              viewSize: Point(x: Double(width), y: Double(height)))
         try await submit(command)

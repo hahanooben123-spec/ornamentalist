@@ -4,6 +4,28 @@ import MetalKit
 
 final class RendererCacheTests: XCTestCase {
     @MainActor
+    func testNavigationRefinementReplacesMagnifiedSnapshotWithSourceDetail() async throws {
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        d.strokes = [InkStroke(brush: InkBrush(width: 1), symmetry: d.symmetry, samples: [
+            StrokeSample(point: Point(x: 60, y: 63), pressure: 1, altitude: 1, azimuth: 0, time: 0),
+            StrokeSample(point: Point(x: 68, y: 66), pressure: 1, altitude: 1, azimuth: 0, time: 1)])]
+        let view = MTKView(frame: .zero), renderer = try MetalCanvasRenderer(view: view)
+        try await renderer.synchronize(d.strokes, layers: d.layers)
+        let original = try await renderer.renderOffscreen(document: d, viewport: Viewport(), width: 256, height: 256)
+        let info = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 256, height: 256, mipmapped: false)
+        info.storageMode = .shared; info.usage = .shaderRead
+        let image = try XCTUnwrap(view.device?.makeTexture(descriptor: info))
+        original.withUnsafeBytes { image.replace(region: MTLRegionMake2D(0, 0, 256, 256), mipmapLevel: 0, withBytes: $0.baseAddress!, bytesPerRow: 1024) }
+        try renderer.beginViewportNavigation(image: image, document: d, viewport: Viewport(), viewSize: Point(x: 256, y: 256))
+        let viewport = Viewport(zoom: 4, rotation: 0.2, pan: Point(x: 5, y: -3))
+        let refined = try await renderer.renderViewportPreview(document: d, viewport: viewport, width: 256, height: 256, refine: true)
+        let expected = try await renderer.renderOffscreen(document: d, viewport: viewport, width: 256, height: 256, reference: true)
+        assertPixels(refined, expected)
+        renderer.handleMemoryPressure()
+        XCTAssertFalse(renderer.isViewportNavigating)
+    }
+    @MainActor
     func testPartialLiveRestorePreservesPredictionOpacityAndEraser() async throws {
         var document = fixture(copies: 2); document.symmetry.mirror = true
         let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))

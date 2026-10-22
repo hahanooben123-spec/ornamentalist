@@ -65,6 +65,17 @@ jobs:
           -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
           -derivedDataPath DerivedData -resultBundlePath ResolutionTests.xcresult
           -only-testing:OrnamentalistTests/PNGExportOptimizationTests/testHighResolutionAndA4ExportPreserveShapeAndPaperMargins
+          -only-testing:OrnamentalistTests/PNGExportOptimizationTests/testPNGSharingPreservesOriginalFileForFileDestinations
+          -parallel-testing-enabled NO -destination-timeout 60
+          -test-timeouts-enabled YES -default-test-execution-time-allowance 30
+          -maximum-test-execution-time-allowance 45 CODE_SIGNING_ALLOWED=NO
+      - name: Verify sharp zoom tile pixels
+        timeout-minutes: 3
+        run: >-
+          xcodebuild test-without-building -project Ornamentalist.xcodeproj -scheme Ornamentalist
+          -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR,arch=$IPAD_SIMULATOR_ARCH"
+          -derivedDataPath DerivedData -resultBundlePath SharpZoomTests.xcresult
+          -only-testing:OrnamentalistTests/RendererCacheTests/testNavigationRefinementReplacesMagnifiedSnapshotWithSourceDetail
           -parallel-testing-enabled NO -destination-timeout 60
           -test-timeouts-enabled YES -default-test-execution-time-allowance 30
           -maximum-test-execution-time-allowance 45 CODE_SIGNING_ALLOWED=NO

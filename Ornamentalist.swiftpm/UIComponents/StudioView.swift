@@ -437,12 +437,25 @@ struct StudioView: View {
 private struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        // Save to Photos expects a native image, while editable projects must
-        // remain files. Never offer a project JSON as an image.
-        if url.pathExtension.lowercased() == "png", let image = UIImage(contentsOfFile: url.path) {
-            return UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        if url.pathExtension.lowercased() == "png" {
+            return UIActivityViewController(activityItems: [PNGShareItem(url: url)], applicationActivities: nil)
         }
         return UIActivityViewController(activityItems: [url], applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// Share the original lossless file (including its print metadata). Photos
+/// requires a native image, so decode only for that specific activity.
+final class PNGShareItem: NSObject, UIActivityItemSource {
+    let url: URL
+    init(url: URL) { self.url = url }
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any { url }
+    func activityViewController(_ activityViewController: UIActivityViewController,
+        itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        if activityType == .saveToCameraRoll { return UIImage(contentsOfFile: url.path) }
+        return url
+    }
+    func activityViewController(_ activityViewController: UIActivityViewController,
+        dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?) -> String { "public.png" }
 }
