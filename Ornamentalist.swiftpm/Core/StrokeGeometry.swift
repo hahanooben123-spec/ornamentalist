@@ -3,15 +3,16 @@ import Foundation
 /// Triangles are renderer independent. Quadratic midpoint interpolation is causal:
 /// only the uncommitted tail changes when another sample arrives.
 enum StrokeGeometry {
-    /// Recognize only an unambiguous line or nearly closed circle. Other
-    /// strokes stay unchanged; input timing and symmetry remain intact.
+    /// Recognize a line, circular arc or nearly closed circle. Other strokes
+    /// stay unchanged; input timing and symmetry remain intact.
     static func correctedShape(_ stroke: InkStroke) -> InkStroke? {
         guard stroke.operation == .ink, stroke.samples.count >= 2,
               let first = stroke.samples.first, let last = stroke.samples.last else { return nil }
         let points = stroke.samples.map(\.point)
         let delta = last.point - first.point, span = delta.length
-        var positions: [Point] = []
-        if span > 6 {
+        guard points.allSatisfy(\.isFinite) else { return nil }
+        var positions = circularArc(points) ?? []
+        if positions.isEmpty, span > 6 {
             let error = points.map { abs(delta.x * ($0.y - first.point.y) - delta.y * ($0.x - first.point.x)) / span }.max() ?? 0
             let length = zip(points, points.dropFirst()).reduce(0.0) { $0 + ($1.1 - $1.0).length }
             if error <= max(3, span * 0.15), length <= span * 1.6 {
@@ -50,6 +51,62 @@ enum StrokeGeometry {
         return result
     }
 
+    /// Fit a circle constrained through both endpoints. Equally spaced input
+    /// prevents slow Pencil sections or duplicate samples from biasing the fit.
+    /// The work is bounded to 65 positions and runs only when the hold fires.
+    private static func circularArc(_ points: [Point]) -> [Point]? {
+        guard points.count >= 6, let first = points.first, let last = points.last else { return nil }
+        let chord = last - first, span = chord.length
+        guard span > 6 else { return nil }
+        let lengths = zip(points, points.dropFirst()).map { ($0.1 - $0.0).length }
+        let length = lengths.reduce(0, +)
+        guard length > 10 else { return nil }
+        var sampled: [Point] = [], segment = 0, traveled = 0.0
+        for index in 0...64 {
+            let target = length * Double(index) / 64
+            while segment < lengths.count - 1 && traveled + lengths[segment] < target {
+                traveled += lengths[segment]; segment += 1
+            }
+            let t = lengths[segment] > 0.000001 ? max(0, min(1, (target - traveled) / lengths[segment])) : 0
+            sampled.append(points[segment] + (points[segment + 1] - points[segment]) * t)
+        }
+        let midpoint = (first + last) * 0.5
+        let normal = Point(x: -chord.y, y: chord.x) * (1 / span)
+        var numerator = 0.0, denominator = 0.0, sides: [Double] = []
+        for point in sampled {
+            let p = point - midpoint, side = p.x * normal.x + p.y * normal.y
+            sides.append(side)
+            numerator += side * (p.x * p.x + p.y * p.y - span * span * 0.25)
+            denominator += 2 * side * side
+        }
+        guard denominator > 0.000001,
+              (sides.map({ abs($0) }).max() ?? 0) > max(3, span * 0.04) else { return nil }
+        let direction = sides.reduce(0, +) >= 0 ? 1.0 : -1.0
+        guard sides.filter({ $0 * direction < -max(1, span * 0.015) }).count <= 4 else { return nil }
+        let offset = numerator / denominator
+        let center = midpoint + normal * offset
+        let radius = (first - center).length
+        guard center.isFinite, radius.isFinite, radius > 6, radius < span * 8 else { return nil }
+        let errors = sampled.map { abs(($0 - center).length - radius) }
+        let rms = sqrt(errors.reduce(0) { $0 + $1 * $1 } / Double(errors.count))
+        guard rms <= max(1, radius * 0.045), (errors.max() ?? 0) <= max(2.5, radius * 0.12) else { return nil }
+        var sweep = 0.0, angularTravel = 0.0
+        for (a, b) in zip(sampled, sampled.dropFirst()) {
+            let u = a - center, v = b - center
+            let angle = atan2(u.x * v.y - u.y * v.x, u.x * v.x + u.y * v.y)
+            sweep += angle; angularTravel += abs(angle)
+        }
+        guard abs(sweep) >= 0.45, abs(sweep) < .pi * 1.85,
+              angularTravel - abs(sweep) <= max(0.08, abs(sweep) * 0.08) else { return nil }
+        let start = atan2(first.y - center.y, first.x - center.x)
+        var result = (0...64).map { index in
+            let angle = start + sweep * Double(index) / 64
+            return center + Point(x: cos(angle), y: sin(angle)) * radius
+        }
+        result[0] = first; result[64] = last
+        return result
+    }
+
     /// Shape adjustment preserves the brush, clipping and symmetry. Only the
     /// confirmed centerline changes; Pencil predictions never enter the shape.
     static func adjustedHeldShape(_ shape: InkStroke, endpoint: Point, verticalDrag: Double) -> InkStroke {
@@ -61,6 +118,18 @@ enum StrokeGeometry {
             let center = points.reduce(Point.zero) { $0 + $1.point } * (1 / Double(points.count))
             let factor = exp(max(-3, min(3, -verticalDrag / 160)))
             for i in result.samples.indices { result.samples[i].point = center + (shape.samples[i].point - center) * factor }
+        } else if shape.samples.count > 32 {
+            // Keep an open arc circular when Pencil moves after the hold.
+            // Anchor its start and rotate/scale its chord toward the new endpoint.
+            let a = last.point - first.point, b = endpoint - first.point
+            let square = a.x * a.x + a.y * a.y
+            guard square > 0.000001, b.length > 1 else { return shape }
+            let c = (a.x * b.x + a.y * b.y) / square
+            let s = (a.x * b.y - a.y * b.x) / square
+            for i in result.samples.indices {
+                let p = shape.samples[i].point - first.point
+                result.samples[i].point = first.point + Point(x: c * p.x - s * p.y, y: s * p.x + c * p.y)
+            }
         } else {
             for i in result.samples.indices {
                 result.samples[i].point = first.point + (endpoint - first.point) * (Double(i) / Double(result.samples.count - 1))

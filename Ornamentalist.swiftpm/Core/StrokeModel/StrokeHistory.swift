@@ -43,20 +43,44 @@ struct StrokeHistory: Sendable {
     init(memoryBudget: Int = 24 * 1024 * 1024, maximumEdits: Int = 100) {
         self.memoryBudget = max(0, memoryBudget); self.maximumEdits = max(0, maximumEdits)
     }
-    private func bytes(_ stroke: InkStroke) -> Int {
-        512 + stroke.samples.count * MemoryLayout<StrokeSample>.stride + (stroke.selection?.points.count ?? 0) * 16
-    }
-    private func bytes(_ edit: Edit) -> Int {
-        switch edit {
-        case .stroke(let stroke): return bytes(stroke)
-        case .archived(let data): return data.count
-        case .layers(let a, let b):
-            return (a.layers + b.layers).reduce(0) { $0 + 256 + ($1.raster?.png.count ?? 0) } +
-                (a.strokes + b.strokes).reduce(0) { $0 + bytes($1.stroke) }
+    /// Count shared sample buffers and imported PNGs once, even when multiple
+    /// structural edits refer to them. Metadata and compressed entries remain
+    /// charged independently. This is a conservative history-data estimate.
+    var retainedBytes: Int {
+        var total = 0
+        var sampleBuffers: [UInt: Int] = [:]
+        var rasters = Set<UUID>()
+        func strokeBytes(_ stroke: InkStroke) {
+            total += 512
+            stroke.samples.withUnsafeBufferPointer { buffer in
+                guard let base = buffer.baseAddress, !buffer.isEmpty else { return }
+                let key = UInt(bitPattern: UnsafeRawPointer(base))
+                sampleBuffers[key] = max(sampleBuffers[key] ?? 0, buffer.count * MemoryLayout<StrokeSample>.stride)
+            }
+            if let selection = stroke.selection {
+                selection.points.withUnsafeBufferPointer { buffer in
+                    guard let base = buffer.baseAddress, !buffer.isEmpty else { return }
+                    let key = UInt(bitPattern: UnsafeRawPointer(base))
+                    sampleBuffers[key] = max(sampleBuffers[key] ?? 0, buffer.count * MemoryLayout<Point>.stride)
+                }
+            }
         }
+        for edit in undoEdits + redoEdits {
+            switch edit {
+            case .stroke(let stroke): strokeBytes(stroke)
+            case .archived(let data): total += data.count
+            case .layers(let a, let b):
+                for content in [a, b] {
+                    total += content.layers.count * 256
+                    for layer in content.layers {
+                        if let raster = layer.raster, rasters.insert(raster.id).inserted { total += raster.png.count }
+                    }
+                    for item in content.strokes { strokeBytes(item.stroke) }
+                }
+            }
+        }
+        return total + sampleBuffers.values.reduce(0, +)
     }
-    /// Conservative retained-data estimate; shared arrays may cost less in practice.
-    var retainedBytes: Int { (undoEdits + redoEdits).reduce(0) { $0 + bytes($1) } }
     mutating func trimForMemoryPressure() {
         memoryBudget = min(memoryBudget, 8 * 1024 * 1024)
         enforceBudget(); revision += 1
@@ -65,9 +89,10 @@ struct StrokeHistory: Sendable {
         var total = retainedBytes
         while undoEdits.count + redoEdits.count > maximumEdits || total > memoryBudget {
             if !undoEdits.isEmpty {
-                total -= bytes(undoEdits.removeFirst()); implicitUndoAllowed = false
-            } else if !redoEdits.isEmpty { total -= bytes(redoEdits.removeFirst()) }
+                undoEdits.removeFirst(); implicitUndoAllowed = false
+            } else if !redoEdits.isEmpty { redoEdits.removeFirst() }
             else { break }
+            total = retainedBytes
         }
     }
     var redoStrokes: [InkStroke] { redoEdits.compactMap {

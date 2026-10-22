@@ -4,6 +4,48 @@ import MetalKit
 
 final class RendererCacheTests: XCTestCase {
     @MainActor
+    func testArtworkWorkersShareGeometryAndSubsetPreviewDoesNotEvictCanvas() async throws {
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        d.strokes = (0..<2).map { index in
+            InkStroke(brush: InkBrush(width: 5), symmetry: d.symmetry, samples: [
+                StrokeSample(point: Point(x: 30 + Double(index) * 40, y: 64), pressure: 1, altitude: 1, azimuth: 0, time: 0)])
+        }
+        let canvas = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await canvas.synchronize(d.strokes, layers: d.layers)
+        let bytes = canvas.allocatedGeometryBytes
+        XCTAssertGreaterThan(bytes, 0)
+        let worker = try canvas.makeArtworkRenderer(); worker.borrowArtworkGeometry(from: canvas)
+        try await worker.synchronize([d.strokes[0]], layers: d.layers)
+        XCTAssertEqual(canvas.allocatedGeometryBytes, bytes)
+        XCTAssertEqual(worker.allocatedGeometryBytes, bytes)
+        canvas.handleMemoryPressure()
+        XCTAssertEqual(worker.allocatedGeometryBytes, 0)
+    }
+    @MainActor
+    func testViewportCullingKeepsSoftInkAndErasersPixelIdentical() async throws {
+        var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
+        d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))
+        var brush = BrushPreset.softShader.makeBrush(); brush.width = 8; brush.opacity = 0.4
+        d.strokes = (0..<20).map { i in
+            InkStroke(brush: brush, symmetry: d.symmetry, samples: [
+                StrokeSample(point: Point(x: Double(i) * 6 + 4, y: 64), pressure: 0.7, altitude: 0.3, azimuth: 0.2, time: 0)])
+        }
+        d.strokes.append(InkStroke(brush: InkBrush(width: 4), symmetry: d.symmetry, samples: [
+            StrokeSample(point: Point(x: 64, y: 64), pressure: 1, altitude: 1, azimuth: 0, time: 0)], operation: .erase))
+        d.layers[0].opacity = 0.6
+        let renderer = try MetalCanvasRenderer(view: MTKView(frame: .zero))
+        try await renderer.synchronize(d.strokes, layers: d.layers)
+        let viewport = Viewport(zoom: 4, rotation: 0.2, pan: Point(x: 5, y: -3))
+        let before = renderer.committedStrokeDraws
+        let actual = try await renderer.renderOffscreen(document: d, viewport: viewport, width: 256, height: 256)
+        let culled = renderer.committedStrokeDraws - before
+        let middle = renderer.committedStrokeDraws
+        let expected = try await renderer.renderOffscreen(document: d, viewport: viewport, width: 256, height: 256, reference: true)
+        XCTAssertLessThan(culled, renderer.committedStrokeDraws - middle)
+        assertPixels(actual, expected)
+    }
+    @MainActor
     func testNavigationRefinementReplacesMagnifiedSnapshotWithSourceDetail() async throws {
         var d = DrawingDocument(); d.size = Point(x: 128, y: 128)
         d.symmetry = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64))

@@ -26,7 +26,7 @@ struct StudioView: View {
     @State private var performanceText: String?
     @State private var panel: StudioPanel?
     @State private var zen = false
-    @AppStorage("layersSidebarVisible") private var layersVisible = true
+    @AppStorage("layersSidebarVisible") private var layersVisible = false
     private let exportService = ExportService()
 
     init() {
@@ -61,6 +61,11 @@ struct StudioView: View {
             print("Ornamentalist 0.12.0: gallery loading finished")
         }
         .onDisappear { model.stopMaintenance() }
+        .onChange(of: panel) { _, next in
+            // Opening another panel closes layers, rather than only hiding
+            // the sidebar until that panel is dismissed.
+            if next != nil { layersVisible = false }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.startMaintenance() }
             else { model.stopMaintenance(); Task { await model.saveNow() } }
@@ -364,8 +369,12 @@ struct StudioView: View {
     private func dockButton(_ item: StudioPanel, symbol: String, detail: String?) -> some View {
         Button {
             if item == .layers { panel = nil; layersVisible.toggle() }
-            else {
-                if item == .brush, model.tool != .brush { model.selectTool(.brush) }
+            else if item == .brush, model.tool != .brush {
+                model.selectTool(.brush)
+                // The eraser uses the same chooser. Switching tools must keep
+                // that chooser open and show the drawing brushes.
+                panel = .brush
+            } else {
                 panel = panel == item ? nil : item
             }
         } label: {

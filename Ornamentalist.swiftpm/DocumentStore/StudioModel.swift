@@ -23,10 +23,10 @@ final class StudioModel: ObservableObject {
         return d
     }
     @Published private(set) var saveStatus = "Saved on iPad"
-    @Published private(set) var isDrawing = false { didSet { rescheduleMaintenance() } }
+    @Published private(set) var isDrawing = false { didSet { rescheduleMaintenance(); schedulePreviewForActivity() } }
     @Published private(set) var busy = false { didSet { rescheduleMaintenance() } }
     @Published private(set) var isPreparing = false { didSet { rescheduleMaintenance() } }
-    @Published private(set) var isNavigating = false
+    @Published private(set) var isNavigating = false { didSet { schedulePreviewForActivity() } }
     @Published private var presentedError: String?
     private var recentErrors: [String] = []
     // Concurrent renderer/save failures must not replace an alert being read.
@@ -64,6 +64,8 @@ final class StudioModel: ObservableObject {
     @Published private(set) var exportProgress = 0.0
     private var cachedExport: (CanvasDisplayState, PNGExportResolution, Bool, Data)?
     private var canvasPreviewTask: Task<Void, Never>?
+    private var canvasPreviewRequest = UUID()
+    var hasPendingCanvasPreview: Bool { canvasPreviewTask != nil }
     private var canvasPreviewState: CanvasDisplayState?
     func setArtworkSource(_ source: MetalCanvasRenderer) {
         if artworkRenderer == nil { artworkRenderer = ArtworkRenderer(source: source) }
@@ -116,15 +118,22 @@ final class StudioModel: ObservableObject {
         catch is CancellationError { throw CancellationError() }
         catch { return try await previewService.thumbnail(snapshot) }
     }
+    private func schedulePreviewForActivity() {
+        if isDrawing || isNavigating {
+            canvasPreviewTask?.cancel(); canvasPreviewTask = nil; canvasPreviewState = nil
+        } else { warmGalleryThumbnail() }
+    }
     private func warmGalleryThumbnail() {
-        guard let snapshot = document, artworkRenderer != nil else { return }
+        guard !isDrawing, !isNavigating, let snapshot = document, artworkRenderer != nil else { return }
         let state = CanvasDisplayState(snapshot, guides: false)
         guard state != canvasPreviewState else { return }
         canvasPreviewState = state; canvasPreviewTask?.cancel()
+        let request = UUID(); canvasPreviewRequest = request
         canvasPreviewTask = Task { [weak self] in
+            defer { if self?.canvasPreviewRequest == request { self?.canvasPreviewTask = nil } }
             do {
                 try await Task.sleep(nanoseconds: 500_000_000)
-                guard let self, !self.isDrawing, self.document?.id == snapshot.id else { return }
+                guard let self, !self.isDrawing, !self.isNavigating, self.document?.id == snapshot.id else { return }
                 _ = try await self.galleryThumbnail(snapshot)
             } catch { }
         }
@@ -138,6 +147,8 @@ final class StudioModel: ObservableObject {
     private var brushSettings: [BrushPreset: InkBrush] = [:]
     private var eraserSettings: [BrushPreset: InkBrush] = [:]
     private var preferredBrushPreset = BrushPreset.fineliner
+    private var lastBrushByFamily: [String: String] = [:]
+    private var lastEraserByFamily: [String: String] = [:]
     private let preferences: UserDefaults?
     private(set) var generation = 0
     private var writeSequence = 0
@@ -204,6 +215,15 @@ final class StudioModel: ObservableObject {
             }
         }
         eraserSettings[eraserBrush.preset] = eraserBrush
+        func familyChoices(_ key: String) -> [String: String] {
+            let saved = preferences?.dictionary(forKey: key) as? [String: String] ?? [:]
+            return saved.filter { family, raw in
+                guard let preset = BrushPreset(rawValue: raw) else { return false }
+                return preset.family.rawValue == family
+            }
+        }
+        lastBrushByFamily = familyChoices("lastBrushByFamily")
+        lastEraserByFamily = familyChoices("lastEraserByFamily")
         if preferences?.bool(forKey: "softOpacityNormalizedV1") != true {
             for (preset, stored) in brushSettings where preset.softness > 0 {
                 var brush = stored; brush.normalizedOpacity = true; brushSettings[preset] = brush
@@ -326,6 +346,7 @@ final class StudioModel: ObservableObject {
         appendLineage = UUID()
         document = adopted; history = StrokeHistory()
         preferredBrushPreset = adopted.brush.preset
+        rememberFamily(adopted.brush.preset, erasing: false)
         preferences?.set(preferredBrushPreset.rawValue, forKey: "activeBrushPreset")
         writeSequence = max(writeSequence, d.storageRevision)
         generation += 1; nextSaveAttempt = 0; reportedSaveFailure = false
@@ -739,6 +760,29 @@ final class StudioModel: ObservableObject {
         guard canEdit, !isDrawing, width.isFinite else { return }
         document?.brush.width = max(0.5, min(160, width)); changed()
     }
+    func selectBrushFamily(_ family: BrushFamily) {
+        guard canEdit, !isDrawing, document != nil else { return }
+        let erasing = tool == .eraser
+        let current = inputBrush.preset
+        rememberFamily(current, erasing: erasing)
+        guard current.family != family else { return }
+        let choices = erasing ? lastEraserByFamily : lastBrushByFamily
+        let remembered = choices[family.rawValue].flatMap { BrushPreset(rawValue: $0) }
+        guard let preset = remembered ?? BrushPreset.allCases.first(where: { $0.family == family }) else { return }
+        if erasing { setEraserBrush(preset) } else { setBrush(preset) }
+    }
+    private func rememberFamily(_ preset: BrushPreset, erasing: Bool) {
+        let family = preset.family.rawValue
+        if erasing {
+            guard lastEraserByFamily[family] != preset.rawValue else { return }
+            lastEraserByFamily[family] = preset.rawValue
+            preferences?.set(lastEraserByFamily, forKey: "lastEraserByFamily")
+        } else {
+            guard lastBrushByFamily[family] != preset.rawValue else { return }
+            lastBrushByFamily[family] = preset.rawValue
+            preferences?.set(lastBrushByFamily, forKey: "lastBrushByFamily")
+        }
+    }
     func setBrush(_ preset: BrushPreset) {
         guard canEdit, !isDrawing, document != nil else { return }
         if let current = document?.brush { brushSettings[current.preset] = current }
@@ -813,12 +857,14 @@ final class StudioModel: ObservableObject {
         "Input points: \(usedSamples) / \(DrawingLimits.sampleCount)\nDocument geometry estimate (reconstructible): \(usedVertices * 16 / 1024) KiB\nStrokes: \(document?.strokes.count ?? 0)"
     }
     private func rememberBrush(_ brush: InkBrush) {
+        rememberFamily(brush.preset, erasing: false)
         guard brushSettings[brush.preset] != brush else { return }
         brushSettings[brush.preset] = brush
         let settings = Dictionary(uniqueKeysWithValues: brushSettings.map { ($0.key.rawValue, $0.value) })
         if let data = try? JSONEncoder().encode(settings) { preferences?.set(data, forKey: "brushSettings") }
     }
     private func rememberEraser() {
+        rememberFamily(eraserBrush.preset, erasing: true)
         eraserSettings[eraserBrush.preset] = eraserBrush
         if let data = try? JSONEncoder().encode(eraserBrush) { preferences?.set(data, forKey: "eraserSettings") }
         let settings = Dictionary(uniqueKeysWithValues: eraserSettings.map { ($0.key.rawValue, $0.value) })

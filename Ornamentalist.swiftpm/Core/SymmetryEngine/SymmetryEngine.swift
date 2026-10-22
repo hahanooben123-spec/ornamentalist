@@ -78,6 +78,14 @@ struct SymmetryConfiguration: Codable, Hashable, Sendable {
         }
         return result
     }
+    /// Conservative bounds retain every copy which could touch the view.
+    /// Filtering keeps original copy order, including translucent overlaps.
+    func visibleMatrices(for source: CGRect, clip: CGRect) -> [Matrix] {
+        guard !source.isNull, !clip.isNull, !clip.isEmpty else { return [] }
+        return matrices(for: source, clip: clip).filter {
+            Self.bounds(source, transformedBy: $0).intersects(clip)
+        }
+    }
     static func bounds(of points: [Point], padding: Double = 0) -> CGRect {
         guard let first = points.first else { return .null }
         var lowX = first.x, highX = first.x, lowY = first.y, highY = first.y

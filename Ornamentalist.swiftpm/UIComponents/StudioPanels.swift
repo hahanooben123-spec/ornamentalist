@@ -111,8 +111,8 @@ struct StudioPanelView: View {
             Divider()
             Toggle("Draw with finger", isOn: $model.fingerDrawing).font(.subheadline)
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("Hold for line or circle", isOn: $model.shapeCorrection).font(.subheadline)
-                Text("Draw a line or circle, hold still for 0.6 seconds, then lift to correct it.")
+                Toggle("Hold for line, arc or circle", isOn: $model.shapeCorrection).font(.subheadline)
+                Text("Draw a line, arc or circle and hold still for 0.6 seconds to make it precise. Lift Pencil to finish.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 8) {

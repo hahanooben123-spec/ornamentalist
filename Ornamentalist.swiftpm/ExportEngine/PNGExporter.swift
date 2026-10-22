@@ -245,6 +245,11 @@ enum PNGExporter {
 }
 
 actor ExportService {
+    private var artworkPixels = Data()
+    private var artworkReadback = Data()
+    private var artworkWidth = 0
+    private var artworkHeight = 0
+
     func filledRegion(_ document: DrawingDocument, point: Point, selection: StrokeSelection? = nil) throws -> LayerRaster {
         try Task.checkCancellation()
         let width = Int(document.size.x), height = Int(document.size.y)
@@ -496,6 +501,7 @@ final class ArtworkRenderer {
     func releaseCaches() { renderer = nil; previews.removeAll() }
     func export(_ document: DrawingDocument, resolution: PNGExportResolution, transparent: Bool,
                 progress: @escaping @MainActor (Double) -> Void) async throws -> Data {
+        try document.validate()
         let target = resolution.pixels(canvas: document.size)
         let width = Int(target.x.rounded()), height = Int(target.y.rounded())
         while rendering { try await Task.sleep(nanoseconds: 10_000_000) }
@@ -509,7 +515,8 @@ final class ArtworkRenderer {
             guard let renderer else { throw DocumentError.noMetal }
             if let source { renderer.borrowArtworkGeometry(from: source) }
             try await renderer.synchronize(document.strokes, layers: document.layers)
-            var pixels = Data(count: width * height * 4)
+            defer { renderer.releaseArtworkSurfaces() }
+            await encoder.beginArtwork(width: width, height: height)
             let scale = min(Double(width) / document.size.x, Double(height) / document.size.y)
             let count = ((width + 1023) / 1024) * ((height + 1023) / 1024)
             var completed = 0
@@ -523,23 +530,16 @@ final class ArtworkRenderer {
                     let viewport = Viewport(zoom: scale / fit,
                         pan: Point(x: Double(width - tw) / 2 - Double(x) + 2,
                                    y: Double(height - th) / 2 - Double(y) + 2))
-                    let tile = try await renderer.renderOffscreen(document: document, viewport: viewport,
+                    let tile = try await renderer.renderArtworkSurface(document: document, viewport: viewport,
                         width: tw, height: th, transparent: transparent, paper: true)
-                    pixels.withUnsafeMutableBytes { destination in
-                        tile.withUnsafeBytes { source in
-                            for row in 0..<h {
-                                destination.baseAddress!.advanced(by: ((y + row) * width + x) * 4)
-                                    .copyMemory(from: source.baseAddress!.advanced(by: ((row + 2) * tw + 2) * 4), byteCount: w * 4)
-                            }
-                        }
-                    }
+                    try await encoder.appendArtwork(tile, x: x, y: y, width: w, height: h, border: 2)
                     completed += 1; progress(Double(completed) / Double(count) * 0.9)
                 }
             }
-            let data = try await encoder.encodeArtwork(pixels, width: width, height: height, dpi: resolution == .a4 ? 300 : nil)
+            let data = try await encoder.finishArtwork(dpi: resolution == .a4 ? 300 : nil)
             progress(1); return data
-        } catch is CancellationError { renderer = nil; throw CancellationError() }
-        catch { renderer = nil; gpuFailure = error; throw error }
+        } catch is CancellationError { await encoder.cancelArtwork(); renderer?.releaseArtworkSurfaces(); throw CancellationError() }
+        catch { await encoder.cancelArtwork(); renderer = nil; gpuFailure = error; throw error }
     }
     func png(_ document: DrawingDocument, maximumSide: Int, transparent: Bool, region: CGRect? = nil) async throws -> Data {
         let canvas = CGRect(x: 0, y: 0, width: document.size.x, height: document.size.y)
@@ -568,16 +568,16 @@ final class ArtworkRenderer {
         let fit = min(Double(width) / drawing.size.x, Double(height) / drawing.size.y) * 0.92
         let center = Point(x: Double(region.midX), y: Double(region.midY))
         let viewport = Viewport(zoom: scale / fit, pan: (drawing.size * 0.5 - center) * scale)
-        let pixels = try await renderer.renderOffscreen(document: drawing, viewport: viewport,
+        let surface = try await renderer.renderArtworkSurface(document: drawing, viewport: viewport,
             width: width, height: height, transparent: transparent)
         try Task.checkCancellation()
-        let png = try await encoder.encodeArtwork(Data(pixels), width: width, height: height)
+        let png = try await encoder.encodeSurface(surface)
         try Task.checkCancellation()
         renderCount += 1; previews.append((key, png))
         while previews.count > 40 || previews.reduce(0, { $0 + $1.1.count }) > 4 * 1024 * 1024 { previews.removeFirst() }
         return png
         } catch is CancellationError {
-            renderer = nil; throw CancellationError()
+            renderer?.releaseArtworkSurfaces(); throw CancellationError()
         } catch {
             renderer = nil; gpuFailure = error; throw error
         }
@@ -585,6 +585,49 @@ final class ArtworkRenderer {
 }
 
 extension ExportService {
+    func encodeSurface(_ surface: ArtworkSurface) throws -> Data {
+        try Task.checkCancellation()
+        let width = surface.texture.width, height = surface.texture.height
+        let count = width * height * 4
+        if artworkReadback.count != count { artworkReadback = Data(count: count) }
+        defer { if count > 4 * 1024 * 1024 { artworkReadback = Data() } }
+        artworkReadback.withUnsafeMutableBytes {
+            surface.texture.getBytes($0.baseAddress!, bytesPerRow: width * 4,
+                from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+        }
+        return try encodeArtwork(artworkReadback, width: width, height: height)
+    }
+    func beginArtwork(width: Int, height: Int) {
+        artworkWidth = width; artworkHeight = height
+        artworkPixels = Data(count: width * height * 4)
+    }
+    func appendArtwork(_ surface: ArtworkSurface, x: Int, y: Int, width: Int, height: Int, border: Int) throws {
+        try Task.checkCancellation()
+        let tw = surface.texture.width, th = surface.texture.height
+        guard x >= 0, y >= 0, width > 0, height > 0, x + width <= artworkWidth, y + height <= artworkHeight,
+              width + border * 2 == tw, height + border * 2 == th else { throw DocumentError.invalidData }
+        let needed = tw * th * 4
+        if artworkReadback.count < needed { artworkReadback = Data(count: needed) }
+        artworkReadback.withUnsafeMutableBytes {
+            surface.texture.getBytes($0.baseAddress!, bytesPerRow: tw * 4, from: MTLRegionMake2D(0, 0, tw, th), mipmapLevel: 0)
+        }
+        artworkPixels.withUnsafeMutableBytes { destination in
+            artworkReadback.withUnsafeBytes { source in
+                for row in 0..<height {
+                    destination.baseAddress!.advanced(by: ((y + row) * artworkWidth + x) * 4)
+                        .copyMemory(from: source.baseAddress!.advanced(by: ((row + border) * tw + border) * 4), byteCount: width * 4)
+                }
+            }
+        }
+    }
+    func finishArtwork(dpi: Double?) throws -> Data {
+        defer { cancelArtwork() }
+        return try encodeArtwork(artworkPixels, width: artworkWidth, height: artworkHeight, dpi: dpi)
+    }
+    func cancelArtwork() {
+        artworkPixels = Data(); artworkReadback = Data(); artworkWidth = 0; artworkHeight = 0
+    }
+
     func pngData(_ document: DrawingDocument, transparent: Bool, region: CGRect? = nil) throws -> Data {
         try PNGExporter.data(document: document, transparent: transparent, region: region)
     }

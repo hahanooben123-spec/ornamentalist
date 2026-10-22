@@ -5,6 +5,88 @@ import XCTest
 @testable import OrnamentalistCore
 
 final class CoreTests: XCTestCase {
+    func testViewportCullingKeepsVisibleRadialAndLegacyTileCopies() {
+        let radial = SymmetryConfiguration(repetitions: 4, center: Point(x: 64, y: 64))
+        let source = CGRect(x: 100, y: 60, width: 8, height: 8)
+        let copies = radial.visibleMatrices(for: source, clip: CGRect(x: 90, y: 50, width: 30, height: 30))
+        XCTAssertEqual(copies.count, 1)
+        XCTAssertEqual(copies.first?.apply(Point(x: 104, y: 64)), Point(x: 104, y: 64))
+        XCTAssertTrue(radial.visibleMatrices(for: source, clip: CGRect(x: 200, y: 200, width: 10, height: 10)).isEmpty)
+        let tile = SymmetryConfiguration(repetitions: 1, center: Point(x: 64, y: 64), tileCount: 4,
+            tileSymmetry: false, tileCanvas: Point(x: 128, y: 128))
+        let visible = tile.visibleMatrices(for: CGRect(x: 20, y: 24, width: 8, height: 8),
+            clip: CGRect(x: 90, y: 50, width: 32, height: 32))
+        XCTAssertEqual(visible.count, 2)
+        XCTAssertEqual(visible.map { $0.apply(Point(x: 24, y: 28)) }, [Point(x: 88, y: 60), Point(x: 120, y: 60)])
+    }
+    func testHistoryChargesSharedImagesAndSampleArraysOnlyOnce() {
+        var d = DrawingDocument(), history = StrokeHistory(memoryBudget: 3 * 1024 * 1024)
+        // Synthetic encoded payload tests ownership accounting, not PNG decoding.
+        d.layers[0].raster = LayerRaster(png: Data(repeating: 0, count: 2 * 1024 * 1024), width: 64, height: 64)
+        for i in 0..<4 {
+            let before = d; d.layers[0].opacity = Double(i + 1) / 5
+            history.recordLayerChange(from: before, to: d)
+        }
+        XCTAssertLessThan(history.retainedBytes, 3 * 1024 * 1024)
+        for _ in 0..<4 { XCTAssertTrue(history.undo(in: &d)) }
+        var shared = InkStroke(samples: (0..<20000).map { sample(Double($0) / 1000, 20) })
+        d = DrawingDocument(); history = StrokeHistory(memoryBudget: 2 * 1024 * 1024)
+        history.recordNewStroke(shared, in: &d)
+        shared.id = UUID(); history.recordNewStroke(shared, in: &d)
+        XCTAssertLessThan(history.retainedBytes, 2 * 1024 * 1024)
+        XCTAssertTrue(history.undo(in: &d)); XCTAssertTrue(history.undo(in: &d))
+    }
+    func testHoldRecognizesCircularArcsInBothDirectionsAndPreservesEndpoints() throws {
+        let center = Point(x: 200, y: 180), radius = 100.0
+        for sweep in [Double.pi / 4, .pi / 2, .pi, .pi * 1.5] {
+            for direction in [-1.0, 1.0] {
+                var stroke = InkStroke(symmetry: SymmetryConfiguration(mirror: true))
+                stroke.samples = (0...64).map { i in
+                    let angle = 0.3 + direction * sweep * Double(i) / 64
+                    return StrokeSample(point: center + Point(x: cos(angle), y: sin(angle)) * radius,
+                        pressure: 0.6, altitude: 1, azimuth: 0, time: Double(i) / 64)
+                }
+                let arc = try XCTUnwrap(StrokeGeometry.correctedShape(stroke))
+                XCTAssertEqual(arc.samples.count, 65)
+                XCTAssertEqual(arc.samples.first?.point, stroke.samples.first?.point)
+                XCTAssertEqual(arc.samples.last?.point, stroke.samples.last?.point)
+                XCTAssertEqual(arc.symmetry, stroke.symmetry); XCTAssertEqual(arc.brush, stroke.brush)
+                for point in arc.samples.map(\.point) { XCTAssertEqual((point - center).length, radius, accuracy: 0.001) }
+                let endpoint = arc.samples.last!.point + Point(x: 30, y: -15)
+                let moved = StrokeGeometry.adjustedHeldShape(arc, endpoint: endpoint, verticalDrag: 0)
+                XCTAssertEqual(moved.samples.first?.point, arc.samples.first?.point)
+                XCTAssertLessThan((moved.samples.last!.point - endpoint).length, 0.000001)
+                let a = arc.samples.first!.point, b = arc.samples.last!.point
+                let scale = (endpoint - a).length / (b - a).length
+                for index in 1..<arc.samples.count {
+                    XCTAssertEqual((moved.samples[index].point - a).length,
+                        (arc.samples[index].point - a).length * scale, accuracy: 0.000001)
+                }
+            }
+        }
+    }
+    func testArcHoldRejectsSCurvesCornersAndIgnoresStationarySamples() throws {
+        var stroke = InkStroke()
+        stroke.samples = (0...64).map { i in
+            StrokeSample(point: Point(x: Double(i) * 3, y: sin(Double(i) / 64 * 4 * .pi) * 50),
+                pressure: 1, altitude: 1, azimuth: 0, time: Double(i))
+        }
+        XCTAssertNil(StrokeGeometry.correctedShape(stroke))
+        stroke.samples = (0...64).map { i in
+            let point = i <= 32 ? Point(x: Double(i) / 32 * 100, y: 0) : Point(x: 100, y: Double(i - 32) / 32 * 100)
+            return StrokeSample(point: point, pressure: 1, altitude: 1, azimuth: 0, time: Double(i))
+        }
+        XCTAssertNil(StrokeGeometry.correctedShape(stroke))
+        stroke.samples = (0...32).map { i in
+            let angle = Double(i) / 32 * .pi
+            return StrokeSample(point: Point(x: 200 + cos(angle) * 80, y: 200 + sin(angle) * 80),
+                pressure: 1, altitude: 1, azimuth: 0, time: Double(i))
+        }
+        stroke.samples.insert(contentsOf: Array(repeating: stroke.samples[0], count: 60), at: 0)
+        let arc = try XCTUnwrap(StrokeGeometry.correctedShape(stroke))
+        XCTAssertEqual(arc.samples.count, 65)
+        for sample in arc.samples { XCTAssertEqual((sample.point - Point(x: 200, y: 200)).length, 80, accuracy: 0.1) }
+    }
     func testHeldShapeResizesCircleAndKeepsAdjustedLineExactlyStraight() throws {
         var line = InkStroke()
         line.samples = (0...20).map { index in

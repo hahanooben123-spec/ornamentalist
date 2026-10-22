@@ -19,7 +19,10 @@ struct StudioBrushesView: View {
                 }
                 Text(brush.preset.hint).font(.caption).foregroundStyle(.secondary)
             }
-            Picker("Brush family", selection: $family) {
+            Picker("Brush family", selection: Binding(get: { family }, set: { selected in
+                family = selected
+                model.selectBrushFamily(selected)
+            })) {
                 ForEach(BrushFamily.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented).accessibilityIdentifier("brushFamily")
             VStack(spacing: 8) {

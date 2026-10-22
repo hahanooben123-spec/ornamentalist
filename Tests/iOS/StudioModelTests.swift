@@ -5,6 +5,51 @@ import MetalKit
 
 @MainActor
 final class StudioModelTests: XCTestCase {
+    func testGalleryPreviewDefersDuringPencilAndNavigation() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = StudioModel(repository: DocumentRepository(directory: folder))
+        await model.create(); model.enableArtworkPreviews()
+        model.setColor(InkColor(red: 1, green: 0, blue: 0))
+        XCTAssertTrue(model.hasPendingCanvasPreview)
+        model.setDrawing(true); XCTAssertFalse(model.hasPendingCanvasPreview)
+        model.setDrawing(false); XCTAssertTrue(model.hasPendingCanvasPreview)
+        model.setNavigating(true); XCTAssertFalse(model.hasPendingCanvasPreview)
+        model.setNavigating(false); XCTAssertTrue(model.hasPendingCanvasPreview)
+        model.setDrawing(true) // Cancel before the test can start a GPU render.
+    }
+    func testFamilySwitchRestoresLastBrushAndSeparateEraserAfterRestart() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "Ornamentalist-Family-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        let repository = DocumentRepository(directory: folder)
+        let model = StudioModel(repository: repository, preferences: preferences)
+        await model.create()
+        model.setBrush(.brushPen); model.setWidth(9)
+        model.setBrush(.airbrush); model.setWidth(73); model.setOpacity(0.17)
+        model.selectBrushFamily(.ink)
+        XCTAssertEqual(model.document?.brush.preset, .brushPen)
+        XCTAssertEqual(model.document?.brush.width, 9)
+        model.selectBrushFamily(.shading)
+        XCTAssertEqual(model.document?.brush.preset, .airbrush)
+        XCTAssertEqual(try XCTUnwrap(model.document?.brush.opacity), 0.17, accuracy: 0.00001)
+        model.selectTool(.eraser); model.setEraserBrush(.softShader); model.setEraserWidth(96)
+        model.setEraserBrush(.roundMarker); model.selectBrushFamily(.shading)
+        XCTAssertEqual(model.eraserBrush.preset, .softShader)
+        XCTAssertEqual(model.eraserBrush.width, 96)
+        XCTAssertEqual(model.document?.brush.preset, .airbrush)
+        let restarted = StudioModel(repository: repository, preferences: preferences)
+        await restarted.create()
+        restarted.selectBrushFamily(.ink)
+        XCTAssertEqual(restarted.document?.brush.preset, .brushPen)
+        restarted.selectBrushFamily(.shading)
+        XCTAssertEqual(restarted.document?.brush.preset, .airbrush)
+        XCTAssertEqual(restarted.document?.brush.width, 73)
+        restarted.selectTool(.eraser); restarted.selectBrushFamily(.ink); restarted.selectBrushFamily(.shading)
+        XCTAssertEqual(restarted.eraserBrush.preset, .softShader)
+        XCTAssertEqual(restarted.eraserBrush.width, 96)
+    }
     func testNewDrawingDefaultsToMirrorAndTilesKeepSeparateRotationSettings() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
