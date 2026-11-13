@@ -6,6 +6,11 @@ struct StudioBrushesView: View {
     @ObservedObject var model: StudioModel
     let brush: InkBrush
     @State private var family = BrushFamily.ink
+    private var pressureTarget: String {
+        if brush.usesPressureDensity { return "dot density" }
+        if brush.usesPressureOpacity { return "opacity" }
+        return "brush size"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -13,7 +18,7 @@ struct StudioBrushesView: View {
                 Text(brush.preset.name).font(.headline).accessibilityIdentifier("selectedBrush")
                 BrushSwatch(brush: brush).frame(height: 72)
                     .background(.white, in: RoundedRectangle(cornerRadius: 14))
-                if brush.usesPressureDensity {
+                if brush.reactsToPressure {
                     HStack { Text("Light pressure"); Spacer(); Text("Firm pressure") }
                         .font(.caption2).foregroundStyle(.secondary)
                 }
@@ -113,12 +118,13 @@ struct StudioBrushesView: View {
                 Toggle("Pressure sensitivity", isOn: Binding(get: { brush.pressureEnabled }, set: { model.setPressure($0) }))
                     .font(.subheadline)
             }
-            if brush.pressureEnabled || brush.usesPressureDensity {
+            if brush.reactsToPressure {
                 VStack(alignment: .leading, spacing: 8) {
                     valueLabel("Pencil sensitivity", value: "\(brush.pressureGain.formatted(.number.precision(.fractionLength(1))))×")
                     Slider(value: Binding(get: { brush.pressureGain }, set: { model.setPenResponse(gain: $0) }), in: 1...5)
                         .accessibilityLabel("Pencil pressure sensitivity")
-                    Text(brush.usesPressureDensity ? "Higher sensitivity reaches full density with a lighter touch." : "Higher sensitivity reaches full size with a lighter touch.").font(.caption).foregroundStyle(.secondary)
+                    Text("Higher sensitivity reaches maximum \(pressureTarget) with a lighter touch. Pressure is smoothed independently of Steady line.")
+                        .font(.caption).foregroundStyle(.secondary)
                     valueLabel("Pressure curve", value: brush.pressureCurve.formatted(.number.precision(.fractionLength(2))))
                     Slider(value: Binding(get: { brush.pressureCurve }, set: { model.setPenResponse(curve: $0) }), in: 0.2...3)
                     Text("Lower values need less pressure. Higher values need a firmer touch.").font(.caption).foregroundStyle(.secondary)
@@ -126,17 +132,20 @@ struct StudioBrushesView: View {
                         var path = Path()
                         for i in 0...40 {
                             let t = Double(i) / 40
-                            let response = brush.densityResponse(pressure: t)
-                            let diameter = brush.usesPressureDensity ? response : brush.minimumSize + (1 - brush.minimumSize) * response
-                            let p = CGPoint(x: size.width * t, y: size.height * (1 - diameter))
+                            let response = brush.pressureResponse(t)
+                            let output = brush.usesPressureDensity || brush.usesPressureOpacity
+                                ? response : brush.minimumSize + (1 - brush.minimumSize) * response
+                            let p = CGPoint(x: size.width * t, y: size.height * (1 - output))
                             if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
                         }
                         context.stroke(path, with: .color(StudioStyle.copper), lineWidth: 2)
-                    }.frame(height: 52).accessibilityLabel(brush.usesPressureDensity ? "Pressure to dot density curve" : "Pressure to brush size curve")
-                    if !brush.usesPressureDensity {
+                    }.frame(height: 52).accessibilityLabel("Pressure to \(pressureTarget) curve")
+                    if !brush.usesPressureDensity && !brush.usesPressureOpacity {
                         valueLabel("Minimum size", value: "\(Int(brush.minimumSize * 100))%")
                         Slider(value: Binding(get: { brush.minimumSize }, set: { model.setPenResponse(minimum: $0) }), in: 0...1)
                     }
+                    Button("Reset pressure curve and sensitivity") { model.resetPressureResponse() }
+                        .font(.caption)
                 }
             }
             if !brush.usesStamps {
@@ -289,7 +298,7 @@ struct BrushSwatch: View {
                 let t = Double(i) / 48
                 return StrokeSample(point: Point(x: 12 + (Double(size.width) - 24) * t,
                                                    y: Double(size.height) * (0.5 + Darwin.sin(t * 2 * Double.pi) * 0.13)),
-                                    pressure: 0.25 + t * 0.75, altitude: 1, azimuth: 0, time: t)
+                                    pressure: 0.12 + t * 0.76, altitude: .pi / 2, azimuth: 0, time: t)
             }
             context.withCGContext { PNGExporter.paint(stroke, in: $0) }
         }.accessibilityHidden(true)

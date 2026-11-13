@@ -11,6 +11,7 @@ struct StrokeSession {
     }
     private var filtered: StrokeSample?
     private var rawPrevious: StrokeSample?
+    var lastInputPressure: Double? { rawPrevious?.pressure }
     private var velocity = Point.zero
     private var smoothPosition: Point?
     private var smoothFollower: Point?
@@ -49,8 +50,18 @@ struct StrokeSession {
         remainingVertices = DrawingLimits.strokeVertices
     }
     private mutating func stabilized(_ sample: StrokeSample, previous: StrokeSample?) -> StrokeSample {
-        guard let previous, stroke.brush.stabilizationEnabled, stroke.brush.stabilization > 0 else { return sample }
+        guard let previous else { return sample }
         let dt = max(0.001, min(0.1, sample.time - previous.time))
+        var result = sample
+        if stroke.brush.reactsToPressure {
+            // Suppress small force fluctuations more strongly than intentional
+            // changes. Use the input clock so this works with Steady line off.
+            let delta = sample.pressure - previous.pressure
+            let response = max(0, min(1, (abs(delta) - 0.035) / 0.30))
+            let duration = 0.032 - 0.023 * response
+            result.pressure = previous.pressure + delta * (1 - exp(-dt / duration))
+        }
+        guard stroke.brush.stabilizationEnabled, stroke.brush.stabilization > 0 else { return result }
         var response = 1.0
         if stroke.brush.adaptiveStabilization {
             // Smooth the velocity vector before measuring its magnitude. Raw
@@ -67,7 +78,6 @@ struct StrokeSession {
         // for ordinary hand wobble (a few Hz), not only sample-to-sample noise.
         let duration = 0.012 + stroke.brush.stabilization * stroke.brush.stabilization * 0.22
         let alpha = 1 - exp(-dt * response / duration)
-        var result = sample
         // Partial delay compensation preserves deliberate arcs while retaining
         // low-frequency smoothing. Full triple compensation was too eager to
         // follow the very hand wobble Steady line should remove.
@@ -77,10 +87,6 @@ struct StrokeSession {
         let nextFollower = follower + (next - follower) * alpha
         smoothPosition = next; smoothFollower = nextFollower
         result.point = next * 1.5 - nextFollower * 0.5
-        if stroke.brush.pressureEnabled || stroke.brush.usesPressureDensity {
-            let pressureAlpha = 1 - exp(-dt / 0.01)
-            result.pressure = previous.pressure + (sample.pressure - previous.pressure) * pressureAlpha
-        }
         return result
     }
     mutating func append(_ raw: StrokeSample) throws -> [BrushVertex] {

@@ -51,15 +51,15 @@ final class BrushTests: XCTestCase {
             XCTAssertTrue(brush.stabilizationEnabled, preset.name)
         }
     }
-    func testLightPressureReachesFullSizeEarlierWithoutChangingLegacyInk() throws {
+    func testBalancedPressureRemainsSensitiveWithoutSaturatingAtLightPressure() throws {
         var brush = BrushPreset.brushPen.makeBrush()
-        XCTAssertEqual(brush.pressureGain, 2.5)
-        XCTAssertEqual(brush.radius(pressure: 0.4), brush.width / 2, accuracy: 1e-9)
-        var legacy = brush; legacy.pressureGain = 1
-        XCTAssertGreaterThan(brush.radius(pressure: 0.15), legacy.radius(pressure: 0.15))
+        XCTAssertGreaterThan(brush.pressureResponse(0.1), 0.15)
+        XCTAssertLessThan(brush.pressureResponse(0.4), brush.pressureResponse(0.6))
+        XCTAssertEqual(brush.radius(pressure: 0.7), brush.width / 2, accuracy: 1e-9)
         let data = Data(#"{"width":18,"pressureEnabled":true,"pressureCurve":0.5,"minimumSize":0.03}"#.utf8)
         let restored = try JSONDecoder().decode(InkBrush.self, from: data)
         XCTAssertEqual(restored.pressureGain, 1)
+        XCTAssertEqual(restored.radius(pressure: 0.25), 18 * (0.03 + 0.97 * 0.5) / 2, accuracy: 1e-9)
         brush.pressureGain = .infinity; XCTAssertFalse(brush.isValid)
     }
     func testDetailedShadingFitsBeyondOldDocumentGeometryBudget() throws {
@@ -176,17 +176,40 @@ final class BrushTests: XCTestCase {
     }
     func testPressureSmoothingReducesWidthNoiseWithoutChangingInputTime() throws {
         var brush = BrushPreset.brushPen.makeBrush(); brush.taperStart = 0; brush.taperEnd = 0
-        // Isolate smoothing below saturation; calibrated presets use gain 2.5.
         brush.pressureGain = 1
+        brush.stabilizationEnabled = false
         var session = StrokeSession(brush: brush, symmetry: SymmetryConfiguration(), existingSamples: 0, existingVertices: 0)
         for i in 0..<120 {
             var p = sample(Double(i), time: Double(i) / 240)
-            p.pressure = i % 2 == 0 ? 0.4 : 0.8
+            p.pressure = i % 2 == 0 ? 0.46 : 0.54
             _ = try session.append(p)
+            XCTAssertEqual(session.stroke.samples.last!.point, p.point)
         }
         let widths = session.stroke.samples.suffix(60).map { brush.radius(pressure: $0.pressure) }
-        XCTAssertLessThan(widths.max()! - widths.min()!, brush.radius(pressure: 0.8) - brush.radius(pressure: 0.4))
+        XCTAssertLessThan(widths.max()! - widths.min()!, (brush.radius(pressure: 0.54) - brush.radius(pressure: 0.46)) * 0.25)
         XCTAssertEqual(session.stroke.samples.last!.time, 119.0 / 240)
+        for i in 120..<132 {
+            var p = sample(Double(i), time: Double(i) / 240)
+            p.pressure = 0.9
+            _ = try session.append(p)
+        }
+        XCTAssertGreaterThan(session.stroke.samples.last!.pressure, 0.85)
+    }
+    func testNewShadingBrushesVaryOpacityWithoutChangingFootprint() throws {
+        for preset in [BrushPreset.featherShader, .velvetShader] {
+            var brush = preset.makeBrush()
+            var light = sample(40), firm = light
+            light.pressure = 0.15; firm.pressure = 0.6
+            func dab(_ sample: StrokeSample, brush: InkBrush) -> BrushDab {
+                BrushGeometry.dabs(InkStroke(brush: brush, samples: [sample]))[0]
+            }
+            let a = dab(light, brush: brush), b = dab(firm, brush: brush)
+            XCTAssertEqual(a.radius, b.radius)
+            XCTAssertGreaterThan(a.opacity, 0)
+            XCTAssertGreaterThan(b.opacity, a.opacity * 2)
+            brush.pressureEnabled = false
+            XCTAssertEqual(dab(light, brush: brush), dab(firm, brush: brush))
+        }
     }
     func testAdaptiveSmoothingCleansArcsWithoutShrinkingTheirRadius() throws {
         var brush = InkBrush(); brush.adaptiveStabilization = true; brush.stabilization = 0.75
@@ -297,7 +320,7 @@ final class BrushTests: XCTestCase {
         StrokeSample(point: Point(x: x, y: y), pressure: 0.7, altitude: 1, azimuth: 0, time: time)
     }
     func testEveryPresetValidatesAndHasFiniteDistinctGeometry() throws {
-        XCTAssertEqual(BrushPreset.allCases.count, 14)
+        XCTAssertEqual(BrushPreset.allCases.count, 22)
         for preset in BrushPreset.allCases {
             var d = DrawingDocument(); d.brush = preset.makeBrush()
             d.strokes = [InkStroke(brush: d.brush, samples: [sample(40), sample(100, time: 2)])]

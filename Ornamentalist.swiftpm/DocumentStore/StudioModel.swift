@@ -236,21 +236,6 @@ final class StudioModel: ObservableObject {
             var brush = stored; brush.normalizedOpacity = true; eraserSettings[preset] = brush
         }
         if eraserBrush.preset.softness > 0 { eraserBrush.normalizedOpacity = true }
-        if preferences?.bool(forKey: "lightPencilPressureV1") != true {
-            for (preset, stored) in brushSettings {
-                var brush = stored; brush.pressureGain = 2.5; brushSettings[preset] = brush
-            }
-            for (preset, stored) in eraserSettings {
-                var brush = stored; brush.pressureGain = 2.5; eraserSettings[preset] = brush
-            }
-            eraserBrush.pressureGain = 2.5
-            let brushes = Dictionary(uniqueKeysWithValues: brushSettings.map { ($0.key.rawValue, $0.value) })
-            let erasers = Dictionary(uniqueKeysWithValues: eraserSettings.map { ($0.key.rawValue, $0.value) })
-            if let data = try? JSONEncoder().encode(brushes) { preferences?.set(data, forKey: "brushSettings") }
-            if let data = try? JSONEncoder().encode(erasers) { preferences?.set(data, forKey: "eraserBrushSettings") }
-            if let data = try? JSONEncoder().encode(eraserBrush) { preferences?.set(data, forKey: "eraserSettings") }
-            preferences?.set(true, forKey: "lightPencilPressureV1")
-        }
         if preferences?.bool(forKey: "fullLinerStabilizationV1") != true {
             for (preset, stored) in brushSettings where preset.family == .ink {
                 var brush = stored; brush.stabilization = 1; brush.stabilizationEnabled = true
@@ -340,7 +325,6 @@ final class StudioModel: ObservableObject {
             }
             if adopted.brush.usesStamps, adopted.brush.tiltShading == 0 { adopted.brush.tiltShading = 0.7 }
             if adopted.brush.preset.softness > 0 { adopted.brush.normalizedOpacity = true }
-            adopted.brush.pressureGain = 2.5
             rememberBrush(adopted.brush)
         }
         appendLineage = UUID()
@@ -818,6 +802,13 @@ final class StudioModel: ObservableObject {
     }
     func setPressure(_ enabled: Bool) {
         editInputBrush { $0.pressureEnabled = enabled }
+    }
+    func resetPressureResponse() {
+        editInputBrush {
+            let defaults = $0.preset.makeBrush()
+            $0.pressureGain = defaults.pressureGain
+            $0.pressureCurve = defaults.pressureCurve
+        }
     }
     func setStabilization(_ amount: Double) {
         guard amount.isFinite else { return }

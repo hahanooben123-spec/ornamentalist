@@ -14,9 +14,12 @@ struct InkBrush: Codable, Equatable, Sendable {
     var pressureDensity: Bool?
     var dotSize = 1.5
     var usesPressureDensity: Bool { preset == .dotShader && pressureDensity == true }
-    func densityResponse(pressure: Double) -> Double {
+    var usesPressureOpacity: Bool { preset.pressureControlsOpacity && pressureEnabled }
+    var reactsToPressure: Bool { pressureEnabled || usesPressureDensity }
+    func pressureResponse(_ pressure: Double) -> Double {
         pow(max(0, min(1, pressure * pressureGain)), pressureCurve)
     }
+    func densityResponse(pressure: Double) -> Double { pressureResponse(pressure) }
     var adaptiveStabilization = false
     var pressureCurve = 0.5
     var pressureGain = 1.0
@@ -33,7 +36,7 @@ struct InkBrush: Codable, Equatable, Sendable {
         let t = max(0, min(1, distance / falloffLength))
         return 1 - t * t * (3 - 2 * t)
     }
-    var usesStamps: Bool { preset != .fineliner && preset != .brushPen }
+    var usesStamps: Bool { preset != .fineliner && preset != .brushPen && preset != .detailLiner }
     var isValid: Bool {
         [pressureCurve, pressureGain, minimumSize, taperStart, taperEnd, tiltShading, falloff, effectiveSoftness].allSatisfy { $0.isFinite } &&
         (1...5).contains(pressureGain) &&
@@ -47,8 +50,8 @@ struct InkBrush: Codable, Equatable, Sendable {
         dotSize.isFinite && (0.5...8).contains(dotSize)
     }
     func radius(pressure: Double) -> Double {
-        guard pressureEnabled && !usesPressureDensity else { return width * 0.5 }
-        return width * (minimumSize + (1 - minimumSize) * pow(max(0, min(1, pressure * pressureGain)), pressureCurve)) * 0.5
+        guard pressureEnabled && !usesPressureDensity && !usesPressureOpacity else { return width * 0.5 }
+        return width * (minimumSize + (1 - minimumSize) * pressureResponse(pressure)) * 0.5
     }
     /// Soft dabs overlap several times per brush diameter. Normalize their
     /// accumulation so small opacity changes do not immediately saturate a pass.
@@ -98,6 +101,7 @@ enum BrushFamily: String, CaseIterable {
 enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
     case fineliner, brushPen, roundMarker, flatMarker, softShader, airbrush
     case dots, fineDots, stippleLight, stippleDense, dotShader, graphite, charcoal, hatching
+    case detailLiner, calligraphyNib, featherShader, velvetShader, boldDots, stippleMist, sketchPencil, dryInk
     var id: String { rawValue }
     var name: String {
         switch self {
@@ -115,20 +119,40 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .graphite: return "Graphite"
         case .charcoal: return "Charcoal"
         case .hatching: return "Hatching"
+        case .detailLiner: return "Detail liner"
+        case .calligraphyNib: return "Calligraphy nib"
+        case .featherShader: return "Feather shade"
+        case .velvetShader: return "Velvet shade"
+        case .boldDots: return "Bold dots"
+        case .stippleMist: return "Stipple mist"
+        case .sketchPencil: return "Sketch pencil"
+        case .dryInk: return "Dry ink"
         }
     }
     var family: BrushFamily {
         switch self {
-        case .fineliner, .brushPen, .roundMarker, .flatMarker: return .ink
-        case .softShader, .airbrush: return .shading
-        case .dots, .fineDots, .stippleLight, .stippleDense, .dotShader: return .dots
-        case .graphite, .charcoal, .hatching: return .texture
+        case .fineliner, .brushPen, .roundMarker, .flatMarker, .detailLiner, .calligraphyNib: return .ink
+        case .softShader, .airbrush, .featherShader, .velvetShader: return .shading
+        case .dots, .fineDots, .stippleLight, .stippleDense, .dotShader, .boldDots, .stippleMist: return .dots
+        case .graphite, .charcoal, .hatching, .sketchPencil, .dryInk: return .texture
         }
     }
     var scattered: Bool {
-        [.stippleLight, .stippleDense, .dotShader, .graphite, .charcoal, .hatching].contains(self)
+        switch self {
+        case .stippleLight, .stippleDense, .dotShader, .graphite, .charcoal, .hatching,
+             .stippleMist, .sketchPencil, .dryInk: return true
+        default: return false
+        }
     }
-    var softness: Double { self == .softShader || self == .airbrush ? 1 : 0 }
+    var pressureControlsOpacity: Bool { self == .featherShader || self == .velvetShader }
+    var softness: Double {
+        switch self {
+        case .softShader, .airbrush, .featherShader: return 1
+        case .velvetShader: return 0.55
+        case .sketchPencil, .stippleMist: return 0.2
+        default: return 0
+        }
+    }
     var hint: String {
         switch self {
         case .dots, .fineDots: return "Separate dots along your stroke. Tap for a single dot."
@@ -136,6 +160,14 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .dotShader: return "Light pressure makes sparse dots; firmer pressure builds density. Dot size stays fixed when pressure density is enabled."
         case .softShader, .airbrush: return "Soft edges. Build tone with overlapping passes."
         case .hatching: return "Small parallel marks for engraved shading."
+        case .detailLiner: return "Fine contours with light pressure variation and a short taper."
+        case .calligraphyNib: return "An angled nib for thick downstrokes and thin cross strokes."
+        case .featherShader: return "A broad, feathered gradient. Pressure builds tone without changing the brush size."
+        case .velvetShader: return "A soft edge with a fuller center. Pressure builds tone without changing the brush size."
+        case .boldDots: return "Large, evenly spaced dots for borders and accents."
+        case .stippleMist: return "A dusting of fine dots that thins toward the edge."
+        case .sketchPencil: return "Fine grain concentrated along the stroke. Tilt for broader shading."
+        case .dryInk: return "Broken, elongated marks for a dry, scratchy texture."
         default: return "Changes apply to your next stroke. Existing marks keep their brush."
         }
     }
@@ -156,10 +188,26 @@ enum BrushPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .graphite: b.width = 18; b.opacity = 0.3; b.spacing = 0.2; b.density = 0.75
         case .charcoal: b.width = 42; b.opacity = 0.2; b.spacing = 0.22; b.density = 0.65
         case .hatching: b.width = 36; b.opacity = 0.65; b.spacing = 0.65; b.density = 0.4
+        case .detailLiner:
+            b.width = 3.5; b.pressureEnabled = true; b.minimumSize = 0.55; b.taperStart = 0.25; b.taperEnd = 0.4
+        case .calligraphyNib:
+            b.width = 22; b.pressureEnabled = true; b.minimumSize = 0.45; b.spacing = 0.065
+        case .featherShader:
+            b.width = 100; b.opacity = 0.42; b.spacing = 0.14; b.pressureEnabled = true
+        case .velvetShader:
+            b.width = 54; b.opacity = 0.62; b.spacing = 0.18; b.pressureEnabled = true
+        case .boldDots:
+            b.width = 12; b.spacing = 1.65
+        case .stippleMist:
+            b.width = 58; b.opacity = 0.65; b.spacing = 0.28; b.density = 0.55
+        case .sketchPencil:
+            b.width = 13; b.opacity = 0.72; b.spacing = 0.23; b.density = 0.48; b.pressureEnabled = true; b.minimumSize = 0.32
+        case .dryInk:
+            b.width = 30; b.opacity = 0.85; b.spacing = 0.29; b.density = 0.42; b.pressureEnabled = true; b.minimumSize = 0.38
         }
         b.adaptiveStabilization = true
         if family == .ink { b.stabilization = 1; b.stabilizationEnabled = true }
-        b.pressureGain = 2.5
+        b.pressureGain = 1.5; b.pressureCurve = 0.82
         if self == .dotShader { b.pressureGain = 1; b.pressureCurve = 1 }
         if self == .brushPen { b.minimumSize = 0.03; b.taperStart = 0.6; b.taperEnd = 0.8 }
         if b.usesStamps { b.tiltShading = 0.7 }

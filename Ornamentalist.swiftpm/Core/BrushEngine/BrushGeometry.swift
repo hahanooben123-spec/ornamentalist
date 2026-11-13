@@ -53,11 +53,22 @@ struct BrushStampState: Sendable {
         let spreadScale = 1 + tilt * 0.8
         let tiltAngle = sample.azimuth
         if !brush.preset.scattered {
+            let aspect: Double
+            let angle: Double
+            switch brush.preset {
+            case .flatMarker: aspect = 0.28; angle = tilt > 0 ? tiltAngle : -.pi / 4
+            case .calligraphyNib: aspect = 0.20; angle = -.pi / 3
+            default: aspect = 1; angle = tilt > 0 ? tiltAngle : 0
+            }
+            // Pressure shades without moving the edge of these two brushes.
+            let strength = brush.usesPressureOpacity ? brush.pressureResponse(sample.pressure) : 1
             return [BrushDab(center: sample.point, radius: radius * spreadScale,
-                             aspect: (brush.preset == .flatMarker ? 0.28 : 1) / (spreadScale * spreadScale),
-                             angle: tilt > 0 ? tiltAngle : (brush.preset == .flatMarker ? -.pi / 4 : 0),
-                             opacity: brush.falloffOpacity(distance: distance))]
+                             aspect: aspect / (spreadScale * spreadScale),
+                             angle: angle,
+                             opacity: brush.falloffOpacity(distance: distance) * strength)]
         }
+        let fade = brush.falloffOpacity(distance: distance)
+        let acceptance = brush.usesPressureDensity ? brush.densityResponse(pressure: sample.pressure) : 1
         return (0..<Self.dabsPerStamp(brush)).compactMap { dot -> BrushDab? in
             let key = ordinal &* (brush.usesPressureDensity ? 64 : 32) &+ UInt64(dot)
             let angle = random(key, 1) * 2 * Double.pi
@@ -67,7 +78,7 @@ struct BrushStampState: Sendable {
             if brush.usesPressureDensity {
                 // A deterministic acceptance threshold changes dot count,
                 // never dot size or darkness. Feather the cloud at its edge.
-                let probability = brush.densityResponse(pressure: sample.pressure) * pow(1 - u, 1.5)
+                let probability = acceptance * pow(1 - u, 1.5)
                 guard random(key, 4) < probability else { return nil }
             }
             let offset = Point(x: cos(angle) * spreadScale, y: sin(angle) / spreadScale) * (radius * spread)
@@ -77,12 +88,23 @@ struct BrushStampState: Sendable {
             case .graphite: base = 0.035
             case .charcoal: base = 0.13
             case .hatching: base = 0.25
+            case .stippleMist: base = 0.033
+            case .sketchPencil: base = 0.07
+            case .dryInk: base = 0.32
             default: base = 0.045
             }
+            let aspect: Double
+            let markAngle: Double
+            let opacity: Double
+            switch brush.preset {
+            case .hatching: aspect = 0.12; markAngle = -.pi / 4; opacity = fade
+            case .stippleMist: aspect = 1; markAngle = 0; opacity = fade * (1 - 0.9 * u)
+            case .sketchPencil: aspect = 0.62; markAngle = tiltAngle; opacity = fade * (1 - 0.75 * u)
+            case .dryInk: aspect = 0.22; markAngle = -.pi / 5 + (u - 0.5) * 0.9; opacity = fade
+            default: aspect = 1; markAngle = 0; opacity = fade
+            }
             return BrushDab(center: center, radius: brush.usesPressureDensity ? brush.dotSize * 0.5 : max(0.28, radius * base * (0.65 + random(key, 3) * 0.7)),
-                            aspect: brush.preset == .hatching ? 0.12 : 1,
-                            angle: brush.preset == .hatching ? -.pi / 4 : 0,
-                            opacity: brush.falloffOpacity(distance: distance))
+                            aspect: aspect, angle: markAngle, opacity: opacity)
         }
     }
     /// Price before allocating. A malformed long jump cannot allocate an

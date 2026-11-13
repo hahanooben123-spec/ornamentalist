@@ -207,8 +207,14 @@ final class PencilCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDeleg
         return canvasMatrix.inverse.apply(Point(x: Double(p.x), y: Double(p.y)))
     }
     private func sample(_ touch: UITouch) -> StrokeSample {
-        let force = touch.type == .pencil && touch.maximumPossibleForce > 0
+        var force = touch.type == .pencil && touch.maximumPossibleForce > 0
             ? Double(touch.force / touch.maximumPossibleForce) : 0.6
+        // The terminal event may report zero after contact has already ended.
+        // Keep the final position without introducing an artificial pressure dip.
+        if touch.type == .pencil, touch.phase == .ended, force == 0,
+           let lastPressure = session?.lastInputPressure {
+            force = lastPressure
+        }
         return StrokeSample(point: point(touch), pressure: max(0, min(1, force)),
                             altitude: touch.type == .pencil ? Double(touch.altitudeAngle) : .pi / 2,
                             azimuth: touch.type == .pencil ? Double(touch.azimuthAngle(in: self)) - viewport.rotation : 0,
